@@ -1,0 +1,111 @@
+# PROTOCOL (JSON-RPC v1)
+
+Base envelope:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "string|number|null",
+  "method": "method.name",
+  "params": {}
+}
+```
+
+Response success:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "same-as-request",
+  "result": {}
+}
+```
+
+Response failure:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "same-as-request",
+  "error": {
+    "code": 4001,
+    "message": "Not paired",
+    "data": {
+      "bakCode": "E_NOT_PAIRED"
+    }
+  }
+}
+```
+
+## Error codes
+
+- `E_NOT_PAIRED`
+- `E_PERMISSION`
+- `E_NOT_FOUND`
+- `E_NEED_USER_CONFIRM`
+- `E_TIMEOUT`
+- `E_INVALID_PARAMS`
+- `E_INTERNAL`
+- `E_NOT_READY`
+
+## Methods
+
+### Session
+
+- `session.create`
+- `session.close`
+- `session.info`
+
+### Tabs
+
+- `tabs.list`
+- `tabs.focus`
+- `tabs.new`
+- `tabs.close`
+
+### Page
+
+- `page.goto`
+- `page.back`
+- `page.forward`
+- `page.reload`
+- `page.wait` (selector/text/url)
+- `page.snapshot`
+
+### Elements
+
+- `element.click`
+- `element.type`
+- `element.scroll`
+
+### Debug
+
+- `debug.getConsole`
+
+### Memory
+
+- `memory.recordStart`
+- `memory.recordStop`
+- `memory.skills.list`
+- `memory.skills.show`
+- `memory.skills.retrieve`
+- `memory.skills.run`
+- `memory.skills.delete`
+
+## `page.snapshot` result
+
+- `traceId`
+- `imagePath`
+- `elementsPath`
+- `imageBase64` (optional)
+- `elementCount`
+
+## Locator schema
+
+Any of:
+- `eid`
+- `role` + `name`
+- `text`
+- `css`
+
+CLI/skill healing tries candidates in this order.
