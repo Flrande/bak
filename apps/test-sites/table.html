@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - Table</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 20px;
+        color: #0f172a;
+        background: linear-gradient(160deg, #f0fdfa, #eef2ff);
+      }
+      table {
+        width: 100%;
+        max-width: 780px;
+        border-collapse: collapse;
+        background: white;
+      }
+      th, td {
+        border: 1px solid #cbd5e1;
+        padding: 8px;
+      }
+      #modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.4);
+        align-items: center;
+        justify-content: center;
+      }
+      #modal-card {
+        width: 320px;
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      button { border: none; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+      .danger { background: #b91c1c; color: white; }
+    </style>
+  </head>
+  <body data-page="table">
+    <a href="/">Back</a>
+    <h1>Table + Modal Playground</h1>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Name</th><th>Action</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="modal">
+      <div id="modal-card">
+        <h3>删除确认</h3>
+        <p id="modal-text">Are you sure?</p>
+        <button id="confirm-delete" class="danger">删除</button>
+        <button id="cancel-delete">取消</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
