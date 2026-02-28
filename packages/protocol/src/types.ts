@@ -204,6 +204,10 @@ export interface MethodMap {
     result: { skills: Skill[] };
   };
   'memory.skills.show': { params: { id: string }; result: { skill: Skill } };
+  'memory.skills.retrieve': {
+    params: { domain?: string; intent: string; anchors?: string[] };
+    result: { skills: Skill[] };
+  };
   'memory.skills.run': {
     params: { id: string; params?: Record<string, string>; tabId?: number };
     result: { ok: true; updatedSkill?: Skill };

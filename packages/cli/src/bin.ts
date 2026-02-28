@@ -141,6 +141,25 @@ skills
   });
 
 skills
+  .command('retrieve')
+  .requiredOption('--intent <intent>', 'intent text')
+  .option('--domain <domain>', 'domain filter')
+  .option('--anchor <anchor...>', 'anchors for similarity', [])
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const result = await callRpc(
+      'memory.skills.retrieve',
+      {
+        domain: options.domain,
+        intent: String(options.intent),
+        anchors: (options.anchor as string[]) ?? []
+      },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+skills
   .command('run <id>')
   .option('--tab-id <tabId>', 'tab id')
   .option('--param <kv...>', 'skill param key=value, repeatable', [])

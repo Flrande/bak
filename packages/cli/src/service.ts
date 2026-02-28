@@ -15,7 +15,13 @@ import {
 } from '@bak/protocol';
 import type { BrowserDriver } from './drivers/browser-driver.js';
 import { BridgeError } from './drivers/extension-bridge.js';
-import { buildTargetCandidates, extractSkillFromEpisode, inferDomainFromStartUrl, rankCandidates } from './memory/extract.js';
+import {
+  buildTargetCandidates,
+  extractSkillFromEpisode,
+  inferDomainFromStartUrl,
+  rankCandidates,
+  retrieveSkills
+} from './memory/extract.js';
 import type { MemoryStore } from './memory/store.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
@@ -521,6 +527,29 @@ export class BakService {
           return { skill };
         }) as Promise<MethodResult<TMethod>>;
       }
+      case 'memory.skills.retrieve': {
+        return this.withTrace(method, params, async () => {
+          const intent = String(args.intent ?? '').trim();
+          if (!intent) {
+            throw new RpcError('intent is required', -32602, BakErrorCode.E_INVALID_PARAMS);
+          }
+
+          const anchors = Array.isArray(args.anchors) ? (args.anchors as string[]) : [];
+          let domain = (args.domain as string | undefined) ?? '';
+
+          if (!domain && this.driver.isConnected()) {
+            const tabs = await this.driver.tabsList();
+            domain = tabs.tabs.find((tab) => tab.active)?.url ? getDomain(tabs.tabs.find((tab) => tab.active)!.url) : '';
+          }
+
+          const skills = retrieveSkills(this.memoryStore.listSkills(), {
+            domain: domain || 'unknown',
+            intent,
+            anchors
+          });
+          return { skills };
+        }) as Promise<MethodResult<TMethod>>;
+      }
       case 'memory.skills.delete': {
         return this.withTrace(method, params, async () => {
           const ok = this.memoryStore.deleteSkill(String(args.id));
@@ -591,12 +620,6 @@ export class BakService {
 
   exportTrace(traceId: string): { tracePath: string } {
     return this.traceStore.export(traceId);
-  }
-
-  retrieveSkills(intent: string, currentUrl: string): Skill[] {
-    const domain = getDomain(currentUrl);
-    const all = this.memoryStore.listSkills();
-    return all.filter((skill) => skill.domain === domain && skill.intent.includes(intent));
   }
 
   recordingState(): RecordingState | null {
