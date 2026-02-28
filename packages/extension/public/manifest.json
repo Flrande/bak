@@ -8,12 +8,12 @@
   "permissions": ["storage", "tabs", "scripting", "activeTab"],
   "host_permissions": ["<all_urls>"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.global.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["content.global.js"],
       "run_at": "document_idle"
     }
   ]

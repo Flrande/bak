@@ -1,2 +1,84 @@
 <!doctype html>
-<html><body><h1>BAK Popup</h1><script src="./popup.js"></script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Pairing</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 14px;
+        width: 320px;
+        font-family: "Segoe UI", sans-serif;
+        color: #0f172a;
+        background: linear-gradient(160deg, #f8fafc, #eef2ff);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      label {
+        display: block;
+        margin-top: 10px;
+        font-size: 12px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 4px;
+        padding: 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      button {
+        flex: 1;
+        border: none;
+        border-radius: 6px;
+        padding: 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #save {
+        background: #0f172a;
+        color: #fff;
+      }
+      #disconnect {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      #status {
+        margin-top: 10px;
+        font-size: 12px;
+      }
+      .hint {
+        margin-top: 10px;
+        font-size: 11px;
+        color: #334155;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Browser Agent Kit</h1>
+    <label>
+      Pair token
+      <input id="token" placeholder="paste token from `bak pair`" />
+    </label>
+    <label>
+      CLI port
+      <input id="port" value="17373" />
+    </label>
+    <div class="row">
+      <button id="save">Save & Connect</button>
+      <button id="disconnect">Disconnect</button>
+    </div>
+    <div id="status">Checking...</div>
+    <div class="hint">Extension only connects to ws://127.0.0.1</div>
+    <script src="./popup.global.js"></script>
+  </body>
+</html>

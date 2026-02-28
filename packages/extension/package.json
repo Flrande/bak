@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsup src/background.ts src/content.ts src/popup.ts --format iife --out-dir dist --clean && node scripts/copy-assets.mjs",
-    "dev": "tsup src/background.ts src/content.ts src/popup.ts --format iife --out-dir dist --watch && node scripts/copy-assets.mjs",
+    "dev": "node scripts/copy-assets.mjs && tsup src/background.ts src/content.ts src/popup.ts --format iife --out-dir dist --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --ext .ts"
   },
