@@ -1,0 +1,25 @@
+{
+  "name": "@bak/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "bak": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/bin.ts src/index.ts --format esm --dts --clean",
+    "dev": "tsx watch src/bin.ts serve --port 17373",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@bak/protocol": "workspace:*",
+    "commander": "^14.0.0",
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0"
+  }
+}

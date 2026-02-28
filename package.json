@@ -1,0 +1,31 @@
+{
+  "name": "bak-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n cli,ext,site \"pnpm --filter @bak/cli dev\" \"pnpm --filter @bak/extension dev\" \"pnpm --filter @bak/test-sites dev\"",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm test:unit && pnpm test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "@playwright/test": "^1.54.2",
+    "@types/node": "^22.17.2",
+    "@typescript-eslint/eslint-plugin": "^8.41.0",
+    "@typescript-eslint/parser": "^8.41.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.34.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
