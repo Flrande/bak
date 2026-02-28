@@ -175,6 +175,15 @@ export interface MethodMap {
       elementCount: number;
     };
   };
+  'page.wait': {
+    params: {
+      tabId?: number;
+      mode: 'selector' | 'text' | 'url';
+      value: string;
+      timeoutMs?: number;
+    };
+    result: { ok: true };
+  };
   'element.click': { params: { tabId?: number; locator: Locator }; result: { ok: true } };
   'element.type': {
     params: { tabId?: number; locator: Locator; text: string; clear?: boolean };
@@ -199,6 +208,7 @@ export interface MethodMap {
     params: { id: string; params?: Record<string, string>; tabId?: number };
     result: { ok: true; updatedSkill?: Skill };
   };
+  'memory.skills.delete': { params: { id: string }; result: { ok: true } };
 }
 
 export type MethodName = keyof MethodMap;

@@ -7,7 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "concurrently -n cli,ext,site \"pnpm --filter @bak/cli dev\" \"pnpm --filter @bak/extension dev\" \"pnpm --filter @bak/test-sites dev\"",
+    "dev": "concurrently -n protocol,cli,ext,site \"pnpm --filter @bak/protocol dev\" \"pnpm --filter @bak/cli dev\" \"pnpm --filter @bak/extension dev\" \"pnpm --filter @bak/test-sites dev\"",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
