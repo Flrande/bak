@@ -140,8 +140,6 @@ function collectStepAnchors(step: SkillPlanStep): string[] {
 
 function collectSkillAnchors(skill: Skill): string[] {
   const anchors = new Set<string>();
-  anchors.add(skill.intent);
-  anchors.add(skill.description);
 
   for (const step of skill.plan) {
     for (const anchor of collectStepAnchors(step)) {
