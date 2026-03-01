@@ -1,9 +1,19 @@
 param(
   [int]$RpcWsPort = 17374,
-  [string]$BaseUrl = 'http://127.0.0.1:4173/form.html'
+  [string]$BaseUrl = 'http://127.0.0.1:4173/form.html',
+  [string]$CliBin
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $CliBin) {
+  $repoRoot = Split-Path -LiteralPath $PSScriptRoot -Parent
+  $CliBin = Join-Path -Path $repoRoot -ChildPath 'packages/cli/dist/bin.js'
+}
+
+if (-not (Test-Path -LiteralPath $CliBin)) {
+  throw "CLI binary not found at '$CliBin'. Run 'pnpm build' first."
+}
 
 function Invoke-BakRpc {
   param(
@@ -12,7 +22,7 @@ function Invoke-BakRpc {
   )
 
   $json = $Params | ConvertTo-Json -Compress -Depth 10
-  $raw = pnpm --filter @bak/cli exec bak call --method $Method --params $json --rpc-ws-port $RpcWsPort
+  $raw = & node $CliBin call --method $Method --params $json --rpc-ws-port $RpcWsPort
   return $raw | ConvertFrom-Json
 }
 
