@@ -128,6 +128,27 @@ Action behavior notes:
 - `imageBase64` (optional)
 - `elementCount`
 
+## Trace audit events
+
+Traces are written to `.bak-data/traces/<traceId>.jsonl` as method/result/error events.
+
+`policy.decision` audit event includes:
+- `action`
+- `decision`
+- `reason`
+- `source`
+- `ruleId`
+- `domain`
+- `path`
+- `locatorSummary` (`hasEid/hasRole/hasName/hasText/hasCss`)
+- `tags`
+- `matchedRuleCount`
+- `matchedRules` (summary only: `id/action/decision/tag`)
+- `defaultDecision`
+- `defaultReason`
+
+Policy audit fields intentionally exclude raw sensitive text payloads.
+
 ## Locator schema
 
 Any of:
