@@ -26,7 +26,7 @@ import {
 import { resolveMemoryBackend, type MemoryBackend } from './memory/factory.js';
 import type { MemoryStoreBackend } from './memory/store.js';
 import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy.js';
-import { redactElements } from './privacy.js';
+import { redactElements, redactText, redactUnknown } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
 import { ensureDir, getDomain, getPathname, id, resolveDataDir } from './utils.js';
@@ -80,6 +80,38 @@ function sanitizeInputText(locator: Locator, text: string): string {
     return '[REDACTED]';
   }
   return text;
+}
+
+function redactTraceParams(method: string, params: unknown): unknown {
+  const redacted = redactUnknown(params);
+  if (method !== 'element.type') {
+    return redacted;
+  }
+
+  const payload = asRecord(redacted);
+  if (!('text' in payload)) {
+    return payload;
+  }
+  return {
+    ...payload,
+    text: '[REDACTED]'
+  };
+}
+
+function redactTraceResult(method: string, result: unknown): unknown {
+  const redacted = redactUnknown(result);
+  if (method !== 'page.snapshot') {
+    return redacted;
+  }
+
+  const payload = asRecord(redacted);
+  if (typeof payload.imageBase64 !== 'string') {
+    return payload;
+  }
+  return {
+    ...payload,
+    imageBase64: '[REDACTED:base64]'
+  };
 }
 
 function maybeLocatorFromStep(step: SkillPlanStep): Locator | undefined {
@@ -228,11 +260,15 @@ export class BakService {
   private async withTrace<T>(method: string, params: unknown, action: () => Promise<T>): Promise<T> {
     const traceId = this.currentTraceId || this.traceStore.newTraceId();
     this.currentTraceId = traceId;
-    this.traceStore.append(traceId, { method, params });
+    this.traceStore.append(traceId, { method, params: redactTraceParams(method, params) });
 
     try {
       const result = await action();
-      this.traceStore.append(traceId, { method: `${method}:result`, params: {}, result });
+      this.traceStore.append(traceId, {
+        method: `${method}:result`,
+        params: {},
+        result: redactTraceResult(method, result)
+      });
       return result;
     } catch (error) {
       const normalized = this.normalizeError(error);
@@ -241,7 +277,7 @@ export class BakService {
         params: {},
         error: {
           code: normalized.bakCode,
-          message: normalized.message
+          message: redactText(normalized.message)
         }
       });
       throw normalized;

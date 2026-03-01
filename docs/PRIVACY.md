@@ -5,7 +5,8 @@
 1. Snapshot element maps do not read `input.value` for naming or text extraction.
 2. Element `name`/`text` fields are minimized and passed through redaction rules.
 3. Potential secrets (email-like strings, OTP-like digits, long numeric sequences, token-like query strings) are replaced with redacted markers.
-4. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
+4. Trace logs are redacted before write (for example `element.type.text` is stored as `[REDACTED]`, and snapshot base64 payloads are not persisted in trace entries).
+5. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
 
 Run `bak gc` to clean old traces/snapshots. The command is dry-run by default and requires `--force` to delete.
 

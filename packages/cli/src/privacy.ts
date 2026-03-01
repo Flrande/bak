@@ -54,3 +54,23 @@ export function redactElement(item: ElementMapItem): ElementMapItem {
 export function redactElements(items: ElementMapItem[]): ElementMapItem[] {
   return items.map((item) => redactElement(item));
 }
+
+export function redactUnknown(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return redactText(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactUnknown(item));
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      output[key] = redactUnknown(item);
+    }
+    return output;
+  }
+
+  return value;
+}
