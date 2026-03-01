@@ -55,6 +55,8 @@ pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
 - `memory.json` (optional, redacted, only when `--include-memory`)
 - runtime version metadata
 
+The command result and `index.json` both include `warnings` for non-blocking issues (for example version drift or memory export fallback).
+
 ## Memory backend operations
 
 ```powershell

@@ -27,7 +27,24 @@ export interface DiagnosticExportResult {
   includesMemory: boolean;
   memoryBackend: string | null;
   memoryExportError?: string;
+  warnings: string[];
   fileCount: number;
+}
+
+function asRecord(input: unknown): Record<string, unknown> {
+  return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+}
+
+function extractVersionCompatibilityWarning(doctorReport: unknown): string | null {
+  const report = asRecord(doctorReport);
+  const checks = asRecord(report.checks);
+  const versionCheck = asRecord(checks.versionCompatibility);
+  const ok = versionCheck.ok === true;
+  const message = typeof versionCheck.message === 'string' ? versionCheck.message : null;
+  if (ok || !message) {
+    return null;
+  }
+  return message;
 }
 
 function assertWithinDataDir(dataDir: string, candidate: string): void {
@@ -142,6 +159,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
     let includesMemory = false;
     let memoryBackend: string | null = null;
     let memoryExportError: string | undefined;
+    const warnings: string[] = [];
     const tracesSource = join(dataDir, 'traces');
     const tracesTarget = join(stageDir, 'traces');
     mkdirSync(tracesTarget, { recursive: true });
@@ -201,7 +219,13 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
         includesMemory = true;
       } catch (error) {
         memoryExportError = error instanceof Error ? error.message : String(error);
+        warnings.push(`memory export skipped: ${memoryExportError}`);
       }
+    }
+
+    const versionWarning = extractVersionCompatibilityWarning(options.doctorReport);
+    if (versionWarning) {
+      warnings.push(`version compatibility warning: ${versionWarning}`);
     }
 
     const indexPath = join(stageDir, 'index.json');
@@ -215,6 +239,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
           includesMemory,
           memoryBackend,
           memoryExportError: memoryExportError ?? null,
+          warnings,
           traceFiles: selectedTraceFiles,
           snapshotDirs: selectedSnapshotDirs.map((entry) => entry.name),
           hasPolicyFile: existsSync(policyPath)
@@ -256,6 +281,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       includesMemory,
       memoryBackend,
       memoryExportError,
+      warnings,
       fileCount
     };
   } finally {

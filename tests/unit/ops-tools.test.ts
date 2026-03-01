@@ -28,6 +28,7 @@ describe('ops tools', () => {
     expect(result.includesIndex).toBe(true);
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
+    expect(result.warnings).toEqual([]);
     expect(result.redacted).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
@@ -64,6 +65,11 @@ describe('ops tools', () => {
       doctorReport: {
         ok: false,
         checks: {
+          versionCompatibility: {
+            ok: false,
+            message: 'cli/extension version drift detected (same major)',
+            severity: 'warn'
+          },
           rpcConnectionHealth: {
             ok: false,
             message: 'extension heartbeat is stale'
@@ -76,6 +82,7 @@ describe('ops tools', () => {
     expect(result.includesIndex).toBe(true);
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
+    expect(result.warnings).toContain('version compatibility warning: cli/extension version drift detected (same major)');
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
@@ -115,6 +122,28 @@ describe('ops tools', () => {
     expect(result.includesMemory).toBe(true);
     expect(result.memoryBackend).toBe('json');
     expect(result.memoryExportError).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+    expect(existsSync(outPath)).toBe(true);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('adds warning when memory export fails', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-fail-test-'));
+    const outPath = join(dataDir, 'diag-memory-fail.zip');
+    writeFileSync(join(dataDir, 'memory.json'), '{ this is invalid json', 'utf8');
+
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      includeMemory: true,
+      memoryBackend: 'json'
+    });
+
+    expect(result.includesMemory).toBe(false);
+    expect(result.memoryBackend).toBe('json');
+    expect(result.memoryExportError).toBeTruthy();
+    expect(result.warnings.some((message) => message.startsWith('memory export skipped:'))).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
