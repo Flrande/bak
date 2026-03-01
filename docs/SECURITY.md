@@ -21,6 +21,7 @@
 - recording text is masked for likely password/otp fields
 - element map naming no longer reads `input.value`
 - snapshot text fields use rule-based redaction before leaving content script
+- CLI re-applies redaction before writing `elements.json` (defense-in-depth)
 
 5. Explicit debug gate
 - popup exposes `debugRichText` toggle for richer diagnostics

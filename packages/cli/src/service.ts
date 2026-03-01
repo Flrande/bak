@@ -23,6 +23,7 @@ import {
   retrieveSkills
 } from './memory/extract.js';
 import type { MemoryStore } from './memory/store.js';
+import { redactElements } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
 import { ensureDir, getDomain, id, resolveDataDir } from './utils.js';
@@ -381,6 +382,7 @@ export class BakService {
           const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
           const includeBase64 = Boolean(args.includeBase64);
           const snapshot = await this.driver.pageSnapshot(tabId);
+          const redactedElements = redactElements(snapshot.elements);
 
           const traceId = this.currentTraceId || this.traceStore.newTraceId();
           this.currentTraceId = traceId;
@@ -389,14 +391,14 @@ export class BakService {
           const elementsPath = join(snapshotDir, `${Date.now()}_elements.json`);
 
           writeFileSync(imagePath, Buffer.from(snapshot.imageBase64, 'base64'));
-          writeFileSync(elementsPath, `${JSON.stringify(snapshot.elements, null, 2)}\n`, 'utf8');
+          writeFileSync(elementsPath, `${JSON.stringify(redactedElements, null, 2)}\n`, 'utf8');
 
           return {
             traceId,
             imagePath,
             elementsPath,
             imageBase64: includeBase64 ? snapshot.imageBase64 : undefined,
-            elementCount: snapshot.elements.length
+            elementCount: redactedElements.length
           };
         }) as Promise<MethodResult<TMethod>>;
       }
