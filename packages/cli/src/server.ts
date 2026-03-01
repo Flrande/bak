@@ -1,4 +1,4 @@
-import { createMemoryStore } from './memory/factory.js';
+import { createMemoryStoreResolved } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { ExtensionBridge } from './drivers/extension-bridge.js';
 import { ExtensionDriver } from './drivers/extension-driver.js';
@@ -15,7 +15,13 @@ export interface BakDaemon {
 export async function startBakDaemon(port: number, rpcWsPort: number): Promise<BakDaemon> {
   const pairingStore = new PairingStore();
   const traceStore = new TraceStore();
-  const memoryStore = createMemoryStore();
+  const memoryResolution = createMemoryStoreResolved();
+  const memoryStore = memoryResolution.store;
+  if (memoryResolution.fallbackReason) {
+    process.stderr.write(
+      `[bak] memory backend fallback: requested=${memoryResolution.requestedBackend} actual=${memoryResolution.backend} reason=${memoryResolution.fallbackReason}\n`
+    );
+  }
 
   const bridge = new ExtensionBridge(port, pairingStore);
   await bridge.start();

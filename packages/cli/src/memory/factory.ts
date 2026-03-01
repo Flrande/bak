@@ -12,13 +12,64 @@ export function resolveMemoryBackend(input?: string): MemoryBackend {
   return preferred === 'sqlite' ? 'sqlite' : 'json';
 }
 
-export function createMemoryStore(options?: { dataDir?: string; backend?: string }): MemoryStoreBackend {
-  const dataDir = options?.dataDir ? resolve(options.dataDir) : resolveDataDir();
-  const backend = resolveMemoryBackend(options?.backend);
-  if (backend === 'sqlite') {
-    return new SqliteMemoryStore(dataDir);
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) {
+    return false;
   }
-  return new MemoryStore(dataDir);
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+export interface CreateMemoryStoreOptions {
+  dataDir?: string;
+  backend?: string;
+  strictSqlite?: boolean;
+  sqliteFactory?: (dataDir: string) => MemoryStoreBackend;
+}
+
+export interface MemoryStoreResolution {
+  store: MemoryStoreBackend;
+  backend: MemoryBackend;
+  requestedBackend: MemoryBackend;
+  fallbackReason?: string;
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function createMemoryStoreResolved(options?: CreateMemoryStoreOptions): MemoryStoreResolution {
+  const dataDir = options?.dataDir ? resolve(options.dataDir) : resolveDataDir();
+  const requestedBackend = resolveMemoryBackend(options?.backend);
+  if (requestedBackend === 'sqlite') {
+    const strictSqlite = options?.strictSqlite ?? isTruthyEnv(process.env.BAK_MEMORY_SQLITE_STRICT);
+    const sqliteFactory = options?.sqliteFactory ?? ((dir: string) => new SqliteMemoryStore(dir));
+    try {
+      return {
+        store: sqliteFactory(dataDir),
+        backend: 'sqlite',
+        requestedBackend
+      };
+    } catch (error) {
+      if (strictSqlite) {
+        throw error;
+      }
+      return {
+        store: new MemoryStore(dataDir),
+        backend: 'json',
+        requestedBackend,
+        fallbackReason: normalizeErrorMessage(error)
+      };
+    }
+  }
+  return {
+    store: new MemoryStore(dataDir),
+    backend: 'json',
+    requestedBackend
+  };
+}
+
+export function createMemoryStore(options?: CreateMemoryStoreOptions): MemoryStoreBackend {
+  return createMemoryStoreResolved(options).store;
 }
 
 export interface MemoryMigrateResult {

@@ -7,7 +7,7 @@ import { startBakDaemon } from './server.js';
 import { runGc } from './gc.js';
 import { runDoctor } from './doctor.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
-import { createMemoryStore, exportMemory, migrateMemoryJsonToSqlite, resolveMemoryBackend } from './memory/factory.js';
+import { createMemoryStoreResolved, exportMemory, migrateMemoryJsonToSqlite, resolveMemoryBackend } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { readEnvInt, resolveDataDir } from './utils.js';
 
@@ -268,13 +268,15 @@ memory
   .action((options) => {
     const dataDir = options.dataDir ? resolve(String(options.dataDir)) : resolveDataDir();
     const backend = resolveMemoryBackend(String(options.backend));
-    const store = createMemoryStore({ dataDir, backend });
-    const payload = exportMemory(store, backend);
+    const resolution = createMemoryStoreResolved({ dataDir, backend });
+    const payload = exportMemory(resolution.store, resolution.backend);
     const outPath = options.out ? resolve(String(options.out)) : join(dataDir, `memory-export-${Date.now()}.json`);
     writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     printResult({
       outPath,
-      backend,
+      backend: resolution.backend,
+      requestedBackend: resolution.requestedBackend,
+      fallbackReason: resolution.fallbackReason,
       episodeCount: payload.episodes.length,
       skillCount: payload.skills.length
     });

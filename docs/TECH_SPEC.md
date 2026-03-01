@@ -59,6 +59,7 @@
 Backends:
 - `json` (default): `memory.json`
 - `sqlite` (opt-in): `memory.sqlite` (WAL, indexed)
+- when sqlite initialization fails, runtime falls back to `json` unless `BAK_MEMORY_SQLITE_STRICT=true`
 
 Common data shape:
 - episodes[]

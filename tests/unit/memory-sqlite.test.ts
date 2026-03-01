@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMemoryStore, migrateMemoryJsonToSqlite } from '../../packages/cli/src/memory/factory.js';
+import { createMemoryStore, createMemoryStoreResolved, migrateMemoryJsonToSqlite } from '../../packages/cli/src/memory/factory.js';
 import { MemoryStore } from '../../packages/cli/src/memory/store.js';
 
 describe('SqliteMemoryStore', () => {
@@ -72,6 +72,52 @@ describe('SqliteMemoryStore', () => {
     expect(sqliteStore.listSkills().length).toBe(1);
 
     sqliteStore.close?.();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('falls back to json backend when sqlite initialization fails', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-sqlite-fallback-'));
+
+    const resolved = createMemoryStoreResolved({
+      dataDir,
+      backend: 'sqlite',
+      sqliteFactory: () => {
+        throw new Error('sqlite unavailable');
+      }
+    });
+
+    expect(resolved.requestedBackend).toBe('sqlite');
+    expect(resolved.backend).toBe('json');
+    expect(resolved.fallbackReason).toContain('sqlite unavailable');
+
+    resolved.store.createSkill({
+      domain: 'example.com',
+      intent: 'fallback works',
+      description: 'json fallback',
+      plan: [],
+      paramsSchema: { fields: {} },
+      healing: { retries: 1 }
+    });
+    expect(resolved.store.listSkills().length).toBe(1);
+
+    resolved.store.close?.();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('throws when strict sqlite mode is enabled', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-sqlite-strict-'));
+
+    expect(() =>
+      createMemoryStoreResolved({
+        dataDir,
+        backend: 'sqlite',
+        strictSqlite: true,
+        sqliteFactory: () => {
+          throw new Error('sqlite init failed');
+        }
+      })
+    ).toThrow('sqlite init failed');
+
     rmSync(dataDir, { recursive: true, force: true });
   });
 });

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createMemoryStore, exportMemory, resolveMemoryBackend } from './memory/factory.js';
+import { createMemoryStoreResolved, exportMemory, resolveMemoryBackend } from './memory/factory.js';
 import { redactText } from './privacy.js';
 import { ensureDir, resolveDataDir } from './utils.js';
 
@@ -208,16 +208,22 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
 
     if (options.includeMemory === true) {
       const resolvedBackend = resolveMemoryBackend(options.memoryBackend);
-      memoryBackend = resolvedBackend;
       try {
-        const store = createMemoryStore({
+        const resolution = createMemoryStoreResolved({
           dataDir,
           backend: resolvedBackend
         });
-        const payload = exportMemory(store, resolvedBackend);
+        memoryBackend = resolution.backend;
+        if (resolution.fallbackReason) {
+          warnings.push(
+            `memory backend fallback: requested=${resolution.requestedBackend} actual=${resolution.backend} reason=${resolution.fallbackReason}`
+          );
+        }
+        const payload = exportMemory(resolution.store, resolution.backend);
         writeFileSync(join(stageDir, 'memory.json'), `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, 'utf8');
         includesMemory = true;
       } catch (error) {
+        memoryBackend = resolvedBackend;
         memoryExportError = error instanceof Error ? error.message : String(error);
         warnings.push(`memory export skipped: ${memoryExportError}`);
       }
