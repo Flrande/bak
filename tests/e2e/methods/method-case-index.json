@@ -1,0 +1,327 @@
+{
+  "session.create": {
+    "successCaseId": "M001-S",
+    "failureCaseId": "M001-F",
+    "suite": "session"
+  },
+  "memory.skills.retrieve": {
+    "successCaseId": "M060-S",
+    "failureCaseId": "M060-F",
+    "suite": "memory"
+  },
+  "page.goto": {
+    "successCaseId": "M010-S",
+    "failureCaseId": "M010-F",
+    "suite": "page"
+  },
+  "page.metrics": {
+    "successCaseId": "M023-S",
+    "failureCaseId": "M023-F",
+    "suite": "page"
+  },
+  "mouse.move": {
+    "successCaseId": "M041-S",
+    "failureCaseId": "M041-F",
+    "suite": "mouse"
+  },
+  "memory.episodes.list": {
+    "successCaseId": "M064-S",
+    "failureCaseId": "M064-F",
+    "suite": "memory"
+  },
+  "page.dom": {
+    "successCaseId": "M019-S",
+    "failureCaseId": "M019-F",
+    "suite": "page"
+  },
+  "page.text": {
+    "successCaseId": "M018-S",
+    "failureCaseId": "M018-F",
+    "suite": "page"
+  },
+  "element.doubleClick": {
+    "successCaseId": "M028-S",
+    "failureCaseId": "M028-F",
+    "suite": "element"
+  },
+  "page.title": {
+    "successCaseId": "M016-S",
+    "failureCaseId": "M016-F",
+    "suite": "page"
+  },
+  "element.check": {
+    "successCaseId": "M032-S",
+    "failureCaseId": "M032-F",
+    "suite": "element"
+  },
+  "memory.replay.explain": {
+    "successCaseId": "M065-S",
+    "failureCaseId": "M065-F",
+    "suite": "memory"
+  },
+  "memory.skills.delete": {
+    "successCaseId": "M062-S",
+    "failureCaseId": "M062-F",
+    "suite": "memory"
+  },
+  "element.focus": {
+    "successCaseId": "M035-S",
+    "failureCaseId": "M035-F",
+    "suite": "element"
+  },
+  "network.clear": {
+    "successCaseId": "M053-S",
+    "failureCaseId": "M053-F",
+    "suite": "network"
+  },
+  "session.info": {
+    "successCaseId": "M003-S",
+    "failureCaseId": "M003-F",
+    "suite": "session"
+  },
+  "tabs.list": {
+    "successCaseId": "M004-S",
+    "failureCaseId": "M004-F",
+    "suite": "tabs"
+  },
+  "memory.recordStart": {
+    "successCaseId": "M056-S",
+    "failureCaseId": "M056-F",
+    "suite": "memory"
+  },
+  "page.snapshot": {
+    "successCaseId": "M015-S",
+    "failureCaseId": "M015-F",
+    "suite": "page"
+  },
+  "page.accessibilityTree": {
+    "successCaseId": "M020-S",
+    "failureCaseId": "M020-F",
+    "suite": "page"
+  },
+  "mouse.click": {
+    "successCaseId": "M042-S",
+    "failureCaseId": "M042-F",
+    "suite": "mouse"
+  },
+  "keyboard.press": {
+    "successCaseId": "M038-S",
+    "failureCaseId": "M038-F",
+    "suite": "keyboard"
+  },
+  "mouse.wheel": {
+    "successCaseId": "M043-S",
+    "failureCaseId": "M043-F",
+    "suite": "mouse"
+  },
+  "tabs.focus": {
+    "successCaseId": "M005-S",
+    "failureCaseId": "M005-F",
+    "suite": "tabs"
+  },
+  "keyboard.hotkey": {
+    "successCaseId": "M040-S",
+    "failureCaseId": "M040-F",
+    "suite": "keyboard"
+  },
+  "element.type": {
+    "successCaseId": "M025-S",
+    "failureCaseId": "M025-F",
+    "suite": "element"
+  },
+  "network.list": {
+    "successCaseId": "M050-S",
+    "failureCaseId": "M050-F",
+    "suite": "network"
+  },
+  "element.get": {
+    "successCaseId": "M037-S",
+    "failureCaseId": "M037-F",
+    "suite": "element"
+  },
+  "keyboard.type": {
+    "successCaseId": "M039-S",
+    "failureCaseId": "M039-F",
+    "suite": "keyboard"
+  },
+  "page.url": {
+    "successCaseId": "M017-S",
+    "failureCaseId": "M017-F",
+    "suite": "page"
+  },
+  "element.dragDrop": {
+    "successCaseId": "M030-S",
+    "failureCaseId": "M030-F",
+    "suite": "element"
+  },
+  "tabs.getActive": {
+    "successCaseId": "M008-S",
+    "failureCaseId": "M008-F",
+    "suite": "tabs"
+  },
+  "page.reload": {
+    "successCaseId": "M013-S",
+    "failureCaseId": "M013-F",
+    "suite": "page"
+  },
+  "page.wait": {
+    "successCaseId": "M014-S",
+    "failureCaseId": "M014-F",
+    "suite": "page"
+  },
+  "memory.skills.list": {
+    "successCaseId": "M058-S",
+    "failureCaseId": "M058-F",
+    "suite": "memory"
+  },
+  "page.forward": {
+    "successCaseId": "M012-S",
+    "failureCaseId": "M012-F",
+    "suite": "page"
+  },
+  "tabs.close": {
+    "successCaseId": "M007-S",
+    "failureCaseId": "M007-F",
+    "suite": "tabs"
+  },
+  "context.enterFrame": {
+    "successCaseId": "M045-S",
+    "failureCaseId": "M045-F",
+    "suite": "context"
+  },
+  "debug.dumpState": {
+    "successCaseId": "M055-S",
+    "failureCaseId": "M055-F",
+    "suite": "debug"
+  },
+  "context.reset": {
+    "successCaseId": "M049-S",
+    "failureCaseId": "M049-F",
+    "suite": "context"
+  },
+  "page.back": {
+    "successCaseId": "M011-S",
+    "failureCaseId": "M011-F",
+    "suite": "page"
+  },
+  "session.close": {
+    "successCaseId": "M002-S",
+    "failureCaseId": "M002-F",
+    "suite": "session"
+  },
+  "page.scrollTo": {
+    "successCaseId": "M021-S",
+    "failureCaseId": "M021-F",
+    "suite": "page"
+  },
+  "memory.skills.run": {
+    "successCaseId": "M061-S",
+    "failureCaseId": "M061-F",
+    "suite": "memory"
+  },
+  "memory.skills.show": {
+    "successCaseId": "M059-S",
+    "failureCaseId": "M059-F",
+    "suite": "memory"
+  },
+  "element.hover": {
+    "successCaseId": "M027-S",
+    "failureCaseId": "M027-F",
+    "suite": "element"
+  },
+  "tabs.get": {
+    "successCaseId": "M009-S",
+    "failureCaseId": "M009-F",
+    "suite": "tabs"
+  },
+  "context.enterShadow": {
+    "successCaseId": "M047-S",
+    "failureCaseId": "M047-F",
+    "suite": "context"
+  },
+  "element.blur": {
+    "successCaseId": "M036-S",
+    "failureCaseId": "M036-F",
+    "suite": "element"
+  },
+  "element.click": {
+    "successCaseId": "M024-S",
+    "failureCaseId": "M024-F",
+    "suite": "element"
+  },
+  "page.viewport": {
+    "successCaseId": "M022-S",
+    "failureCaseId": "M022-F",
+    "suite": "page"
+  },
+  "element.select": {
+    "successCaseId": "M031-S",
+    "failureCaseId": "M031-F",
+    "suite": "element"
+  },
+  "element.scrollIntoView": {
+    "successCaseId": "M034-S",
+    "failureCaseId": "M034-F",
+    "suite": "element"
+  },
+  "tabs.new": {
+    "successCaseId": "M006-S",
+    "failureCaseId": "M006-F",
+    "suite": "tabs"
+  },
+  "context.exitFrame": {
+    "successCaseId": "M046-S",
+    "failureCaseId": "M046-F",
+    "suite": "context"
+  },
+  "file.upload": {
+    "successCaseId": "M044-S",
+    "failureCaseId": "M044-F",
+    "suite": "file"
+  },
+  "memory.recordStop": {
+    "successCaseId": "M057-S",
+    "failureCaseId": "M057-F",
+    "suite": "memory"
+  },
+  "debug.getConsole": {
+    "successCaseId": "M054-S",
+    "failureCaseId": "M054-F",
+    "suite": "debug"
+  },
+  "element.rightClick": {
+    "successCaseId": "M029-S",
+    "failureCaseId": "M029-F",
+    "suite": "element"
+  },
+  "memory.skills.stats": {
+    "successCaseId": "M063-S",
+    "failureCaseId": "M063-F",
+    "suite": "memory"
+  },
+  "network.waitFor": {
+    "successCaseId": "M052-S",
+    "failureCaseId": "M052-F",
+    "suite": "network"
+  },
+  "network.get": {
+    "successCaseId": "M051-S",
+    "failureCaseId": "M051-F",
+    "suite": "network"
+  },
+  "element.uncheck": {
+    "successCaseId": "M033-S",
+    "failureCaseId": "M033-F",
+    "suite": "element"
+  },
+  "element.scroll": {
+    "successCaseId": "M026-S",
+    "failureCaseId": "M026-F",
+    "suite": "element"
+  },
+  "context.exitShadow": {
+    "successCaseId": "M048-S",
+    "failureCaseId": "M048-F",
+    "suite": "context"
+  }
+}

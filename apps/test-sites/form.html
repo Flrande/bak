@@ -56,6 +56,17 @@
         <label for="note-input">Note</label>
         <textarea id="note-input" name="note" rows="3" placeholder="填写备注"></textarea>
       </div>
+      <div class="field">
+        <label for="role-select">Role</label>
+        <select id="role-select" name="role">
+          <option value="">Select role</option>
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="field">
+        <label><input id="agree-check" type="checkbox" /> Agree terms</label>
+      </div>
       <button id="save-btn">提交保存</button>
       <button id="cancel-btn">重置</button>
       <div id="result">Waiting...</div>

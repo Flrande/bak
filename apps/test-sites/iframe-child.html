@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - Iframe Child</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 12px;
+        color: #0f172a;
+      }
+      #frame-result {
+        margin-top: 12px;
+        font-weight: 600;
+        color: #0f766e;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Iframe Child</h2>
+    <input id="frame-input" placeholder="type in iframe" />
+    <button id="frame-btn">Frame Action</button>
+    <div id="frame-result">idle</div>
+    <script>
+      const input = document.getElementById('frame-input');
+      const button = document.getElementById('frame-btn');
+      const result = document.getElementById('frame-result');
+      button.addEventListener('click', () => {
+        result.textContent = `clicked:${input.value || '(empty)'}`;
+      });
+    </script>
+  </body>
+</html>

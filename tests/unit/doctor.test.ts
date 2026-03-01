@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PROTOCOL_VERSION } from '../../packages/protocol/src/types.js';
 import {
   assessActiveTabTelemetry,
   assessHealingTelemetry,
@@ -98,7 +99,7 @@ describe('doctor session.info health assessment', () => {
 
   it('detects aligned protocol versions', () => {
     const check = assessProtocolCompatibility({
-      protocolVersion: 'v1'
+      protocolVersion: PROTOCOL_VERSION
     });
 
     expect(check.ok).toBe(true);
@@ -113,9 +114,19 @@ describe('doctor session.info health assessment', () => {
     expect(check.severity).toBe('warn');
   });
 
+  it('passes when protocol versions are compatible', () => {
+    const check = assessProtocolCompatibility({
+      protocolVersion: 'v1',
+      compatibleProtocolVersions: ['v1', PROTOCOL_VERSION]
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('compatible');
+  });
+
   it('warns when protocol version mismatches', () => {
     const check = assessProtocolCompatibility({
-      protocolVersion: 'v2'
+      protocolVersion: 'v0'
     });
 
     expect(check.ok).toBe(false);

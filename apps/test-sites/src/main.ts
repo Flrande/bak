@@ -223,6 +223,71 @@ function initSpaPage(): void {
   updateQueueButtonState();
 }
 
+function initIframeHostPage(): void {
+  const ping = document.getElementById('host-ping') as HTMLButtonElement;
+  const status = document.getElementById('host-status') as HTMLDivElement;
+  ping.addEventListener('click', () => {
+    status.textContent = `host:ping@${Date.now()}`;
+  });
+}
+
+function initShadowPage(): void {
+  const host = document.getElementById('shadow-host') as HTMLDivElement;
+  const status = document.getElementById('shadow-status') as HTMLDivElement;
+  const shadow = host.attachShadow({ mode: 'open' });
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = `
+    <style>
+      .shadow-wrap { border: 1px solid #94a3b8; border-radius: 8px; padding: 12px; background: #fff7ed; }
+      .shadow-btn { border: none; border-radius: 6px; padding: 8px 12px; background: #ea580c; color: white; cursor: pointer; }
+      .shadow-input { margin-top: 8px; width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #94a3b8; border-radius: 6px; }
+    </style>
+    <div class="shadow-wrap">
+      <button id="shadow-btn" class="shadow-btn">Shadow Action</button>
+      <input id="shadow-input" class="shadow-input" placeholder="shadow value" />
+    </div>
+  `;
+  shadow.appendChild(wrapper);
+
+  const button = shadow.getElementById('shadow-btn') as HTMLButtonElement;
+  const input = shadow.getElementById('shadow-input') as HTMLInputElement;
+  button.addEventListener('click', () => {
+    status.textContent = `shadow:${input.value || '(empty)'}`;
+  });
+}
+
+function initUploadPage(): void {
+  const input = document.getElementById('file-input') as HTMLInputElement;
+  const result = document.getElementById('upload-result') as HTMLDivElement;
+  input.addEventListener('change', () => {
+    result.textContent = `files:${input.files?.length ?? 0}`;
+  });
+}
+
+function initNetworkPage(): void {
+  const okButton = document.getElementById('fetch-ok') as HTMLButtonElement;
+  const failButton = document.getElementById('fetch-fail') as HTMLButtonElement;
+  const log = document.getElementById('network-log') as HTMLDivElement;
+
+  const request = async (status: number): Promise<void> => {
+    log.textContent = `fetch:${status}:pending`;
+    try {
+      const response = await fetch(`/api/slow?delay=250&status=${status}`);
+      const payload = (await response.json()) as { status: number; ok: boolean };
+      log.textContent = `fetch:${payload.status}:${payload.ok ? 'ok' : 'fail'}`;
+    } catch (error) {
+      log.textContent = `fetch:${status}:error:${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+
+  okButton.addEventListener('click', () => {
+    void request(200);
+  });
+  failButton.addEventListener('click', () => {
+    void request(503);
+  });
+}
+
 if (page === 'form') {
   initFormPage();
 }
@@ -237,4 +302,20 @@ if (page === 'controlled') {
 
 if (page === 'spa') {
   initSpaPage();
+}
+
+if (page === 'iframe-host') {
+  initIframeHostPage();
+}
+
+if (page === 'shadow') {
+  initShadowPage();
+}
+
+if (page === 'upload') {
+  initUploadPage();
+}
+
+if (page === 'network') {
+  initNetworkPage();
 }
