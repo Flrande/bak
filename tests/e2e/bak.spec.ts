@@ -190,6 +190,7 @@ test.describe('bak e2e', () => {
             extensionConnected: boolean;
             connectionState: string;
             extensionVersion: string | null;
+            activeTab: { id: number; title: string; url: string } | null;
             lastSeenTs: number | null;
             lastHeartbeatTs: number | null;
           };
@@ -197,6 +198,7 @@ test.describe('bak e2e', () => {
             info.extensionConnected &&
             info.connectionState === 'connected' &&
             typeof info.extensionVersion === 'string' &&
+            (info.activeTab === null || typeof info.activeTab.id === 'number') &&
             typeof info.lastSeenTs === 'number' &&
             typeof info.lastHeartbeatTs === 'number'
           );
@@ -222,6 +224,12 @@ test.describe('bak e2e', () => {
     await page.bringToFront();
     await expect(page.locator('#name-input')).toBeVisible();
     const tabId = await findTabIdByUrl('/form.html');
+    const infoWithActiveTab = (await rpcCall('session.info', {})) as {
+      activeTab: { id: number; title: string; url: string } | null;
+    };
+    expect(infoWithActiveTab.activeTab).not.toBeNull();
+    expect(infoWithActiveTab.activeTab?.id).toBe(tabId);
+    expect(infoWithActiveTab.activeTab?.url).toContain('/form.html');
 
     await rpcCall('session.create', { clientName: 'playwright-e2e' });
     await rpcCall('element.type', {

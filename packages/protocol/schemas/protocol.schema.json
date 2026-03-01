@@ -150,6 +150,7 @@
         "connectionState",
         "connectionReason",
         "extensionVersion",
+        "activeTab",
         "recording",
         "heartbeatStale",
         "heartbeatAgeMs",
@@ -166,6 +167,16 @@
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
         "extensionVersion": { "type": ["string", "null"] },
+        "activeTab": {
+          "type": ["object", "null"],
+          "required": ["id", "title", "url"],
+          "properties": {
+            "id": { "type": "number" },
+            "title": { "type": "string" },
+            "url": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "recording": { "type": "boolean" },
         "heartbeatStale": { "type": "boolean" },
         "heartbeatAgeMs": { "type": ["number", "null"] },

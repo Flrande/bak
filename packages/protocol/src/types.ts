@@ -174,6 +174,11 @@ export interface MethodMap {
       connectionState: 'connecting' | 'connected' | 'disconnected';
       connectionReason: string | null;
       extensionVersion: string | null;
+      activeTab: {
+        id: number;
+        title: string;
+        url: string;
+      } | null;
       recording: boolean;
       heartbeatStale: boolean;
       heartbeatAgeMs: number | null;

@@ -239,22 +239,35 @@ export class BakService {
   }
 
   private async activeLocation(): Promise<{ domain: string; path: string }> {
-    if (!this.driver.isConnected()) {
+    const active = await this.activeTabSummary();
+    if (!active?.url) {
       return { domain: 'unknown', path: '/' };
+    }
+
+    return {
+      domain: getDomain(active.url),
+      path: getPathname(active.url)
+    };
+  }
+
+  private async activeTabSummary(): Promise<{ id: number; title: string; url: string } | null> {
+    if (!this.driver.isConnected()) {
+      return null;
     }
 
     try {
       const tabs = await this.driver.tabsList();
       const active = tabs.tabs.find((tab) => tab.active) ?? tabs.tabs[0];
-      if (!active?.url) {
-        return { domain: 'unknown', path: '/' };
+      if (!active) {
+        return null;
       }
       return {
-        domain: getDomain(active.url),
-        path: getPathname(active.url)
+        id: active.id,
+        title: active.title,
+        url: active.url
       };
     } catch {
-      return { domain: 'unknown', path: '/' };
+      return null;
     }
   }
 
@@ -468,6 +481,7 @@ export class BakService {
       }
       case 'session.info': {
         const connection = this.effectiveConnection();
+        const activeTab = await this.activeTabSummary();
         return {
           sessionId: this.sessionId,
           paired: Boolean(this.pairingStore.getToken()),
@@ -475,6 +489,7 @@ export class BakService {
           connectionState: connection.connectionState,
           connectionReason: connection.connectionReason,
           extensionVersion: connection.raw.extensionVersion,
+          activeTab,
           recording: Boolean(this.recording),
           heartbeatStale: connection.heartbeatStale,
           heartbeatAgeMs: connection.heartbeatAgeMs,
