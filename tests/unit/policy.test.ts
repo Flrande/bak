@@ -77,4 +77,73 @@ describe('policy matcher', () => {
     expect(tags).toContain('submit');
     expect(tags).toContain('highRisk');
   });
+
+  it('prefers deny over allow when both rules match', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-priority-'));
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'allow-upload',
+            action: 'element.click',
+            domain: 'example.com',
+            tag: 'fileUpload',
+            decision: 'allow'
+          },
+          {
+            id: 'deny-upload',
+            action: 'element.click',
+            domain: 'example.com',
+            tag: 'fileUpload',
+            decision: 'deny'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'element.click',
+      domain: 'example.com',
+      path: '/upload',
+      locator: { css: 'input[type="file"]', name: 'Upload file' }
+    });
+
+    expect(decision.decision).toBe('deny');
+    expect(decision.ruleId).toBe('deny-upload');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('supports wildcard domain and pathPrefix rule matching', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-wildcard-'));
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'confirm-billing',
+            action: 'element.click',
+            domain: '*.example.com',
+            pathPrefix: '/billing',
+            decision: 'requireConfirm'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'element.click',
+      domain: 'portal.example.com',
+      path: '/billing/invoices',
+      locator: { name: 'Open invoice' }
+    });
+
+    expect(decision.decision).toBe('requireConfirm');
+    expect(decision.ruleId).toBe('confirm-billing');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
 });

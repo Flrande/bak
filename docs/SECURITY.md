@@ -37,6 +37,7 @@
 7. Policy engine + audit (MVP)
 - CLI loads local policy file `.bak-data/.bak-policy.json` (override with `BAK_POLICY_PATH`)
 - decisions: `allow | deny | requireConfirm`
+- when multiple rules match, most conservative decision wins (`deny > requireConfirm > allow`)
 - default conservative behavior:
   - file upload actions denied
   - destructive/payment/submit-like actions require confirmation

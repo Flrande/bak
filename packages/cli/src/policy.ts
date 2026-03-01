@@ -142,6 +142,16 @@ function defaultDecision(context: EvaluatedPolicyContext): PolicyDecision {
   };
 }
 
+function decisionRank(decision: PolicyDecisionType): number {
+  if (decision === 'deny') {
+    return 3;
+  }
+  if (decision === 'requireConfirm') {
+    return 2;
+  }
+  return 1;
+}
+
 function loadRules(policyPath: string): PolicyRule[] {
   if (!existsSync(policyPath)) {
     return [];
@@ -198,14 +208,26 @@ export class PolicyEngine {
       tags: detectPolicyTags(context.locator)
     };
 
+    let matchedRule: PolicyRule | null = null;
     for (const rule of this.rules) {
       if (!ruleMatches(rule, enriched)) {
         continue;
       }
+      if (!matchedRule) {
+        matchedRule = rule;
+        continue;
+      }
+
+      if (decisionRank(rule.decision) > decisionRank(matchedRule.decision)) {
+        matchedRule = rule;
+      }
+    }
+
+    if (matchedRule) {
       return {
-        decision: rule.decision,
-        reason: rule.reason ?? `matched policy rule ${rule.id ?? 'unnamed'}`,
-        ruleId: rule.id,
+        decision: matchedRule.decision,
+        reason: matchedRule.reason ?? `matched policy rule ${matchedRule.id ?? 'unnamed'}`,
+        ruleId: matchedRule.id,
         source: 'rule'
       };
     }
