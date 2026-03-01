@@ -186,4 +186,35 @@ describe('policy matcher', () => {
     expect(evaluation.audit.tags).toContain('destructive');
     rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it('ignores invalid locatorPattern regex and falls back to default decision', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-invalid-regex-'));
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'broken-regex-rule',
+            action: 'element.click',
+            domain: 'example.com',
+            locatorPattern: '[',
+            decision: 'allow'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'element.click',
+      domain: 'example.com',
+      path: '/upload',
+      locator: { css: 'input[type="file"]' }
+    });
+
+    expect(decision.source).toBe('default');
+    expect(decision.decision).toBe('deny');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
 });

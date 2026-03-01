@@ -66,4 +66,25 @@ describe('doctor session.info health assessment', () => {
     expect(check.message).toContain('drift');
     expect(check.severity).toBe('warn');
   });
+
+  it('warns when extension version is missing', () => {
+    const check = assessVersionCompatibility({}, '0.1.0');
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('missing');
+    expect(check.severity).toBe('warn');
+  });
+
+  it('warns when semver format is invalid', () => {
+    const check = assessVersionCompatibility(
+      {
+        extensionVersion: 'dev-build'
+      },
+      '0.1.0-dev'
+    );
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('unable to compare');
+    expect(check.severity).toBe('warn');
+  });
 });
