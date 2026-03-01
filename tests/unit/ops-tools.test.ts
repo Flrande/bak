@@ -77,6 +77,11 @@ describe('ops tools', () => {
             message: 'cli/extension version drift detected (same major)',
             severity: 'warn'
           },
+          memoryBackend: {
+            ok: false,
+            message: 'memory backend fallback detected',
+            severity: 'warn'
+          },
           rpcConnectionHealth: {
             ok: false,
             message: 'extension heartbeat is stale'
@@ -90,6 +95,7 @@ describe('ops tools', () => {
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toContain('version compatibility warning: cli/extension version drift detected (same major)');
+    expect(result.warnings).toContain('memory backend warning: memory backend fallback detected');
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
