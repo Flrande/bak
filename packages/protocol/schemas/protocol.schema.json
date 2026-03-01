@@ -150,6 +150,7 @@
         "connectionState",
         "connectionReason",
         "extensionVersion",
+        "memoryBackend",
         "activeTab",
         "recording",
         "heartbeatStale",
@@ -171,6 +172,16 @@
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
         "extensionVersion": { "type": ["string", "null"] },
+        "memoryBackend": {
+          "type": "object",
+          "required": ["requestedBackend", "backend", "fallbackReason"],
+          "properties": {
+            "requestedBackend": { "type": "string", "enum": ["json", "sqlite"] },
+            "backend": { "type": "string", "enum": ["json", "sqlite"] },
+            "fallbackReason": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
         "activeTab": {
           "type": ["object", "null"],
           "required": ["id", "title", "url"],

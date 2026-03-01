@@ -23,6 +23,7 @@ import {
   rankCandidates,
   retrieveSkills
 } from './memory/extract.js';
+import { resolveMemoryBackend, type MemoryBackend } from './memory/factory.js';
 import type { MemoryStoreBackend } from './memory/store.js';
 import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy.js';
 import { redactElements } from './privacy.js';
@@ -41,6 +42,12 @@ interface RecordingState {
 
 export interface ServiceHeartbeatConfig {
   intervalMs?: number;
+}
+
+export interface ServiceMemoryRuntime {
+  requestedBackend: MemoryBackend;
+  backend: MemoryBackend;
+  fallbackReason?: string;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -79,6 +86,7 @@ export class BakService {
   private readonly dataDir: string;
   private readonly policyEngine: PolicyEngine;
   private readonly memoryRetrieveMinScore: number;
+  private readonly memoryRuntime: ServiceMemoryRuntime;
 
   private sessionId: string | null = null;
   private currentTraceId: string = '';
@@ -92,7 +100,8 @@ export class BakService {
     pairingStore: PairingStore,
     traceStore: TraceStore,
     memoryStore: MemoryStoreBackend,
-    heartbeatConfig: ServiceHeartbeatConfig = {}
+    heartbeatConfig: ServiceHeartbeatConfig = {},
+    memoryRuntime?: ServiceMemoryRuntime
   ) {
     this.driver = driver;
     this.pairingStore = pairingStore;
@@ -104,6 +113,11 @@ export class BakService {
     this.memoryRetrieveMinScore = Number.isFinite(configuredRetrieveMinScore)
       ? Math.min(1, Math.max(0, configuredRetrieveMinScore))
       : 0.2;
+    const requestedBackend = resolveMemoryBackend();
+    this.memoryRuntime = memoryRuntime ?? {
+      requestedBackend,
+      backend: requestedBackend
+    };
     const configured = heartbeatConfig.intervalMs ?? 10_000;
     this.heartbeatIntervalMs = Math.max(500, configured);
     this.heartbeatStaleAfterMs = Math.max(this.heartbeatIntervalMs * 3, 5_000);
@@ -494,6 +508,11 @@ export class BakService {
           connectionState: connection.connectionState,
           connectionReason: connection.connectionReason,
           extensionVersion: connection.raw.extensionVersion,
+          memoryBackend: {
+            requestedBackend: this.memoryRuntime.requestedBackend,
+            backend: this.memoryRuntime.backend,
+            fallbackReason: this.memoryRuntime.fallbackReason ?? null
+          },
           activeTab,
           recording: Boolean(this.recording),
           heartbeatStale: connection.heartbeatStale,
@@ -825,6 +844,11 @@ export class BakService {
     connectionState: 'connecting' | 'connected' | 'disconnected';
     connectionReason: string | null;
     extensionVersion: string | null;
+    memoryBackend: {
+      requestedBackend: MemoryBackend;
+      backend: MemoryBackend;
+      fallbackReason: string | null;
+    };
     recording: boolean;
     heartbeatStale: boolean;
     heartbeatAgeMs: number | null;
@@ -847,6 +871,11 @@ export class BakService {
       connectionState: connection.connectionState,
       connectionReason: connection.connectionReason,
       extensionVersion: connection.raw.extensionVersion,
+      memoryBackend: {
+        requestedBackend: this.memoryRuntime.requestedBackend,
+        backend: this.memoryRuntime.backend,
+        fallbackReason: this.memoryRuntime.fallbackReason ?? null
+      },
       recording: Boolean(this.recording),
       heartbeatStale: connection.heartbeatStale,
       heartbeatAgeMs: connection.heartbeatAgeMs,

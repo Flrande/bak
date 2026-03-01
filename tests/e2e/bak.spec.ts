@@ -190,6 +190,11 @@ test.describe('bak e2e', () => {
             extensionConnected: boolean;
             connectionState: string;
             extensionVersion: string | null;
+            memoryBackend: {
+              requestedBackend: 'json' | 'sqlite';
+              backend: 'json' | 'sqlite';
+              fallbackReason: string | null;
+            };
             activeTab: { id: number; title: string; url: string } | null;
             lastSeenTs: number | null;
             lastHeartbeatTs: number | null;
@@ -202,6 +207,9 @@ test.describe('bak e2e', () => {
             info.extensionConnected &&
             info.connectionState === 'connected' &&
             typeof info.extensionVersion === 'string' &&
+            (info.memoryBackend.backend === 'json' || info.memoryBackend.backend === 'sqlite') &&
+            (info.memoryBackend.requestedBackend === 'json' || info.memoryBackend.requestedBackend === 'sqlite') &&
+            (info.memoryBackend.fallbackReason === null || typeof info.memoryBackend.fallbackReason === 'string') &&
             (info.activeTab === null || typeof info.activeTab.id === 'number') &&
             typeof info.lastSeenTs === 'number' &&
             typeof info.lastHeartbeatTs === 'number' &&

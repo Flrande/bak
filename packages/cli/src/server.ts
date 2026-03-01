@@ -30,6 +30,10 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
   const heartbeatIntervalMs = readEnvInt('BAK_HEARTBEAT_MS', 10_000);
   const service = new BakService(driver, pairingStore, traceStore, memoryStore, {
     intervalMs: heartbeatIntervalMs
+  }, {
+    requestedBackend: memoryResolution.requestedBackend,
+    backend: memoryResolution.backend,
+    fallbackReason: memoryResolution.fallbackReason
   });
   service.seedSessionIfNeeded();
   service.startHeartbeat();

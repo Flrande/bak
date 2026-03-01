@@ -174,6 +174,11 @@ export interface MethodMap {
       connectionState: 'connecting' | 'connected' | 'disconnected';
       connectionReason: string | null;
       extensionVersion: string | null;
+      memoryBackend: {
+        requestedBackend: 'json' | 'sqlite';
+        backend: 'json' | 'sqlite';
+        fallbackReason: string | null;
+      };
       activeTab: {
         id: number;
         title: string;

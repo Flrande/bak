@@ -67,6 +67,7 @@ Response failure:
 - `connectionState` (`connecting|connected|disconnected`)
 - `connectionReason`
 - `extensionVersion`
+- `memoryBackend` (`requestedBackend`, `backend`, `fallbackReason`)
 - `activeTab` (`null` or `{ id, title, url }`)
 - `recording`
 - `heartbeatStale`
