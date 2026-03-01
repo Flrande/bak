@@ -26,7 +26,11 @@ export class ExtensionDriver implements BrowserDriver {
       lastError: stats.lastError,
       connectedAtTs: stats.connectedAtTs,
       disconnectedAtTs: stats.disconnectedAtTs,
-      pendingRequests: stats.pendingRequests
+      pendingRequests: stats.pendingRequests,
+      totalRequests: stats.totalRequests,
+      totalFailures: stats.totalFailures,
+      totalTimeouts: stats.totalTimeouts,
+      totalNotReady: stats.totalNotReady
     };
   }
 

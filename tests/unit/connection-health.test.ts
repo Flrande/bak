@@ -16,7 +16,11 @@ describe('connection health', () => {
         lastError: null,
         connectedAtTs: 9_000,
         disconnectedAtTs: null,
-        pendingRequests: 0
+        pendingRequests: 0,
+        totalRequests: 0,
+        totalFailures: 0,
+        totalTimeouts: 0,
+        totalNotReady: 0
       },
       now,
       1_000
@@ -42,7 +46,11 @@ describe('connection health', () => {
         lastError: null,
         connectedAtTs: 9_000,
         disconnectedAtTs: null,
-        pendingRequests: 2
+        pendingRequests: 2,
+        totalRequests: 10,
+        totalFailures: 2,
+        totalTimeouts: 1,
+        totalNotReady: 0
       },
       now,
       5_000
@@ -68,7 +76,11 @@ describe('connection health', () => {
         lastError: null,
         connectedAtTs: null,
         disconnectedAtTs: 5_000,
-        pendingRequests: 0
+        pendingRequests: 0,
+        totalRequests: 0,
+        totalFailures: 0,
+        totalTimeouts: 0,
+        totalNotReady: 0
       },
       7_000,
       5_000

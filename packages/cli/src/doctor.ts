@@ -355,7 +355,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const cliVersion = readCliVersion();
   const sessionInfo = await probeRpcSessionInfo(options.rpcWsPort);
 
-  const checks = {
+  const checks: DoctorResult['checks'] = {
     dataDirWritable: checkDataDirWritable(dataDir),
     pairing: checkPairing(dataDir),
     extensionBridgePort: await probePortAvailable(options.port),

@@ -193,6 +193,10 @@ test.describe('bak e2e', () => {
             activeTab: { id: number; title: string; url: string } | null;
             lastSeenTs: number | null;
             lastHeartbeatTs: number | null;
+            bridgeTotalRequests: number;
+            bridgeTotalFailures: number;
+            bridgeTotalTimeouts: number;
+            bridgeTotalNotReady: number;
           };
           return (
             info.extensionConnected &&
@@ -200,7 +204,11 @@ test.describe('bak e2e', () => {
             typeof info.extensionVersion === 'string' &&
             (info.activeTab === null || typeof info.activeTab.id === 'number') &&
             typeof info.lastSeenTs === 'number' &&
-            typeof info.lastHeartbeatTs === 'number'
+            typeof info.lastHeartbeatTs === 'number' &&
+            typeof info.bridgeTotalRequests === 'number' &&
+            typeof info.bridgeTotalFailures === 'number' &&
+            typeof info.bridgeTotalTimeouts === 'number' &&
+            typeof info.bridgeTotalNotReady === 'number'
           );
         },
         { timeout: 20_000 }

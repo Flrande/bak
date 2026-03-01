@@ -27,6 +27,10 @@ export interface DriverConnectionStatus {
   connectedAtTs: number | null;
   disconnectedAtTs: number | null;
   pendingRequests: number;
+  totalRequests: number;
+  totalFailures: number;
+  totalTimeouts: number;
+  totalNotReady: number;
 }
 
 export interface BrowserDriver {

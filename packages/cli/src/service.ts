@@ -502,7 +502,11 @@ export class BakService {
           lastSeenTs: connection.raw.lastSeenTs,
           lastHeartbeatTs: connection.raw.lastHeartbeatTs,
           bridgePendingRequests: connection.raw.pendingRequests,
-          bridgeLastError: connection.raw.lastError
+          bridgeLastError: connection.raw.lastError,
+          bridgeTotalRequests: connection.raw.totalRequests,
+          bridgeTotalFailures: connection.raw.totalFailures,
+          bridgeTotalTimeouts: connection.raw.totalTimeouts,
+          bridgeTotalNotReady: connection.raw.totalNotReady
         } as MethodResult<TMethod>;
       }
       case 'tabs.list': {
@@ -829,6 +833,10 @@ export class BakService {
     lastHeartbeatTs: number | null;
     bridgePendingRequests: number;
     bridgeLastError: string | null;
+    bridgeTotalRequests: number;
+    bridgeTotalFailures: number;
+    bridgeTotalTimeouts: number;
+    bridgeTotalNotReady: number;
     domain?: string;
   } {
     const connection = this.effectiveConnection();
@@ -847,6 +855,10 @@ export class BakService {
       lastHeartbeatTs: connection.raw.lastHeartbeatTs,
       bridgePendingRequests: connection.raw.pendingRequests,
       bridgeLastError: connection.raw.lastError,
+      bridgeTotalRequests: connection.raw.totalRequests,
+      bridgeTotalFailures: connection.raw.totalFailures,
+      bridgeTotalTimeouts: connection.raw.totalTimeouts,
+      bridgeTotalNotReady: connection.raw.totalNotReady,
       domain: this.recording?.domain
     };
   }

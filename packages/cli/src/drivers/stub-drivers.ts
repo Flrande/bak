@@ -21,7 +21,11 @@ export abstract class StubDriver implements BrowserDriver {
       lastError: 'stub-driver',
       connectedAtTs: null,
       disconnectedAtTs: Date.now(),
-      pendingRequests: 0
+      pendingRequests: 0,
+      totalRequests: 0,
+      totalFailures: 0,
+      totalTimeouts: 0,
+      totalNotReady: 0
     };
   }
 

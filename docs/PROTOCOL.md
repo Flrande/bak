@@ -76,6 +76,10 @@ Response failure:
 - `lastHeartbeatTs`
 - `bridgePendingRequests`
 - `bridgeLastError`
+- `bridgeTotalRequests`
+- `bridgeTotalFailures`
+- `bridgeTotalTimeouts`
+- `bridgeTotalNotReady`
 
 When heartbeat age exceeds `staleAfterMs`, service reports `connectionState=disconnected` with `connectionReason=heartbeat-timeout`.
 

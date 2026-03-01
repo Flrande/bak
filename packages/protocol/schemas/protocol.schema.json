@@ -158,7 +158,11 @@
         "lastSeenTs",
         "lastHeartbeatTs",
         "bridgePendingRequests",
-        "bridgeLastError"
+        "bridgeLastError",
+        "bridgeTotalRequests",
+        "bridgeTotalFailures",
+        "bridgeTotalTimeouts",
+        "bridgeTotalNotReady"
       ],
       "properties": {
         "sessionId": { "type": ["string", "null"] },
@@ -184,7 +188,11 @@
         "lastSeenTs": { "type": ["number", "null"] },
         "lastHeartbeatTs": { "type": ["number", "null"] },
         "bridgePendingRequests": { "type": "number" },
-        "bridgeLastError": { "type": ["string", "null"] }
+        "bridgeLastError": { "type": ["string", "null"] },
+        "bridgeTotalRequests": { "type": "number" },
+        "bridgeTotalFailures": { "type": "number" },
+        "bridgeTotalTimeouts": { "type": "number" },
+        "bridgeTotalNotReady": { "type": "number" }
       },
       "additionalProperties": false
     }

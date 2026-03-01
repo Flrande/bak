@@ -187,6 +187,10 @@ export interface MethodMap {
       lastHeartbeatTs: number | null;
       bridgePendingRequests: number;
       bridgeLastError: string | null;
+      bridgeTotalRequests: number;
+      bridgeTotalFailures: number;
+      bridgeTotalTimeouts: number;
+      bridgeTotalNotReady: number;
     };
   };
   'tabs.list': {
