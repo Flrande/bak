@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - SPA Async</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 20px;
+        color: #0f172a;
+        background: linear-gradient(160deg, #eff6ff, #f0fdf4);
+      }
+      .panel {
+        max-width: 860px;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        padding: 18px;
+        background: white;
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .tabs button {
+        border: 1px solid #94a3b8;
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: #f8fafc;
+        cursor: pointer;
+      }
+      #route-spinner {
+        margin-top: 10px;
+        font-size: 13px;
+        color: #1d4ed8;
+      }
+      .route-panel {
+        margin-top: 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 12px;
+        background: #f8fafc;
+      }
+      .queue {
+        margin-top: 14px;
+      }
+      .queue input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .queue button {
+        margin-top: 10px;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        background: #2563eb;
+        color: white;
+        cursor: pointer;
+      }
+      .queue button:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
+      }
+      #task-list {
+        margin-top: 12px;
+        padding-left: 18px;
+      }
+      #queue-status {
+        margin-top: 10px;
+        font-size: 13px;
+        color: #334155;
+      }
+    </style>
+  </head>
+  <body data-page="spa">
+    <div class="panel">
+      <a href="/">Back</a>
+      <h1>SPA Async Playground</h1>
+      <div id="route-label">Route: dashboard</div>
+
+      <div class="tabs">
+        <button id="tab-dashboard">Dashboard</button>
+        <button id="tab-automation">Automation</button>
+      </div>
+
+      <div id="route-spinner" style="display: none">Loading route...</div>
+
+      <div class="route-panel">
+        <h2 id="panel-title">Dashboard</h2>
+        <p id="panel-body">Overview widgets are refreshed client-side.</p>
+      </div>
+
+      <div class="queue">
+        <label for="task-input">Task title</label>
+        <input id="task-input" placeholder="type at least 3 chars" />
+        <button id="queue-btn">Queue Task</button>
+        <div id="queue-status">draft: (empty)</div>
+        <ul id="task-list"></ul>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

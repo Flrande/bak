@@ -302,6 +302,39 @@ test.describe('bak e2e', () => {
     await rpcCall('element.click', { tabId, locator: { css: '#blocked-action' } });
     await expect(page.locator('#action-result')).toContainText('clicked');
 
+    await rpcCall('page.goto', { tabId, url: 'http://127.0.0.1:4173/spa.html' });
+    await expect(page).toHaveURL(/spa\.html/);
+    await expect(page.locator('#tab-automation')).toBeVisible();
+
+    await rpcCall('element.click', {
+      tabId,
+      locator: { css: '#tab-automation' }
+    });
+    await rpcCall('page.wait', {
+      tabId,
+      mode: 'text',
+      value: 'Automation Console',
+      timeoutMs: 5000
+    });
+
+    await rpcCall('element.type', {
+      tabId,
+      locator: { css: '#task-input' },
+      text: 'sync receipts',
+      clear: true
+    });
+    await rpcCall('element.click', {
+      tabId,
+      locator: { css: '#queue-btn' }
+    });
+    await rpcCall('page.wait', {
+      tabId,
+      mode: 'selector',
+      value: '#task-list li[data-task-id="1"]',
+      timeoutMs: 5000
+    });
+    await expect(page.locator('#task-list li').first()).toContainText('sync receipts');
+
     const snapshot = (await rpcCall('page.snapshot', { tabId })) as {
       imagePath: string;
       elementsPath: string;

@@ -3,6 +3,11 @@ interface RowItem {
   name: string;
 }
 
+interface QueuedTask {
+  id: number;
+  title: string;
+}
+
 const page = document.body.dataset.page;
 
 function initFormPage(): void {
@@ -126,6 +131,98 @@ function initControlledPage(): void {
   });
 }
 
+function initSpaPage(): void {
+  const routeLabel = document.getElementById('route-label') as HTMLDivElement;
+  const panelTitle = document.getElementById('panel-title') as HTMLHeadingElement;
+  const panelBody = document.getElementById('panel-body') as HTMLParagraphElement;
+  const spinner = document.getElementById('route-spinner') as HTMLDivElement;
+  const tabDashboard = document.getElementById('tab-dashboard') as HTMLButtonElement;
+  const tabAutomation = document.getElementById('tab-automation') as HTMLButtonElement;
+  const taskInput = document.getElementById('task-input') as HTMLInputElement;
+  const queueBtn = document.getElementById('queue-btn') as HTMLButtonElement;
+  const taskList = document.getElementById('task-list') as HTMLUListElement;
+  const queueStatus = document.getElementById('queue-status') as HTMLDivElement;
+
+  let activeRoute: 'dashboard' | 'automation' = 'dashboard';
+  let taskSeq = 1;
+  const tasks: QueuedTask[] = [];
+
+  const setRouteLoading = (loading: boolean): void => {
+    spinner.style.display = loading ? 'block' : 'none';
+  };
+
+  const renderTasks = (): void => {
+    taskList.innerHTML = '';
+    for (const task of tasks) {
+      const li = document.createElement('li');
+      li.dataset.taskId = String(task.id);
+      li.textContent = `${task.id}. ${task.title}`;
+      taskList.appendChild(li);
+    }
+  };
+
+  const updateQueueButtonState = (): void => {
+    queueBtn.disabled = taskInput.value.trim().length < 3;
+  };
+
+  const renderRoute = (): void => {
+    routeLabel.textContent = `Route: ${activeRoute}`;
+    if (activeRoute === 'dashboard') {
+      panelTitle.textContent = 'Dashboard';
+      panelBody.textContent = 'Overview widgets are refreshed client-side.';
+      return;
+    }
+    panelTitle.textContent = 'Automation Console';
+    panelBody.textContent = 'Queue a task to simulate async SPA rendering.';
+  };
+
+  const navigate = (route: 'dashboard' | 'automation'): void => {
+    if (route === activeRoute) {
+      return;
+    }
+    setRouteLoading(true);
+    window.setTimeout(() => {
+      activeRoute = route;
+      renderRoute();
+      setRouteLoading(false);
+    }, 350);
+  };
+
+  tabDashboard.addEventListener('click', () => navigate('dashboard'));
+  tabAutomation.addEventListener('click', () => navigate('automation'));
+
+  taskInput.addEventListener('input', () => {
+    queueStatus.textContent = `draft: ${taskInput.value.trim() || '(empty)'}`;
+    updateQueueButtonState();
+  });
+
+  queueBtn.addEventListener('click', () => {
+    const title = taskInput.value.trim();
+    if (title.length < 3) {
+      queueStatus.textContent = 'task title too short';
+      updateQueueButtonState();
+      return;
+    }
+
+    queueBtn.disabled = true;
+    queueStatus.textContent = 'queueing task...';
+    window.setTimeout(() => {
+      tasks.push({
+        id: taskSeq++,
+        title
+      });
+      renderTasks();
+      queueStatus.textContent = `queued ${title}`;
+      taskInput.value = '';
+      updateQueueButtonState();
+    }, 450);
+  });
+
+  renderRoute();
+  renderTasks();
+  updateQueueButtonState();
+}
+
 if (page === 'form') {
   initFormPage();
 }
@@ -136,4 +233,8 @@ if (page === 'table') {
 
 if (page === 'controlled') {
   initControlledPage();
+}
+
+if (page === 'spa') {
+  initSpaPage();
 }
