@@ -104,4 +104,8 @@ export class ExtensionDriver implements BrowserDriver {
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }> {
     return this.bridge.request('ui.selectCandidate', { candidates, tabId }, 60_000);
   }
+
+  rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult> {
+    return this.bridge.request<TResult>(method, params, timeoutMs);
+  }
 }

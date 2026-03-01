@@ -2,7 +2,7 @@ import type { BrowserDriver } from './browser-driver.js';
 
 export abstract class StubDriver implements BrowserDriver {
   protected unavailable(name: string): never {
-    throw new Error(`${name} is not implemented in v1`);
+    throw new Error(`${name} is not implemented in v2`);
   }
 
   isConnected(): boolean {
@@ -91,6 +91,10 @@ export abstract class StubDriver implements BrowserDriver {
 
   userSelectCandidate() {
     return this.unavailable('userSelectCandidate');
+  }
+
+  rawRequest() {
+    return this.unavailable('rawRequest');
   }
 }
 

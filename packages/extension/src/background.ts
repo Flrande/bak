@@ -93,6 +93,57 @@ function toError(code: string, message: string, data?: Record<string, unknown>):
   return { code, message, data };
 }
 
+async function waitForTabComplete(tabId: number, timeoutMs = 12_000): Promise<void> {
+  try {
+    const current = await chrome.tabs.get(tabId);
+    if (current.status === 'complete') {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let done = false;
+    const finish = (error?: Error): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    const onUpdated = (updatedTabId: number, changeInfo: { status?: string }): void => {
+      if (updatedTabId !== tabId) {
+        return;
+      }
+      if (changeInfo.status === 'complete') {
+        finish();
+      }
+    };
+
+    const onRemoved = (removedTabId: number): void => {
+      if (removedTabId === tabId) {
+        finish(new Error(`tab removed before load complete: ${tabId}`));
+      }
+    };
+
+    const timer = setTimeout(() => {
+      finish(new Error(`tab load timeout: ${tabId}`));
+    }, timeoutMs);
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+  });
+}
+
 interface WithTabOptions {
   requireSupportedAutomationUrl?: boolean;
 }
@@ -124,16 +175,85 @@ async function withTab(tabId?: number, options: WithTabOptions = {}): Promise<ch
 }
 
 async function sendToContent<TResponse>(tabId: number, message: Record<string, unknown>): Promise<TResponse> {
-  try {
-    return (await chrome.tabs.sendMessage(tabId, message)) as TResponse;
-  } catch (error) {
-    throw toError('E_NOT_READY', 'Content script unavailable', {
-      detail: error instanceof Error ? error.message : String(error)
-    });
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return (await chrome.tabs.sendMessage(tabId, message)) as TResponse;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const retriable =
+        detail.includes('Receiving end does not exist') ||
+        detail.includes('Could not establish connection') ||
+        detail.includes('No tab with id');
+      if (!retriable || attempt >= maxAttempts) {
+        throw toError('E_NOT_READY', 'Content script unavailable', { detail });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    }
   }
+
+  throw toError('E_NOT_READY', 'Content script unavailable');
+}
+
+async function forwardContentRpc(
+  tabId: number,
+  method: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  const response = await sendToContent<{ ok: boolean; result?: unknown; error?: CliResponse['error'] }>(tabId, {
+    type: 'bak.rpc',
+    method,
+    params
+  });
+
+  if (!response.ok) {
+    throw response.error ?? toError('E_INTERNAL', `${method} failed`);
+  }
+
+  return response.result;
 }
 
 async function handleRequest(request: CliRequest): Promise<unknown> {
+  const params = request.params ?? {};
+
+  const rpcForwardMethods = new Set([
+    'page.title',
+    'page.url',
+    'page.text',
+    'page.dom',
+    'page.accessibilityTree',
+    'page.scrollTo',
+    'page.metrics',
+    'element.hover',
+    'element.doubleClick',
+    'element.rightClick',
+    'element.dragDrop',
+    'element.select',
+    'element.check',
+    'element.uncheck',
+    'element.scrollIntoView',
+    'element.focus',
+    'element.blur',
+    'element.get',
+    'keyboard.press',
+    'keyboard.type',
+    'keyboard.hotkey',
+    'mouse.move',
+    'mouse.click',
+    'mouse.wheel',
+    'file.upload',
+    'context.enterFrame',
+    'context.exitFrame',
+    'context.enterShadow',
+    'context.exitShadow',
+    'context.reset',
+    'network.list',
+    'network.get',
+    'network.waitFor',
+    'network.clear',
+    'debug.dumpState'
+  ]);
+
   switch (request.method) {
     case 'session.ping': {
       return { ok: true, ts: Date.now() };
@@ -151,44 +271,108 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           }))
       };
     }
+    case 'tabs.getActive': {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const tab = tabs[0];
+      if (!tab || typeof tab.id !== 'number') {
+        return { tab: null };
+      }
+      return {
+        tab: {
+          id: tab.id,
+          title: tab.title ?? '',
+          url: tab.url ?? '',
+          active: Boolean(tab.active)
+        }
+      };
+    }
+    case 'tabs.get': {
+      const tabId = Number(params.tabId);
+      const tab = await chrome.tabs.get(tabId);
+      if (typeof tab.id !== 'number') {
+        throw toError('E_NOT_FOUND', 'Tab missing id');
+      }
+      return {
+        tab: {
+          id: tab.id,
+          title: tab.title ?? '',
+          url: tab.url ?? '',
+          active: Boolean(tab.active)
+        }
+      };
+    }
     case 'tabs.focus': {
-      const tabId = Number(request.params?.tabId);
+      const tabId = Number(params.tabId);
       await chrome.tabs.update(tabId, { active: true });
       return { ok: true };
     }
     case 'tabs.new': {
-      const tab = await chrome.tabs.create({ url: (request.params?.url as string | undefined) ?? 'about:blank' });
+      const tab = await chrome.tabs.create({ url: (params.url as string | undefined) ?? 'about:blank' });
       return { tabId: tab.id };
     }
     case 'tabs.close': {
-      const tabId = Number(request.params?.tabId);
+      const tabId = Number(params.tabId);
       await chrome.tabs.remove(tabId);
       return { ok: true };
     }
     case 'page.goto': {
-      const tab = await withTab(request.params?.tabId as number | undefined, {
+      const tab = await withTab(params.tabId as number | undefined, {
         requireSupportedAutomationUrl: false
       });
-      await chrome.tabs.update(tab.id!, { url: String(request.params?.url ?? 'about:blank') });
+      await chrome.tabs.update(tab.id!, { url: String(params.url ?? 'about:blank') });
+      await waitForTabComplete(tab.id!);
       return { ok: true };
     }
     case 'page.back': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       await chrome.tabs.goBack(tab.id!);
+      await waitForTabComplete(tab.id!);
       return { ok: true };
     }
     case 'page.forward': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       await chrome.tabs.goForward(tab.id!);
+      await waitForTabComplete(tab.id!);
       return { ok: true };
     }
     case 'page.reload': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       await chrome.tabs.reload(tab.id!);
+      await waitForTabComplete(tab.id!);
       return { ok: true };
     }
+    case 'page.viewport': {
+      const tab = await withTab(params.tabId as number | undefined, {
+        requireSupportedAutomationUrl: false
+      });
+      if (typeof tab.windowId !== 'number') {
+        throw toError('E_NOT_FOUND', 'Tab window unavailable');
+      }
+
+      const width = typeof params.width === 'number' ? Math.max(320, Math.floor(params.width)) : undefined;
+      const height = typeof params.height === 'number' ? Math.max(320, Math.floor(params.height)) : undefined;
+      if (width || height) {
+        await chrome.windows.update(tab.windowId, {
+          width,
+          height
+        });
+      }
+
+      const viewport = (await forwardContentRpc(tab.id!, 'page.viewport', {})) as {
+        width: number;
+        height: number;
+        devicePixelRatio: number;
+      };
+      const viewWidth = typeof width === 'number' ? width : viewport.width ?? tab.width ?? 0;
+      const viewHeight = typeof height === 'number' ? height : viewport.height ?? tab.height ?? 0;
+      return {
+        width: viewWidth,
+        height: viewHeight,
+        devicePixelRatio: viewport.devicePixelRatio
+      };
+    }
     case 'page.snapshot': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       if (!tab.id || !tab.windowId) {
         throw toError('E_NOT_FOUND', 'Tab missing id');
       }
@@ -206,12 +390,12 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       };
     }
     case 'element.click': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
         type: 'bak.performAction',
         action: 'click',
-        locator: request.params?.locator as Locator,
-        requiresConfirm: request.params?.requiresConfirm === true
+        locator: params.locator as Locator,
+        requiresConfirm: params.requiresConfirm === true
       });
       if (!response.ok) {
         throw response.error ?? toError('E_INTERNAL', 'element.click failed');
@@ -219,14 +403,14 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'element.type': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
         type: 'bak.performAction',
         action: 'type',
-        locator: request.params?.locator as Locator,
-        text: String(request.params?.text ?? ''),
-        clear: Boolean(request.params?.clear),
-        requiresConfirm: request.params?.requiresConfirm === true
+        locator: params.locator as Locator,
+        text: String(params.text ?? ''),
+        clear: Boolean(params.clear),
+        requiresConfirm: params.requiresConfirm === true
       });
       if (!response.ok) {
         throw response.error ?? toError('E_INTERNAL', 'element.type failed');
@@ -234,13 +418,13 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'element.scroll': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
         type: 'bak.performAction',
         action: 'scroll',
-        locator: request.params?.locator as Locator,
-        dx: Number(request.params?.dx ?? 0),
-        dy: Number(request.params?.dy ?? 320)
+        locator: params.locator as Locator,
+        dx: Number(params.dx ?? 0),
+        dy: Number(params.dy ?? 320)
       });
       if (!response.ok) {
         throw response.error ?? toError('E_INTERNAL', 'element.scroll failed');
@@ -248,12 +432,12 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'page.wait': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
         type: 'bak.waitFor',
-        mode: String(request.params?.mode ?? 'selector'),
-        value: String(request.params?.value ?? ''),
-        timeoutMs: Number(request.params?.timeoutMs ?? 5000)
+        mode: String(params.mode ?? 'selector'),
+        value: String(params.value ?? ''),
+        timeoutMs: Number(params.timeoutMs ?? 5000)
       });
       if (!response.ok) {
         throw response.error ?? toError('E_TIMEOUT', 'page.wait failed');
@@ -261,20 +445,20 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'debug.getConsole': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ entries: ConsoleEntry[] }>(tab.id!, {
         type: 'bak.getConsole',
-        limit: Number(request.params?.limit ?? 50)
+        limit: Number(params.limit ?? 50)
       });
       return { entries: response.entries };
     }
     case 'ui.selectCandidate': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(params.tabId as number | undefined);
       const response = await sendToContent<{ ok: boolean; selectedEid?: string; error?: CliResponse['error'] }>(
         tab.id!,
         {
           type: 'bak.selectCandidate',
-          candidates: request.params?.candidates
+          candidates: params.candidates
         }
       );
       if (!response.ok || !response.selectedEid) {
@@ -283,6 +467,10 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { selectedEid: response.selectedEid };
     }
     default:
+      if (rpcForwardMethods.has(request.method)) {
+        const tab = await withTab(params.tabId as number | undefined);
+        return forwardContentRpc(tab.id!, request.method, params);
+      }
       throw toError('E_NOT_FOUND', `Unsupported method from CLI bridge: ${request.method}`);
   }
 }

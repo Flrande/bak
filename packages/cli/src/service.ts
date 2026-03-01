@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BakErrorCode,
+  COMPATIBLE_PROTOCOL_VERSIONS,
   PROTOCOL_VERSION,
   type ElementMapItem,
   type Episode,
@@ -31,6 +32,47 @@ import { redactElements, redactText, redactUnknown } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
 import { ensureDir, getDomain, getPathname, id, resolveDataDir } from './utils.js';
+
+const DYNAMIC_FORWARD_METHODS = new Set<string>([
+  'tabs.getActive',
+  'tabs.get',
+  'page.title',
+  'page.url',
+  'page.text',
+  'page.dom',
+  'page.accessibilityTree',
+  'page.scrollTo',
+  'page.viewport',
+  'page.metrics',
+  'element.hover',
+  'element.doubleClick',
+  'element.rightClick',
+  'element.dragDrop',
+  'element.select',
+  'element.check',
+  'element.uncheck',
+  'element.scrollIntoView',
+  'element.focus',
+  'element.blur',
+  'element.get',
+  'keyboard.press',
+  'keyboard.type',
+  'keyboard.hotkey',
+  'mouse.move',
+  'mouse.click',
+  'mouse.wheel',
+  'file.upload',
+  'context.enterFrame',
+  'context.exitFrame',
+  'context.enterShadow',
+  'context.exitShadow',
+  'context.reset',
+  'network.list',
+  'network.get',
+  'network.waitFor',
+  'network.clear',
+  'debug.dumpState'
+]);
 
 interface RecordingState {
   recordingId: string;
@@ -164,6 +206,10 @@ export class BakService {
   private sessionId: string | null = null;
   private currentTraceId: string = '';
   private recording: RecordingState | null = null;
+  private autoRecording: RecordingState | null = null;
+  private readonly autoLearningEnabled = true;
+  private contextFrameDepth = 0;
+  private contextShadowDepth = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatStaleAfterMs: number;
@@ -269,6 +315,7 @@ export class BakService {
   private async withTrace<T>(method: string, params: unknown, action: () => Promise<T>): Promise<T> {
     const traceId = this.currentTraceId || this.traceStore.newTraceId();
     this.currentTraceId = traceId;
+    this.traceStore.append(traceId, { method: 'rpc.start', params: { method } });
     this.traceStore.append(traceId, { method, params: redactTraceParams(method, params) });
 
     try {
@@ -278,6 +325,7 @@ export class BakService {
         params: {},
         result: redactTraceResult(method, result)
       });
+      this.traceStore.append(traceId, { method: 'rpc.success', params: { method } });
       return result;
     } catch (error) {
       const normalized = this.normalizeError(error);
@@ -287,6 +335,13 @@ export class BakService {
         error: {
           code: normalized.bakCode,
           message: redactText(normalized.message)
+        }
+      });
+      this.traceStore.append(traceId, {
+        method: 'rpc.failure',
+        params: {
+          method,
+          bakCode: normalized.bakCode
         }
       });
       throw normalized;
@@ -318,20 +373,120 @@ export class BakService {
   }
 
   private captureStep(step: SkillPlanStep): void {
-    if (!this.recording) {
+    const captureInto = (state: RecordingState | null): void => {
+      if (!state) {
+        return;
+      }
+      state.steps.push(step);
+      if (step.locator?.name) {
+        state.anchors.push(step.locator.name);
+      }
+      if (step.locator?.text) {
+        state.anchors.push(step.locator.text);
+      }
+      if (step.url) {
+        state.anchors.push(step.url);
+      }
+    };
+
+    captureInto(this.recording);
+    if (!this.autoLearningEnabled) {
       return;
     }
-    this.recording.steps.push(step);
 
-    if (step.locator?.name) {
-      this.recording.anchors.push(step.locator.name);
+    if (!this.autoRecording) {
+      const defaultUrl = typeof step.url === 'string' ? step.url : 'about:blank';
+      this.autoRecording = {
+        recordingId: id('auto-recording'),
+        intent: this.deriveAutoIntent(step),
+        domain: inferDomainFromStartUrl(defaultUrl),
+        startUrl: defaultUrl,
+        steps: [],
+        anchors: []
+      };
     }
-    if (step.locator?.text) {
-      this.recording.anchors.push(step.locator.text);
+
+    captureInto(this.autoRecording);
+    this.maybeAutoPromoteSkill();
+  }
+
+  private deriveAutoIntent(step: SkillPlanStep): string {
+    if (step.kind === 'type') {
+      return `fill-${step.locator?.name?.toLowerCase().replace(/\s+/g, '-') ?? 'form'}`;
     }
-    if (step.url) {
-      this.recording.anchors.push(step.url);
+    if (step.kind === 'click') {
+      return `click-${step.locator?.name?.toLowerCase().replace(/\s+/g, '-') ?? 'action'}`;
     }
+    if (step.kind === 'goto') {
+      return `navigate-${inferDomainFromStartUrl(step.url ?? 'about:blank')}`;
+    }
+    return 'auto-flow';
+  }
+
+  private skillFingerprint(plan: SkillPlanStep[]): string {
+    return JSON.stringify(
+      plan.map((step) => ({
+        kind: step.kind,
+        locator: step.locator ?? step.targetCandidates?.[0] ?? null,
+        waitFor: step.waitFor?.value ?? null,
+        url: step.url ?? null
+      }))
+    );
+  }
+
+  private maybeAutoPromoteSkill(): void {
+    if (!this.autoRecording) {
+      return;
+    }
+
+    if (this.autoRecording.steps.length < 3) {
+      return;
+    }
+
+    const candidateEpisode = {
+      domain: this.autoRecording.domain || 'unknown',
+      startUrl: this.autoRecording.startUrl || 'about:blank',
+      intent: this.autoRecording.intent || 'auto-flow',
+      steps: this.autoRecording.steps.slice(),
+      anchors: [...new Set(this.autoRecording.anchors)].slice(0, 20),
+      outcome: 'success' as const,
+      mode: 'auto' as const
+    };
+
+    const skillPayload = extractSkillFromEpisode({
+      ...candidateEpisode,
+      id: id('episode'),
+      createdAt: new Date().toISOString()
+    });
+    const fingerprint = this.skillFingerprint(skillPayload.plan);
+    const existing = this.memoryStore
+      .listSkills({ domain: candidateEpisode.domain, intent: candidateEpisode.intent })
+      .find((item) => item.meta?.fingerprint === fingerprint);
+
+    if (existing) {
+      existing.meta = {
+        ...existing.meta,
+        source: 'auto',
+        fingerprint,
+        learnCount: (existing.meta?.learnCount ?? 1) + 1,
+        lastLearnedAt: new Date().toISOString()
+      };
+      this.memoryStore.updateSkill(existing);
+      this.autoRecording = null;
+      return;
+    }
+
+    this.memoryStore.createEpisode(candidateEpisode);
+    this.memoryStore.createSkill({
+      ...skillPayload,
+      meta: {
+        source: 'auto',
+        fingerprint,
+        learnCount: 1,
+        lastLearnedAt: new Date().toISOString()
+      }
+    });
+    this.autoRecording = null;
   }
 
   private async activeLocation(): Promise<{ domain: string; path: string }> {
@@ -470,6 +625,8 @@ export class BakService {
     step: SkillPlanStep,
     options: { tabId?: number; params?: Record<string, string> }
   ): Promise<{ ok: true; chosen?: Locator; updated?: boolean; healingAttempted: boolean; healingSucceeded: boolean }> {
+    const traceId = this.currentTraceId || this.traceStore.newTraceId();
+    this.currentTraceId = traceId;
     const candidates = (step.targetCandidates ?? []).slice();
     if (step.locator) {
       candidates.unshift(step.locator);
@@ -484,15 +641,28 @@ export class BakService {
 
     for (const candidate of ordered) {
       try {
+        this.traceStore.append(traceId, {
+          method: 'memory.heal.try',
+          params: { strategy: 'candidate', candidate }
+        });
         if (step.kind === 'click') {
           await this.clickWithPolicy(candidate, options.tabId, Boolean(step.requiresConfirmation));
         } else if (step.kind === 'type') {
           const raw = maybeParamValue(step.text ?? '', options.params);
-          await this.typeWithPolicy(candidate, raw, true, options.tabId, Boolean(step.requiresConfirmation));
+          await this.typeWithPolicy(candidate, raw, Boolean(step.clear), options.tabId, Boolean(step.requiresConfirmation));
         }
         return { ok: true, chosen: candidate, healingAttempted: false, healingSucceeded: false };
       } catch (error) {
         const normalized = this.normalizeError(error);
+        this.traceStore.append(traceId, {
+          method: 'memory.heal.tryResult',
+          params: {
+            strategy: 'candidate',
+            candidate,
+            ok: false,
+            bakCode: normalized.bakCode
+          }
+        });
         if (normalized.bakCode === BakErrorCode.E_PERMISSION) {
           throw normalized;
         }
@@ -502,6 +672,12 @@ export class BakService {
 
     const refreshed = await this.driver.pageSnapshot(options.tabId);
     const ranked = rankCandidates(refreshed.elements, ordered, 3);
+    this.traceStore.append(traceId, {
+      method: 'memory.heal.rank',
+      params: {
+        candidateCount: ranked.length
+      }
+    });
 
     if (ranked.length === 0) {
       throw new RpcError('No matching candidate after refresh', 4004, BakErrorCode.E_NOT_FOUND, {
@@ -514,6 +690,10 @@ export class BakService {
       const selected = await this.driver.userSelectCandidate(ranked as ElementMapItem[], options.tabId);
       selectedEid = selected.selectedEid;
     } catch {
+      this.traceStore.append(traceId, {
+        method: 'memory.heal.userSelection',
+        params: { ok: false }
+      });
       throw new RpcError(
         'Need user confirmation to continue',
         4090,
@@ -524,6 +704,10 @@ export class BakService {
         }
       );
     }
+    this.traceStore.append(traceId, {
+      method: 'memory.heal.userSelection',
+      params: { ok: true, selectedEid }
+    });
 
     step.targetCandidates = [{ eid: selectedEid }, ...ordered];
 
@@ -537,7 +721,7 @@ export class BakService {
         await this.clickWithPolicy(retry, options.tabId, Boolean(step.requiresConfirmation));
       } else {
         const raw = maybeParamValue(step.text ?? '', options.params);
-        await this.typeWithPolicy(retry, raw, true, options.tabId, Boolean(step.requiresConfirmation));
+        await this.typeWithPolicy(retry, raw, Boolean(step.clear), options.tabId, Boolean(step.requiresConfirmation));
       }
     } catch (error) {
       const normalized = this.normalizeError(error);
@@ -566,6 +750,22 @@ export class BakService {
       attempts: currentAttempts + Math.max(0, attempts),
       successes: currentSuccesses + Math.max(0, successes)
     };
+    skill.stats.healAttempts = (skill.stats.healAttempts ?? 0) + Math.max(0, attempts);
+    skill.stats.healSuccess = (skill.stats.healSuccess ?? 0) + Math.max(0, successes);
+  }
+
+  private updateRunStats(skill: Skill, success: boolean, retriesUsed = 0, manualIntervention = false): void {
+    skill.stats.runs += 1;
+    if (success) {
+      skill.stats.success += 1;
+    } else {
+      skill.stats.failure += 1;
+    }
+    skill.stats.retriesTotal = (skill.stats.retriesTotal ?? 0) + Math.max(0, retriesUsed);
+    if (manualIntervention) {
+      skill.stats.manualInterventions = (skill.stats.manualInterventions ?? 0) + 1;
+    }
+    skill.stats.lastRunAt = new Date().toISOString();
   }
 
   private async runSkill(skill: Skill, options: { tabId?: number; params?: Record<string, string> }): Promise<SkillRunOutcome> {
@@ -586,6 +786,91 @@ export class BakService {
           step.waitFor.timeoutMs,
           options.tabId
         );
+        continue;
+      }
+
+      if (step.kind === 'hover' && step.locator) {
+        await this.driver.rawRequest('element.hover', { tabId: options.tabId, locator: step.locator });
+        continue;
+      }
+
+      if (step.kind === 'doubleClick' && step.locator) {
+        await this.driver.rawRequest('element.doubleClick', { tabId: options.tabId, locator: step.locator });
+        continue;
+      }
+
+      if (step.kind === 'rightClick' && step.locator) {
+        await this.driver.rawRequest('element.rightClick', { tabId: options.tabId, locator: step.locator });
+        continue;
+      }
+
+      if (step.kind === 'dragDrop' && step.fromLocator && step.toLocator) {
+        await this.driver.rawRequest('element.dragDrop', {
+          tabId: options.tabId,
+          from: step.fromLocator,
+          to: step.toLocator
+        });
+        continue;
+      }
+
+      if (step.kind === 'select' && step.locator) {
+        await this.driver.rawRequest('element.select', {
+          tabId: options.tabId,
+          locator: step.locator,
+          values: step.values ?? []
+        });
+        continue;
+      }
+
+      if (step.kind === 'check' && step.locator) {
+        await this.driver.rawRequest('element.check', { tabId: options.tabId, locator: step.locator });
+        continue;
+      }
+
+      if (step.kind === 'uncheck' && step.locator) {
+        await this.driver.rawRequest('element.uncheck', { tabId: options.tabId, locator: step.locator });
+        continue;
+      }
+
+      if (step.kind === 'upload' && step.locator) {
+        await this.driver.rawRequest('file.upload', {
+          tabId: options.tabId,
+          locator: step.locator,
+          files: step.files ?? []
+        });
+        continue;
+      }
+
+      if (step.kind === 'press' && step.key) {
+        await this.driver.rawRequest('keyboard.press', {
+          tabId: options.tabId,
+          key: step.key
+        });
+        continue;
+      }
+
+      if (step.kind === 'hotkey' && step.keys && step.keys.length > 0) {
+        await this.driver.rawRequest('keyboard.hotkey', {
+          tabId: options.tabId,
+          keys: step.keys
+        });
+        continue;
+      }
+
+      if (step.kind === 'scrollTo') {
+        await this.driver.rawRequest('page.scrollTo', {
+          tabId: options.tabId,
+          x: undefined,
+          y: undefined
+        });
+        continue;
+      }
+
+      if (step.kind === 'scrollIntoView' && step.locator) {
+        await this.driver.rawRequest('element.scrollIntoView', {
+          tabId: options.tabId,
+          locator: step.locator
+        });
         continue;
       }
 
@@ -616,8 +901,7 @@ export class BakService {
       }
     }
 
-    skill.stats.runs += 1;
-    skill.stats.success += 1;
+    this.updateRunStats(skill, true, healingAttempts, false);
     this.applyHealingStats(skill, healingAttempts, healingSuccesses);
     const healing: SkillRunHealingSummary = {
       attempts: healingAttempts,
@@ -641,47 +925,91 @@ export class BakService {
     params: MethodParams<TMethod>
   ): Promise<MethodResult<TMethod>> {
     const args = asRecord(params);
+    if (args.__forceError === true) {
+      return this.withTrace(String(method), params, async () => {
+        throw new RpcError('Forced failure branch', -32602, BakErrorCode.E_INVALID_PARAMS, {
+          forced: true,
+          method: String(method)
+        });
+      }) as Promise<MethodResult<TMethod>>;
+    }
 
     switch (method) {
       case 'session.create': {
-        const sessionId = this.newSession();
-        return { sessionId } as MethodResult<TMethod>;
+        return this.withTrace(method, params, async () => {
+          const requestedProtocol = typeof args.protocolVersion === 'string' ? args.protocolVersion : undefined;
+          if (requestedProtocol && !COMPATIBLE_PROTOCOL_VERSIONS.includes(requestedProtocol as never)) {
+            throw new RpcError(
+              `Unsupported protocol version: ${requestedProtocol}`,
+              -32602,
+              BakErrorCode.E_INVALID_PARAMS
+            );
+          }
+          const sessionId = this.newSession();
+          return {
+            sessionId,
+            protocolVersion: PROTOCOL_VERSION,
+            compatibleProtocolVersions: [...COMPATIBLE_PROTOCOL_VERSIONS]
+          } as MethodResult<TMethod>;
+        }) as Promise<MethodResult<TMethod>>;
       }
       case 'session.close': {
-        this.sessionId = null;
-        this.recording = null;
-        return { closed: true } as MethodResult<TMethod>;
+        return this.withTrace(method, params, async () => {
+          const requestedSessionId = typeof args.sessionId === 'string' ? args.sessionId : undefined;
+          if (requestedSessionId && (!this.sessionId || requestedSessionId !== this.sessionId)) {
+            throw new RpcError('Session not found', 4004, BakErrorCode.E_NOT_FOUND);
+          }
+          this.sessionId = null;
+          this.recording = null;
+          this.autoRecording = null;
+          this.contextFrameDepth = 0;
+          this.contextShadowDepth = 0;
+          return { closed: true } as MethodResult<TMethod>;
+        }) as Promise<MethodResult<TMethod>>;
       }
       case 'session.info': {
-        const connection = this.effectiveConnection();
-        const activeTab = await this.activeTabSummary();
-        return {
-          sessionId: this.sessionId,
-          paired: Boolean(this.pairingStore.getToken()),
-          extensionConnected: connection.extensionConnected,
-          connectionState: connection.connectionState,
-          connectionReason: connection.connectionReason,
-          protocolVersion: PROTOCOL_VERSION,
-          extensionVersion: connection.raw.extensionVersion,
-          memoryBackend: {
-            requestedBackend: this.memoryRuntime.requestedBackend,
-            backend: this.memoryRuntime.backend,
-            fallbackReason: this.memoryRuntime.fallbackReason ?? null
-          },
-          activeTab,
-          recording: Boolean(this.recording),
-          heartbeatStale: connection.heartbeatStale,
-          heartbeatAgeMs: connection.heartbeatAgeMs,
-          staleAfterMs: this.heartbeatStaleAfterMs,
-          lastSeenTs: connection.raw.lastSeenTs,
-          lastHeartbeatTs: connection.raw.lastHeartbeatTs,
-          bridgePendingRequests: connection.raw.pendingRequests,
-          bridgeLastError: connection.raw.lastError,
-          bridgeTotalRequests: connection.raw.totalRequests,
-          bridgeTotalFailures: connection.raw.totalFailures,
-          bridgeTotalTimeouts: connection.raw.totalTimeouts,
-          bridgeTotalNotReady: connection.raw.totalNotReady
-        } as MethodResult<TMethod>;
+        return this.withTrace(method, params, async () => {
+          const requestedSessionId = typeof args.sessionId === 'string' ? args.sessionId : undefined;
+          if (requestedSessionId && (!this.sessionId || requestedSessionId !== this.sessionId)) {
+            throw new RpcError('Session not found', 4004, BakErrorCode.E_NOT_FOUND);
+          }
+          const connection = this.effectiveConnection();
+          const activeTab = await this.activeTabSummary();
+          return {
+            sessionId: this.sessionId,
+            paired: Boolean(this.pairingStore.getToken()),
+            extensionConnected: connection.extensionConnected,
+            connectionState: connection.connectionState,
+            connectionReason: connection.connectionReason,
+            protocolVersion: PROTOCOL_VERSION,
+            compatibleProtocolVersions: [...COMPATIBLE_PROTOCOL_VERSIONS],
+            extensionVersion: connection.raw.extensionVersion,
+            memoryBackend: {
+              requestedBackend: this.memoryRuntime.requestedBackend,
+              backend: this.memoryRuntime.backend,
+              fallbackReason: this.memoryRuntime.fallbackReason ?? null
+            },
+            activeTab,
+            context: {
+              frameDepth: this.contextFrameDepth,
+              shadowDepth: this.contextShadowDepth
+            },
+            recording: Boolean(this.recording),
+            autoLearning: this.autoLearningEnabled,
+            heartbeatStale: connection.heartbeatStale,
+            heartbeatAgeMs: connection.heartbeatAgeMs,
+            staleAfterMs: this.heartbeatStaleAfterMs,
+            lastSeenTs: connection.raw.lastSeenTs,
+            lastHeartbeatTs: connection.raw.lastHeartbeatTs,
+            bridgePendingRequests: connection.raw.pendingRequests,
+            bridgeLastError: connection.raw.lastError,
+            bridgeTotalRequests: connection.raw.totalRequests,
+            bridgeTotalFailures: connection.raw.totalFailures,
+            bridgeTotalTimeouts: connection.raw.totalTimeouts,
+            bridgeTotalNotReady: connection.raw.totalNotReady,
+            capabilityCount: DYNAMIC_FORWARD_METHODS.size + 24
+          } as MethodResult<TMethod>;
+        }) as Promise<MethodResult<TMethod>>;
       }
       case 'tabs.list': {
         this.ensurePairing();
@@ -710,6 +1038,28 @@ export class BakService {
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
           const result = await this.driver.tabsClose(Number(args.tabId));
+          return result;
+        }) as Promise<MethodResult<TMethod>>;
+      }
+      case 'tabs.getActive': {
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () => {
+          const result = await this.driver.rawRequest<{ tab: { id: number; title: string; url: string; active: boolean } | null }>(
+            method,
+            args
+          );
+          return result;
+        }) as Promise<MethodResult<TMethod>>;
+      }
+      case 'tabs.get': {
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () => {
+          const result = await this.driver.rawRequest<{ tab: { id: number; title: string; url: string; active: boolean } }>(
+            method,
+            args
+          );
           return result;
         }) as Promise<MethodResult<TMethod>>;
       }
@@ -820,6 +1170,7 @@ export class BakService {
             kind: 'type',
             locator,
             text: sanitizeInputText(locator, text),
+            clear,
             requiresConfirmation: requiresConfirm,
             targetCandidates: buildTargetCandidates(locator)
           });
@@ -887,7 +1238,8 @@ export class BakService {
             intent: recording.intent,
             steps: recording.steps,
             anchors: [...new Set(recording.anchors)].slice(0, 20),
-            outcome
+            outcome,
+            mode: (args.mode as 'manual' | 'auto' | undefined) ?? 'manual'
           });
 
           let skillId: string | undefined;
@@ -907,8 +1259,9 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           const domain = (args.domain as string | undefined) ?? undefined;
           const intent = (args.intent as string | undefined) ?? undefined;
+          const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined;
           const skills = this.memoryStore.listSkills({ domain, intent });
-          return { skills };
+          return { skills: typeof limit === 'number' ? skills.slice(0, limit) : skills };
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'memory.skills.show': {
@@ -928,20 +1281,31 @@ export class BakService {
           }
 
           const anchors = Array.isArray(args.anchors) ? (args.anchors as string[]) : [];
+          const url = (args.url as string | undefined) ?? '';
           let domain = (args.domain as string | undefined) ?? '';
 
+          if (!domain && url) {
+            domain = getDomain(url);
+          }
           if (!domain && this.driver.isConnected()) {
             const tabs = await this.driver.tabsList();
-            domain = tabs.tabs.find((tab) => tab.active)?.url ? getDomain(tabs.tabs.find((tab) => tab.active)!.url) : '';
+            const activeUrl = tabs.tabs.find((tab) => tab.active)?.url;
+            domain = activeUrl ? getDomain(activeUrl) : '';
           }
 
+          const minScore =
+            typeof args.minScore === 'number'
+              ? Math.min(1, Math.max(0, args.minScore))
+              : this.memoryRetrieveMinScore;
+          const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined;
           const skills = retrieveSkills(this.memoryStore.listSkills(), {
             domain: domain || 'unknown',
             intent,
             anchors,
-            minScore: this.memoryRetrieveMinScore
+            url,
+            minScore
           });
-          return { skills };
+          return { skills: typeof limit === 'number' ? skills.slice(0, limit) : skills };
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'memory.skills.delete': {
@@ -951,6 +1315,73 @@ export class BakService {
             throw new RpcError('Skill not found', 4004, BakErrorCode.E_NOT_FOUND);
           }
           return { ok: true };
+        }) as Promise<MethodResult<TMethod>>;
+      }
+      case 'memory.skills.stats': {
+        return this.withTrace(method, params, async () => {
+          const requestedId = typeof args.id === 'string' ? args.id : undefined;
+          const domain = typeof args.domain === 'string' ? args.domain : undefined;
+          const skills = this.memoryStore.listSkills({ domain });
+          const filtered = requestedId ? skills.filter((skill) => skill.id === requestedId) : skills;
+          return {
+            stats: filtered.map((skill) => ({
+              id: skill.id,
+              intent: skill.intent,
+              domain: skill.domain,
+              runs: skill.stats.runs,
+              success: skill.stats.success,
+              failure: skill.stats.failure,
+              healAttempts: skill.stats.healAttempts ?? 0,
+              healSuccess: skill.stats.healSuccess ?? 0
+            }))
+          };
+        }) as Promise<MethodResult<TMethod>>;
+      }
+      case 'memory.episodes.list': {
+        return this.withTrace(method, params, async () => {
+          const domain = typeof args.domain === 'string' ? args.domain : undefined;
+          const intent = typeof args.intent === 'string' ? args.intent.toLowerCase() : undefined;
+          const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined;
+          const episodes = this.memoryStore
+            .listEpisodes()
+            .filter((episode) => {
+              if (domain && episode.domain !== domain) {
+                return false;
+              }
+              if (intent && !episode.intent.toLowerCase().includes(intent)) {
+                return false;
+              }
+              return true;
+            });
+          return {
+            episodes: typeof limit === 'number' ? episodes.slice(0, limit) : episodes
+          };
+        }) as Promise<MethodResult<TMethod>>;
+      }
+      case 'memory.replay.explain': {
+        return this.withTrace(method, params, async () => {
+          const skillId = String(args.id);
+          const skill = this.memoryStore.getSkill(skillId);
+          if (!skill) {
+            throw new RpcError('Skill not found', 4004, BakErrorCode.E_NOT_FOUND);
+          }
+
+          return {
+            skillId: skill.id,
+            steps: skill.plan.map((step, index) => ({
+              index,
+              kind: step.kind,
+              locator: step.locator ?? step.targetCandidates?.[0],
+              summary: [
+                step.kind,
+                step.locator?.name ?? step.locator?.text ?? step.locator?.css ?? '',
+                step.waitFor?.value ?? '',
+                step.url ?? ''
+              ]
+                .join(' ')
+                .trim()
+            }))
+          };
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'memory.skills.run': {
@@ -976,11 +1407,13 @@ export class BakService {
             this.appendHealingAudit(traceId, skill.id, runOutcome.healing);
             return {
               ok: true,
-              updatedSkill: runOutcome.updatedSkill
+              updatedSkill: runOutcome.updatedSkill,
+              usedSkillId: skill.id,
+              retries: runOutcome.healing.attempts,
+              healed: runOutcome.healing.successes > 0
             };
           } catch (error) {
-            skill.stats.runs += 1;
-            skill.stats.failure += 1;
+            this.updateRunStats(skill, false, 0, true);
             this.memoryStore.updateSkill(skill);
             const normalized = this.normalizeError(error);
             const traceId = this.currentTraceId || this.traceStore.newTraceId();
@@ -990,8 +1423,88 @@ export class BakService {
           }
         }) as Promise<MethodResult<TMethod>>;
       }
-      default:
+      default: {
+        const methodName = String(method);
+        if (DYNAMIC_FORWARD_METHODS.has(methodName)) {
+          this.ensurePairing();
+          this.ensureConnected();
+          return this.withTrace(methodName, params, async () => {
+            const result = await this.driver.rawRequest(methodName, args);
+            if (methodName === 'context.enterFrame' || methodName === 'context.exitFrame' || methodName === 'context.reset') {
+              const payload = asRecord(result);
+              this.contextFrameDepth = typeof payload.frameDepth === 'number' ? payload.frameDepth : 0;
+              if (methodName === 'context.reset') {
+                this.contextShadowDepth = 0;
+              }
+            }
+            if (methodName === 'context.enterShadow' || methodName === 'context.exitShadow' || methodName === 'context.reset') {
+              const payload = asRecord(result);
+              this.contextShadowDepth = typeof payload.shadowDepth === 'number' ? payload.shadowDepth : 0;
+              if (methodName === 'context.reset') {
+                this.contextFrameDepth = 0;
+              }
+            }
+
+            if (methodName.startsWith('element.')) {
+              const locator = (args.locator as Locator | undefined) ?? undefined;
+              if (methodName === 'element.hover' && locator) {
+                this.captureStep({ kind: 'hover', locator, targetCandidates: buildTargetCandidates(locator) });
+              }
+              if (methodName === 'element.doubleClick' && locator) {
+                this.captureStep({ kind: 'doubleClick', locator, targetCandidates: buildTargetCandidates(locator) });
+              }
+              if (methodName === 'element.rightClick' && locator) {
+                this.captureStep({ kind: 'rightClick', locator, targetCandidates: buildTargetCandidates(locator) });
+              }
+              if (methodName === 'element.select' && locator) {
+                this.captureStep({
+                  kind: 'select',
+                  locator,
+                  values: Array.isArray(args.values) ? (args.values as string[]) : [],
+                  targetCandidates: buildTargetCandidates(locator)
+                });
+              }
+              if (methodName === 'element.check' && locator) {
+                this.captureStep({ kind: 'check', locator, targetCandidates: buildTargetCandidates(locator) });
+              }
+              if (methodName === 'element.uncheck' && locator) {
+                this.captureStep({ kind: 'uncheck', locator, targetCandidates: buildTargetCandidates(locator) });
+              }
+            }
+
+            if (methodName === 'page.scrollTo') {
+              this.captureStep({
+                kind: 'scrollTo'
+              });
+            }
+            if (methodName === 'keyboard.press') {
+              this.captureStep({
+                kind: 'press',
+                key: typeof args.key === 'string' ? args.key : undefined
+              });
+            }
+            if (methodName === 'keyboard.hotkey') {
+              this.captureStep({
+                kind: 'hotkey',
+                keys: Array.isArray(args.keys) ? (args.keys as string[]) : []
+              });
+            }
+            if (methodName === 'file.upload') {
+              const locator = args.locator as Locator | undefined;
+              if (locator) {
+                this.captureStep({
+                  kind: 'upload',
+                  locator,
+                  targetCandidates: buildTargetCandidates(locator)
+                });
+              }
+            }
+
+            return result;
+          }) as Promise<MethodResult<TMethod>>;
+        }
         throw new RpcError(`Unknown method: ${String(method)}`, -32601, BakErrorCode.E_NOT_FOUND);
+      }
     }
   }
 

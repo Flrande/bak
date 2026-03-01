@@ -29,7 +29,11 @@ function maybeParameterize(text: string, fieldName: string): { value: string; fi
     return { value: text };
   }
 
-  if (trimmed.length >= 2) {
+  if (trimmed.startsWith('[REDACTED')) {
+    return { value: text };
+  }
+
+  if (trimmed.length >= 2 && /[a-zA-Z0-9]/.test(trimmed)) {
     return { value: `{{${fieldName}}}`, field: fieldName };
   }
 
@@ -74,10 +78,17 @@ export function extractSkillFromEpisode(episode: Episode): Omit<Skill, 'id' | 'c
     domain: episode.domain,
     intent: episode.intent,
     description: `Skill extracted from episode ${episode.id}`,
+    urlPatterns: [episode.startUrl],
     plan,
     paramsSchema,
     healing: {
       retries: 1
+    },
+    stability: 'beta',
+    meta: {
+      source: episode.mode === 'auto' ? 'auto' : 'manual',
+      learnCount: 1,
+      lastLearnedAt: episode.createdAt
     }
   };
 }
@@ -195,6 +206,47 @@ function scoreAnchors(skill: Skill, queryAnchors: string[] | undefined): number 
   return anchorScores.reduce((sum, score) => sum + score, 0) / anchorScores.length;
 }
 
+function normalizePathname(value: string): string {
+  try {
+    return new URL(value).pathname || '/';
+  } catch {
+    return '/';
+  }
+}
+
+function scoreUrlPattern(skill: Skill, queryUrl: string | undefined): number {
+  if (!queryUrl) {
+    return 0;
+  }
+  const patterns = (skill.urlPatterns ?? []).filter((item) => item.trim().length > 0);
+  if (patterns.length === 0) {
+    return 0;
+  }
+  const queryPath = normalizePathname(queryUrl);
+  return Math.max(
+    ...patterns.map((pattern) => {
+      const patternPath = normalizePathname(pattern);
+      if (patternPath === queryPath) {
+        return 1;
+      }
+      if (queryPath.startsWith(patternPath) || patternPath.startsWith(queryPath)) {
+        return 0.7;
+      }
+      return textScore(patternPath, queryPath) * 0.6;
+    })
+  );
+}
+
+function scoreHistory(skill: Skill): number {
+  const runs = Math.max(0, skill.stats.runs);
+  if (runs <= 0) {
+    return 0.45;
+  }
+  const successRate = Math.max(0, Math.min(1, skill.stats.success / runs));
+  const confidence = Math.min(1, runs / 8);
+  return successRate * 0.75 + confidence * 0.25;
+}
+
 function scoreHealingReliability(skill: Skill): number {
   const attempts = typeof skill.healing.attempts === 'number' ? skill.healing.attempts : 0;
   const successes = typeof skill.healing.successes === 'number' ? skill.healing.successes : 0;
@@ -210,7 +262,7 @@ function scoreHealingReliability(skill: Skill): number {
 
 export function retrieveSkills(
   skills: Skill[],
-  query: { domain: string; intent: string; anchors?: string[]; minScore?: number }
+  query: { domain: string; intent: string; anchors?: string[]; minScore?: number; url?: string }
 ): Skill[] {
   const minScore = normalizeMinScore(query.minScore);
   const ranked = skills
@@ -218,14 +270,19 @@ export function retrieveSkills(
       const domainScore = scoreDomain(skill.domain, query.domain);
       const intentScore = Math.max(textScore(skill.intent, query.intent), textScore(skill.description, query.intent) * 0.85);
       const anchorScore = scoreAnchors(skill, query.anchors);
+      const urlScore = scoreUrlPattern(skill, query.url);
+      const historyScore = scoreHistory(skill);
       const healingScore = scoreHealingReliability(skill);
-      const score = domainScore * 0.45 + intentScore * 0.35 + anchorScore * 0.2;
-      return { skill, score, healingScore };
+      const score = domainScore * 0.3 + intentScore * 0.3 + anchorScore * 0.15 + urlScore * 0.15 + historyScore * 0.1;
+      return { skill, score, healingScore, historyScore };
     })
     .filter((item) => item.score >= minScore)
     .sort((a, b) => {
       if (b.score !== a.score) {
         return b.score - a.score;
+      }
+      if (b.historyScore !== a.historyScore) {
+        return b.historyScore - a.historyScore;
       }
       if (b.healingScore !== a.healingScore) {
         return b.healingScore - a.healingScore;

@@ -561,6 +561,9 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
 
 export function assessProtocolCompatibility(info: Record<string, unknown>): DoctorCheck {
   const protocolVersion = typeof info.protocolVersion === 'string' ? info.protocolVersion : null;
+  const compatibleProtocolVersions = Array.isArray(info.compatibleProtocolVersions)
+    ? info.compatibleProtocolVersions.filter((item): item is string => typeof item === 'string')
+    : [];
 
   if (!protocolVersion) {
     return {
@@ -579,7 +582,20 @@ export function assessProtocolCompatibility(info: Record<string, unknown>): Doct
       message: 'protocol versions are aligned',
       details: {
         expectedProtocolVersion: PROTOCOL_VERSION,
-        protocolVersion
+        protocolVersion,
+        compatibleProtocolVersions
+      }
+    };
+  }
+
+  if (compatibleProtocolVersions.includes(PROTOCOL_VERSION)) {
+    return {
+      ok: true,
+      message: 'protocol versions are compatible',
+      details: {
+        expectedProtocolVersion: PROTOCOL_VERSION,
+        protocolVersion,
+        compatibleProtocolVersions
       }
     };
   }
@@ -590,7 +606,8 @@ export function assessProtocolCompatibility(info: Record<string, unknown>): Doct
     severity: 'warn',
     details: {
       expectedProtocolVersion: PROTOCOL_VERSION,
-      protocolVersion
+      protocolVersion,
+      compatibleProtocolVersions
     }
   };
 }

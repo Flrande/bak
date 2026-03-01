@@ -1,18 +1,42 @@
-import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
+import type {
+  AccessibilityNode,
+  ConsoleEntry,
+  ElementMapItem,
+  Locator,
+  NetworkEntry,
+  PageDomSummary,
+  PageMetrics,
+  PageTextChunk
+} from '@bak/protocol';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
-import { unsupportedLocator, unsupportedLocatorHint } from './limitations.js';
 
-type ActionName = 'click' | 'type' | 'scroll';
+type ActionName =
+  | 'click'
+  | 'type'
+  | 'scroll'
+  | 'hover'
+  | 'doubleClick'
+  | 'rightClick'
+  | 'dragDrop'
+  | 'select'
+  | 'check'
+  | 'uncheck'
+  | 'scrollIntoView'
+  | 'focus'
+  | 'blur';
 
 interface ActionMessage {
   type: 'bak.performAction';
   action: ActionName;
   locator?: Locator;
+  from?: Locator;
+  to?: Locator;
   text?: string;
   clear?: boolean;
   requiresConfirm?: boolean;
   dx?: number;
   dy?: number;
+  values?: string[];
 }
 
 interface WaitMessage {
@@ -32,6 +56,12 @@ interface CollectElementsMessage {
   debugRichText?: boolean;
 }
 
+interface RpcMessage {
+  type: 'bak.rpc';
+  method: string;
+  params?: Record<string, unknown>;
+}
+
 interface ActionError {
   code: string;
   message: string;
@@ -40,30 +70,347 @@ interface ActionError {
 
 type ActionResult = { ok: true } | { ok: false; error: ActionError };
 type ActionAssessment = { ok: true; point: { x: number; y: number } } | { ok: false; error: ActionError };
+type RpcEnvelope = { ok: true; result: unknown } | { ok: false; error: ActionError };
 
 const consoleEntries: ConsoleEntry[] = [];
+const networkEntries: NetworkEntry[] = [];
 const elementCache = new Map<string, HTMLElement>();
+const contextState = {
+  framePath: [] as string[],
+  shadowPath: [] as string[]
+};
 
-function pushConsole(level: 'error' | 'warn' | 'info', message: string, source?: string): void {
+let networkSequence = 0;
+let longTaskCount = 0;
+let longTaskDurationMs = 0;
+let performanceBaselineMs = 0;
+
+function isHtmlElement(node: Element | null): node is HTMLElement {
+  if (!node) {
+    return false;
+  }
+  const view = node.ownerDocument.defaultView;
+  return Boolean(view && node instanceof view.HTMLElement);
+}
+
+function isInputElement(element: Element): element is HTMLInputElement {
+  const view = element.ownerDocument.defaultView;
+  return Boolean(view && element instanceof view.HTMLInputElement);
+}
+
+function isTextAreaElement(element: Element): element is HTMLTextAreaElement {
+  const view = element.ownerDocument.defaultView;
+  return Boolean(view && element instanceof view.HTMLTextAreaElement);
+}
+
+function isFrameElement(element: Element): element is HTMLIFrameElement | HTMLFrameElement {
+  const view = element.ownerDocument.defaultView as
+    | (Window & typeof globalThis & { HTMLFrameElement?: typeof HTMLFrameElement })
+    | null;
+  if (!view) {
+    return false;
+  }
+  const iframeMatch = element instanceof view.HTMLIFrameElement;
+  const frameCtor = view.HTMLFrameElement;
+  const frameMatch = typeof frameCtor === 'function' ? element instanceof frameCtor : false;
+  return iframeMatch || frameMatch;
+}
+
+function pushConsole(level: ConsoleEntry['level'], message: string, source?: string): void {
   consoleEntries.push({
     level,
     message,
     source,
     ts: Date.now()
   });
-  if (consoleEntries.length > 200) {
+  if (consoleEntries.length > 1000) {
     consoleEntries.shift();
   }
 }
 
-window.addEventListener('error', (event) => {
-  pushConsole('error', event.message, event.filename);
-});
+function patchConsoleCapture(): void {
+  const methods: Array<{ method: 'log' | 'debug' | 'info' | 'warn' | 'error'; level: ConsoleEntry['level'] }> = [
+    { method: 'log', level: 'log' },
+    { method: 'debug', level: 'debug' },
+    { method: 'info', level: 'info' },
+    { method: 'warn', level: 'warn' },
+    { method: 'error', level: 'error' }
+  ];
 
-window.addEventListener('unhandledrejection', (event) => {
-  const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  pushConsole('error', `unhandledrejection: ${reason}`);
-});
+  for (const entry of methods) {
+    const original = console[entry.method] as (...args: unknown[]) => void;
+    (console as unknown as Record<string, (...args: unknown[]) => void>)[entry.method] = (...args: unknown[]) => {
+      const message = args
+        .map((item) => {
+          if (item instanceof Error) {
+            return item.message;
+          }
+          if (typeof item === 'string') {
+            return item;
+          }
+          try {
+            return JSON.stringify(item);
+          } catch {
+            return String(item);
+          }
+        })
+        .join(' ');
+      pushConsole(entry.level, message);
+      original.apply(console, args);
+    };
+  }
+
+  window.addEventListener('error', (event) => {
+    pushConsole('error', event.message, event.filename);
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+    pushConsole('error', `unhandledrejection: ${reason}`);
+  });
+}
+
+function pushNetwork(entry: NetworkEntry): void {
+  networkEntries.push(entry);
+  if (networkEntries.length > 1000) {
+    networkEntries.shift();
+  }
+}
+
+function patchNetworkCapture(): void {
+  window.addEventListener('bak:network', (event: Event) => {
+    const detail = (event as CustomEvent<NetworkEntry>).detail;
+    if (!detail || typeof detail !== 'object') {
+      return;
+    }
+    pushNetwork({
+      id: typeof detail.id === 'string' ? detail.id : `net_${Date.now()}_${networkSequence++}`,
+      kind: detail.kind === 'xhr' ? 'xhr' : 'fetch',
+      method: typeof detail.method === 'string' ? detail.method : 'GET',
+      url: typeof detail.url === 'string' ? detail.url : window.location.href,
+      status: typeof detail.status === 'number' ? detail.status : 0,
+      ok: detail.ok === true,
+      ts: typeof detail.ts === 'number' ? detail.ts : Date.now(),
+      durationMs: typeof detail.durationMs === 'number' ? detail.durationMs : 0,
+      requestBytes: typeof detail.requestBytes === 'number' ? detail.requestBytes : undefined,
+      responseBytes: typeof detail.responseBytes === 'number' ? detail.responseBytes : undefined
+    });
+  });
+
+  try {
+    const injector = document.createElement('script');
+    injector.textContent = `
+(() => {
+  const g = window;
+  if (g.__bakPageNetworkPatched) return;
+  g.__bakPageNetworkPatched = true;
+  let seq = 0;
+  const emit = (entry) => window.dispatchEvent(new CustomEvent('bak:network', { detail: entry }));
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init && init.method ? init.method : 'GET').toUpperCase();
+    const started = performance.now();
+    const requestBytes =
+      init && typeof init.body === 'string'
+        ? init.body.length
+        : init && init.body instanceof URLSearchParams
+          ? init.body.toString().length
+          : undefined;
+    try {
+      const response = await nativeFetch(input, init);
+      emit({
+        id: 'net_' + Date.now() + '_' + seq++,
+        kind: 'fetch',
+        method,
+        url,
+        status: response.status,
+        ok: response.ok,
+        ts: Date.now(),
+        durationMs: Math.max(0, performance.now() - started),
+        requestBytes,
+        responseBytes: Number(response.headers.get('content-length') || '0') || undefined
+      });
+      return response;
+    } catch (error) {
+      emit({
+        id: 'net_' + Date.now() + '_' + seq++,
+        kind: 'fetch',
+        method,
+        url,
+        status: 0,
+        ok: false,
+        ts: Date.now(),
+        durationMs: Math.max(0, performance.now() - started),
+        requestBytes
+      });
+      throw error;
+    }
+  };
+
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  const xhrSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this.__bakMeta = {
+      method: String(method || 'GET').toUpperCase(),
+      url: typeof url === 'string' ? url : String(url),
+      started: performance.now()
+    };
+    return xhrOpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.send = function(body) {
+    if (typeof body === 'string') {
+      this.__bakMeta = { ...(this.__bakMeta || {}), requestBytes: body.length };
+    }
+    this.addEventListener('loadend', () => {
+      const meta = this.__bakMeta || {};
+      emit({
+        id: 'net_' + Date.now() + '_' + seq++,
+        kind: 'xhr',
+        method: meta.method || 'GET',
+        url: meta.url || window.location.href,
+        status: Number(this.status) || 0,
+        ok: Number(this.status) >= 200 && Number(this.status) < 400,
+        ts: Date.now(),
+        durationMs: Math.max(0, performance.now() - (meta.started || performance.now())),
+        requestBytes: typeof meta.requestBytes === 'number' ? meta.requestBytes : undefined
+      });
+    }, { once: true });
+    return xhrSend.call(this, body ?? null);
+  };
+})();
+`;
+    (document.documentElement ?? document.head ?? document.body).appendChild(injector);
+    injector.remove();
+  } catch {
+    // Ignore injection failures and keep isolated-world network patch as fallback.
+  }
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const started = performance.now();
+    const requestBytes =
+      typeof init?.body === 'string'
+        ? init.body.length
+        : init?.body instanceof URLSearchParams
+          ? init.body.toString().length
+          : undefined;
+    try {
+      const response = await originalFetch(input, init);
+      const durationMs = Math.max(0, performance.now() - started);
+      pushNetwork({
+        id: `net_${Date.now()}_${networkSequence++}`,
+        kind: 'fetch',
+        method,
+        url,
+        status: response.status,
+        ok: response.ok,
+        ts: Date.now(),
+        durationMs,
+        requestBytes,
+        responseBytes: Number(response.headers.get('content-length') ?? '0') || undefined
+      });
+      return response;
+    } catch (error) {
+      const durationMs = Math.max(0, performance.now() - started);
+      pushNetwork({
+        id: `net_${Date.now()}_${networkSequence++}`,
+        kind: 'fetch',
+        method,
+        url,
+        status: 0,
+        ok: false,
+        ts: Date.now(),
+        durationMs,
+        requestBytes
+      });
+      throw error;
+    }
+  }) as typeof window.fetch;
+
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  const xhrSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function open(method: string, url: string | URL, ...rest: unknown[]) {
+    const self = this as XMLHttpRequest & {
+      __bakMeta?: {
+        method: string;
+        url: string;
+        started: number;
+        requestBytes?: number;
+      };
+    };
+    self.__bakMeta = {
+      method: method.toUpperCase(),
+      url: typeof url === 'string' ? url : url.toString(),
+      started: performance.now()
+    };
+
+    return (xhrOpen as (...args: unknown[]) => unknown).call(this, method, url, ...rest);
+  };
+
+  XMLHttpRequest.prototype.send = function send(body?: Document | XMLHttpRequestBodyInit | null): void {
+    const self = this as XMLHttpRequest & {
+      __bakMeta?: {
+        method: string;
+        url: string;
+        started: number;
+        requestBytes?: number;
+      };
+    };
+
+    if (typeof body === 'string') {
+      const current = self.__bakMeta ?? {
+        method: 'GET',
+        url: window.location.href,
+        started: performance.now()
+      };
+      self.__bakMeta = {
+        ...current,
+        requestBytes: body.length
+      };
+    }
+
+    self.addEventListener(
+      'loadend',
+      () => {
+        pushNetwork({
+          id: `net_${Date.now()}_${networkSequence++}`,
+          kind: 'xhr',
+          method: self.__bakMeta?.method ?? 'GET',
+          url: self.__bakMeta?.url ?? window.location.href,
+          status: self.status,
+          ok: self.status >= 200 && self.status < 400,
+          ts: Date.now(),
+          durationMs: Math.max(0, performance.now() - (self.__bakMeta?.started ?? performance.now())),
+          requestBytes: self.__bakMeta?.requestBytes
+        });
+      },
+      { once: true }
+    );
+
+    return xhrSend.call(this, body ?? null);
+  };
+}
+
+if (typeof PerformanceObserver !== 'undefined') {
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        longTaskCount += 1;
+        longTaskDurationMs += entry.duration;
+      }
+    });
+    observer.observe({ entryTypes: ['longtask'] });
+  } catch {
+    // ignore browser without longtask support
+  }
+}
+
+patchConsoleCapture();
+patchNetworkCapture();
 
 const unsafeKeywords = /(submit|delete|remove|send|upload|付款|支付|删除|提交|发送|上传)/i;
 
@@ -117,8 +464,9 @@ function labelledByText(element: HTMLElement): string {
 }
 
 function labelText(element: HTMLElement): string {
-  if (element instanceof HTMLInputElement && element.id) {
-    const explicit = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+  const ownerDocument = element.ownerDocument;
+  if (isInputElement(element) && element.id) {
+    const explicit = ownerDocument.querySelector(`label[for="${CSS.escape(element.id)}"]`);
     if (explicit?.textContent) {
       return explicit.textContent.trim();
     }
@@ -129,7 +477,7 @@ function labelText(element: HTMLElement): string {
 }
 
 function inferName(element: HTMLElement, options: RedactTextOptions = {}): string {
-  const inputType = element instanceof HTMLInputElement ? element.type : null;
+  const inputType = isInputElement(element) ? element.type : null;
   return inferSafeName(
     {
       tag: element.tagName,
@@ -138,7 +486,7 @@ function inferName(element: HTMLElement, options: RedactTextOptions = {}): strin
       ariaLabel: element.getAttribute('aria-label'),
       labelledByText: labelledByText(element),
       labelText: labelText(element),
-      placeholder: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.placeholder : '',
+      placeholder: isInputElement(element) || isTextAreaElement(element) ? element.placeholder : '',
       text: element.innerText || element.textContent || '',
       nameAttr: element.getAttribute('name')
     },
@@ -227,8 +575,111 @@ function buildEid(element: HTMLElement): string {
   return `eid_${fnv1a(payload)}`;
 }
 
-function collectElements(options: RedactTextOptions = {}): ElementMapItem[] {
-  const nodes = Array.from(document.querySelectorAll<HTMLElement>('*'));
+function splitShadowSelector(selector: string): string[] {
+  return selector
+    .split('>>>')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function querySelectorInTree(root: ParentNode, selector: string): HTMLElement | null {
+  try {
+    return root.querySelector<HTMLElement>(selector);
+  } catch {
+    return null;
+  }
+}
+
+function querySelectorAcrossOpenShadow(root: ParentNode, selector: string): HTMLElement | null {
+  const direct = querySelectorInTree(root, selector);
+  if (direct) {
+    return direct;
+  }
+
+  const stack: ParentNode[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const hosts = Array.from(current.querySelectorAll<HTMLElement>('*')).filter((item) => item.shadowRoot);
+    for (const host of hosts) {
+      if (!host.shadowRoot) {
+        continue;
+      }
+      const found = querySelectorInTree(host.shadowRoot, selector);
+      if (found) {
+        return found;
+      }
+      stack.push(host.shadowRoot);
+    }
+  }
+
+  return null;
+}
+
+function resolveFrameDocument(framePath: string[]): { ok: true; document: Document } | { ok: false; error: ActionError } {
+  let currentDocument = document;
+  for (const selector of framePath) {
+    const frame = currentDocument.querySelector(selector);
+    if (!frame || !isFrameElement(frame)) {
+      return { ok: false, error: { code: 'E_NOT_FOUND', message: `frame not found: ${selector}` } };
+    }
+    try {
+      const childDocument = frame.contentDocument;
+      if (!childDocument) {
+        return { ok: false, error: { code: 'E_NOT_READY', message: `frame document unavailable: ${selector}` } };
+      }
+      currentDocument = childDocument;
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: 'E_PERMISSION',
+          message: `cross-origin frame is not accessible: ${selector}`
+        }
+      };
+    }
+  }
+
+  return { ok: true, document: currentDocument };
+}
+
+function resolveShadowRoot(base: ParentNode, path: string[]): { ok: true; root: ParentNode } | { ok: false; error: ActionError } {
+  let root = base;
+  for (const selector of path) {
+    const host = querySelectorAcrossOpenShadow(root, selector);
+    if (!host) {
+      return { ok: false, error: { code: 'E_NOT_FOUND', message: `shadow host not found: ${selector}` } };
+    }
+    if (!host.shadowRoot) {
+      return { ok: false, error: { code: 'E_NOT_READY', message: `shadow root unavailable or closed: ${selector}` } };
+    }
+    root = host.shadowRoot;
+  }
+  return { ok: true, root };
+}
+
+function resolveRootForLocator(locator?: Locator): { ok: true; root: ParentNode } | { ok: false; error: ActionError } {
+  const framePath = [...contextState.framePath, ...(Array.isArray(locator?.framePath) ? locator.framePath : [])];
+  const frameResult = resolveFrameDocument(framePath);
+  if (!frameResult.ok) {
+    return frameResult;
+  }
+
+  const shadowPath = [...contextState.shadowPath];
+  const shadowResult = resolveShadowRoot(frameResult.document, shadowPath);
+  if (!shadowResult.ok) {
+    return shadowResult;
+  }
+  return { ok: true, root: shadowResult.root };
+}
+
+function collectElements(options: RedactTextOptions = {}, locator?: Locator): ElementMapItem[] {
+  const rootResult = resolveRootForLocator(locator);
+  if (!rootResult.ok) {
+    return [];
+  }
+
+  const root = rootResult.root;
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>('*'));
   const results: ElementMapItem[] = [];
   elementCache.clear();
 
@@ -249,7 +700,7 @@ function collectElements(options: RedactTextOptions = {}): ElementMapItem[] {
     };
 
     const combined = `${name} ${text}`;
-    const risk = unsafeKeywords.test(combined) || (element as HTMLInputElement).type === 'file' ? 'high' : 'low';
+    const risk = unsafeKeywords.test(combined) || (isInputElement(element) && element.type === 'file') ? 'high' : 'low';
 
     const item: ElementMapItem = {
       eid,
@@ -274,10 +725,31 @@ function collectElements(options: RedactTextOptions = {}): ElementMapItem[] {
   return results;
 }
 
-function getInteractiveElements(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('*')).filter(
+function getInteractiveElements(root: ParentNode, includeShadow = true): HTMLElement[] {
+  const results = Array.from(root.querySelectorAll<HTMLElement>('*')).filter(
     (element) => isInteractive(element) && isElementVisible(element)
   );
+  if (!includeShadow) {
+    return results;
+  }
+
+  const queue = [...Array.from(root.querySelectorAll<HTMLElement>('*')).filter((element) => element.shadowRoot)];
+  while (queue.length > 0) {
+    const host = queue.shift()!;
+    if (!host.shadowRoot) {
+      continue;
+    }
+
+    for (const element of Array.from(host.shadowRoot.querySelectorAll<HTMLElement>('*'))) {
+      if (element.shadowRoot) {
+        queue.push(element);
+      }
+      if (isInteractive(element) && isElementVisible(element)) {
+        results.push(element);
+      }
+    }
+  }
+  return results;
 }
 
 function resolveLocator(locator?: Locator): HTMLElement | null {
@@ -286,7 +758,7 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
   }
 
   if (locator.eid) {
-    const refreshed = collectElements();
+    const refreshed = collectElements({}, locator);
     if (refreshed.length > 0) {
       const fromCache = elementCache.get(locator.eid);
       if (fromCache) {
@@ -295,7 +767,12 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
     }
   }
 
-  const interactive = getInteractiveElements();
+  const rootResult = resolveRootForLocator(locator);
+  if (!rootResult.ok) {
+    return null;
+  }
+  const root = rootResult.root;
+  const interactive = getInteractiveElements(root, locator.shadow !== 'none');
 
   if (locator.role || locator.name) {
     const role = locator.role?.toLowerCase();
@@ -322,9 +799,24 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
   }
 
   if (locator.css) {
-    const found = document.querySelector<HTMLElement>(locator.css);
-    if (found && isInteractive(found) && isElementVisible(found)) {
-      return found;
+    const parts = splitShadowSelector(locator.css);
+    let currentRoot: ParentNode = root;
+    for (let index = 0; index < parts.length; index += 1) {
+      const selector = parts[index];
+      const found =
+        locator.shadow === 'none'
+          ? querySelectorInTree(currentRoot, selector)
+          : querySelectorAcrossOpenShadow(currentRoot, selector);
+      if (!found) {
+        return null;
+      }
+      if (index === parts.length - 1) {
+        return found && isElementVisible(found) ? found : null;
+      }
+      if (!found.shadowRoot) {
+        return null;
+      }
+      currentRoot = found.shadowRoot;
     }
   }
 
@@ -521,7 +1013,7 @@ function failAssessment(code: string, message: string, data?: Record<string, unk
 }
 
 function describeNode(node: Element | null): string {
-  if (!node || !(node instanceof HTMLElement)) {
+  if (!isHtmlElement(node)) {
     return 'unknown';
   }
 
@@ -556,13 +1048,20 @@ function assessActionTarget(target: HTMLElement, action: ActionName): ActionAsse
     return failAssessment('E_NOT_FOUND', `${action} target has invalid bounds`);
   }
 
+  const ownerDocument = target.ownerDocument ?? document;
   const point = centerPoint(rect);
-  const hit = document.elementFromPoint(point.x, point.y);
+  const hit = ownerDocument.elementFromPoint(point.x, point.y);
   if (!hit) {
     return failAssessment('E_NOT_FOUND', `${action} target is outside viewport`);
   }
 
-  if (hit !== target && !target.contains(hit)) {
+  let shadowHostBridge = false;
+  const rootNode = target.getRootNode();
+  if (rootNode instanceof ShadowRoot) {
+    shadowHostBridge = hit === rootNode.host;
+  }
+
+  if (hit !== target && !target.contains(hit) && !shadowHostBridge) {
     return failAssessment('E_PERMISSION', `${action} target is obstructed by ${describeNode(hit)}`, {
       obstructedBy: describeNode(hit)
     });
@@ -625,7 +1124,9 @@ function dispatchInputEvents(target: HTMLElement): void {
 }
 
 function setNativeValue(target: HTMLInputElement | HTMLTextAreaElement, nextValue: string): void {
-  const proto = target instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+  const proto = isInputElement(target)
+    ? (target.ownerDocument.defaultView?.HTMLInputElement.prototype ?? HTMLInputElement.prototype)
+    : (target.ownerDocument.defaultView?.HTMLTextAreaElement.prototype ?? HTMLTextAreaElement.prototype);
   const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
   if (descriptor?.set) {
     descriptor.set.call(target, nextValue);
@@ -669,7 +1170,255 @@ function insertContentEditableText(target: HTMLElement, text: string, clear: boo
 }
 
 function isEditable(target: HTMLElement): target is HTMLInputElement | HTMLTextAreaElement {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  return isInputElement(target) || isTextAreaElement(target);
+}
+
+function keyEvent(type: 'keydown' | 'keyup', key: string, extra?: Partial<KeyboardEventInit>): KeyboardEvent {
+  return new KeyboardEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    ...extra
+  });
+}
+
+function parseHotkey(keys: string[]): {
+  key: string;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+} {
+  const lowered = keys.map((item) => item.toLowerCase());
+  const key = keys.find((item) => !['ctrl', 'control', 'alt', 'shift', 'meta', 'cmd'].includes(item.toLowerCase())) ?? keys[0] ?? '';
+  return {
+    key,
+    ctrlKey: lowered.includes('ctrl') || lowered.includes('control'),
+    altKey: lowered.includes('alt'),
+    shiftKey: lowered.includes('shift'),
+    metaKey: lowered.includes('meta') || lowered.includes('cmd')
+  };
+}
+
+function domSummary(): PageDomSummary {
+  const allElements = Array.from(document.querySelectorAll('*'));
+  const interactiveElements = Array.from(document.querySelectorAll<HTMLElement>('*')).filter((element) => isInteractive(element));
+  const tags = new Map<string, number>();
+
+  for (const element of allElements) {
+    const tag = element.tagName.toLowerCase();
+    tags.set(tag, (tags.get(tag) ?? 0) + 1);
+  }
+
+  const tagHistogram = [...tags.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([tag, count]) => ({ tag, count }));
+
+  const shadowHosts = Array.from(document.querySelectorAll<HTMLElement>('*')).filter((element) => element.shadowRoot).length;
+
+  return {
+    url: window.location.href,
+    title: document.title,
+    totalElements: allElements.length,
+    interactiveElements: interactiveElements.length,
+    headings: document.querySelectorAll('h1,h2,h3,h4,h5,h6').length,
+    links: document.querySelectorAll('a[href]').length,
+    forms: document.querySelectorAll('form').length,
+    iframes: document.querySelectorAll('iframe,frame').length,
+    shadowHosts,
+    tagHistogram
+  };
+}
+
+function pageTextChunks(maxChunks = 24, chunkSize = 320): PageTextChunk[] {
+  const nodes = Array.from(document.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,td,th,label,button,a,span,div'));
+  const chunks: PageTextChunk[] = [];
+
+  for (const node of nodes) {
+    if (!isElementVisible(node)) {
+      continue;
+    }
+
+    const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) {
+      continue;
+    }
+
+    chunks.push({
+      chunkId: `chunk_${chunks.length + 1}`,
+      text: text.slice(0, chunkSize),
+      sourceTag: node.tagName.toLowerCase()
+    });
+
+    if (chunks.length >= maxChunks) {
+      break;
+    }
+  }
+
+  return chunks;
+}
+
+function pageAccessibility(limit = 200): AccessibilityNode[] {
+  const nodes: AccessibilityNode[] = [];
+  for (const element of getInteractiveElements(document, true).slice(0, limit)) {
+    nodes.push({
+      role: inferRole(element),
+      name: inferName(element),
+      tag: element.tagName.toLowerCase(),
+      eid: buildEid(element)
+    });
+  }
+  return nodes;
+}
+
+function pageMetrics(): PageMetrics {
+  const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+  const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+  return {
+    navigation: {
+      durationMs: navigation?.duration ?? 0,
+      domContentLoadedMs: navigation ? navigation.domContentLoadedEventEnd - navigation.startTime : 0,
+      loadEventMs: navigation ? navigation.loadEventEnd - navigation.startTime : 0
+    },
+    longTasks: {
+      count: longTaskCount,
+      totalDurationMs: Number(longTaskDurationMs.toFixed(2))
+    },
+    resources: {
+      count: resources.length,
+      transferSize: resources.reduce((sum, item) => sum + (item.transferSize ?? 0), 0),
+      encodedBodySize: resources.reduce((sum, item) => sum + (item.encodedBodySize ?? 0), 0)
+    }
+  };
+}
+
+function performanceNetworkEntries(): NetworkEntry[] {
+  const resources = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+  const now = Date.now();
+  const perfNow = performance.now();
+  const entries: NetworkEntry[] = [];
+
+  for (let index = 0; index < resources.length; index += 1) {
+    const resource = resources[index];
+    if (resource.startTime < performanceBaselineMs) {
+      continue;
+    }
+
+    const responseEnd = resource.responseEnd > 0 ? resource.responseEnd : resource.startTime + resource.duration;
+    const ts = now - Math.max(0, Math.round(perfNow - responseEnd));
+    entries.push({
+      id: `perf_${index}_${Math.round(resource.startTime)}_${fnv1a(resource.name).slice(0, 8)}`,
+      kind: 'resource',
+      method: 'GET',
+      url: resource.name,
+      status: 0,
+      ok: true,
+      ts,
+      durationMs: Math.max(0, resource.duration),
+      responseBytes: resource.transferSize > 0 ? resource.transferSize : undefined
+    });
+  }
+
+  return entries;
+}
+
+function networkSnapshotEntries(): NetworkEntry[] {
+  const merged = [...networkEntries];
+  const seen = new Set(merged.map((entry) => `${entry.kind}|${entry.url}|${Math.round(entry.ts / 10)}`));
+
+  for (const entry of performanceNetworkEntries()) {
+    const key = `${entry.kind}|${entry.url}|${Math.round(entry.ts / 10)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(entry);
+  }
+
+  merged.sort((a, b) => a.ts - b.ts);
+  return merged;
+}
+
+function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
+  const urlIncludes = typeof params.urlIncludes === 'string' ? params.urlIncludes : '';
+  const method = typeof params.method === 'string' ? params.method.toUpperCase() : '';
+  const status = typeof params.status === 'number' ? params.status : undefined;
+  const limit = typeof params.limit === 'number' ? Math.max(1, Math.min(500, Math.floor(params.limit))) : 50;
+
+  return networkSnapshotEntries()
+    .filter((entry) => {
+      if (urlIncludes && !entry.url.includes(urlIncludes)) {
+        return false;
+      }
+      if (method && entry.method.toUpperCase() !== method) {
+        return false;
+      }
+      if (typeof status === 'number' && entry.status !== status) {
+        return false;
+      }
+      return true;
+    })
+    .slice(-limit)
+    .reverse();
+}
+
+async function waitForNetwork(params: Record<string, unknown>): Promise<NetworkEntry> {
+  const timeoutMs = typeof params.timeoutMs === 'number' ? Math.max(1, params.timeoutMs) : 5000;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const matched = filterNetworkEntries({ ...params, limit: 1 })[0];
+    if (matched) {
+      return matched;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  throw { code: 'E_TIMEOUT', message: 'network.waitFor timeout' } satisfies ActionError;
+}
+
+function performDoubleClick(target: HTMLElement, point: { x: number; y: number }): void {
+  performClick(target, point);
+  performClick(target, point);
+  dispatchMouse(target, 'dblclick', point);
+}
+
+function performRightClick(target: HTMLElement, point: { x: number; y: number }): void {
+  dispatchPointer(target, 'pointerdown', point);
+  target.dispatchEvent(
+    new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      button: 2,
+      buttons: 2
+    })
+  );
+  dispatchPointer(target, 'pointerup', point);
+  target.dispatchEvent(
+    new MouseEvent('mouseup', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      button: 2,
+      buttons: 0
+    })
+  );
+  target.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      button: 2
+    })
+  );
 }
 
 async function handleAction(message: ActionMessage): Promise<ActionResult> {
@@ -678,13 +1427,6 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
     if (message.action === 'scroll') {
       if (message.locator) {
-        const unsupported = unsupportedLocator(message.locator);
-        if (unsupported) {
-          return failAction('E_NOT_FOUND', unsupported.hint, {
-            reason: 'unsupported_locator',
-            limitation: unsupported.reason
-          });
-        }
         const target = resolveLocator(message.locator);
         if (!target) {
           return failAction('E_NOT_FOUND', 'scroll target not found');
@@ -696,30 +1438,63 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
       return { ok: true };
     }
 
-    const unsupported = unsupportedLocator(message.locator);
-    if (unsupported) {
-      return failAction('E_NOT_FOUND', unsupported.hint, {
-        reason: 'unsupported_locator',
-        limitation: unsupported.reason
-      });
-    }
-
     const target = resolveLocator(message.locator);
     if (!target) {
-      const hint = unsupportedLocatorHint(message.locator);
-      return failAction('E_NOT_FOUND', hint ? `Target not found: ${hint}` : 'Target not found');
+      return failAction('E_NOT_FOUND', 'Target not found');
     }
 
     const name = inferName(target);
     const text = (target.innerText || target.textContent || '').trim();
     const riskText = `${name} ${text}`;
-    const isHighRisk = message.requiresConfirm === true || unsafeKeywords.test(riskText) || (target as HTMLInputElement).type === 'file';
+    const isHighRisk =
+      message.requiresConfirm === true || unsafeKeywords.test(riskText) || (isInputElement(target) && target.type === 'file');
 
     if (isHighRisk) {
       const approved = await askConfirm(`Action: ${message.action} on "${name || text || target.tagName}"`);
       if (!approved) {
         return failAction('E_PERMISSION', 'User rejected high-risk action');
       }
+    }
+
+    if (message.action === 'focus') {
+      target.focus({ preventScroll: true });
+      return { ok: true };
+    }
+
+    if (message.action === 'blur') {
+      target.blur();
+      return { ok: true };
+    }
+
+    if (message.action === 'scrollIntoView') {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return { ok: true };
+    }
+
+    if (message.action === 'dragDrop') {
+      const from = message.from ? resolveLocator(message.from) : target;
+      const to = message.to ? resolveLocator(message.to) : target;
+      if (!from || !to) {
+        return failAction('E_NOT_FOUND', 'dragDrop endpoints not found');
+      }
+
+      const fromPoint = centerPoint(from.getBoundingClientRect());
+      const toPoint = centerPoint(to.getBoundingClientRect());
+      const transfer = new DataTransfer();
+      from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      to.dispatchEvent(
+        new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: toPoint.x, clientY: toPoint.y })
+      );
+      to.dispatchEvent(
+        new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: toPoint.x, clientY: toPoint.y })
+      );
+      to.dispatchEvent(
+        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: toPoint.x, clientY: toPoint.y })
+      );
+      from.dispatchEvent(
+        new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: fromPoint.x, clientY: fromPoint.y })
+      );
+      return { ok: true };
     }
 
     const assessed = assessActionTarget(target, message.action);
@@ -729,6 +1504,23 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
     if (message.action === 'click') {
       performClick(target, assessed.point);
+      return { ok: true };
+    }
+
+    if (message.action === 'doubleClick') {
+      performDoubleClick(target, assessed.point);
+      return { ok: true };
+    }
+
+    if (message.action === 'rightClick') {
+      performRightClick(target, assessed.point);
+      return { ok: true };
+    }
+
+    if (message.action === 'hover') {
+      dispatchPointer(target, 'pointermove', assessed.point);
+      dispatchMouse(target, 'mousemove', assessed.point);
+      target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: assessed.point.x, clientY: assessed.point.y }));
       return { ok: true };
     }
 
@@ -749,6 +1541,34 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
       return { ok: true };
     }
 
+    if (message.action === 'select') {
+      if (!(target instanceof HTMLSelectElement)) {
+        return failAction('E_NOT_FOUND', 'select target is not a <select> element');
+      }
+
+      const values = message.values ?? [];
+      if (values.length === 0) {
+        return failAction('E_INVALID_PARAMS', 'values is required');
+      }
+      for (const option of Array.from(target.options)) {
+        option.selected = values.includes(option.value) || values.includes(option.text);
+      }
+      dispatchInputEvents(target);
+      return { ok: true };
+    }
+
+    if (message.action === 'check' || message.action === 'uncheck') {
+      if (!isInputElement(target) || (target.type !== 'checkbox' && target.type !== 'radio')) {
+        return failAction('E_NOT_FOUND', `${message.action} target must be checkbox/radio`);
+      }
+      const desired = message.action === 'check';
+      if (target.checked !== desired) {
+        target.checked = desired;
+        dispatchInputEvents(target);
+      }
+      return { ok: true };
+    }
+
     return failAction('E_NOT_FOUND', `Unsupported action ${message.action}`);
   } catch (error) {
     return failAction('E_INTERNAL', error instanceof Error ? error.message : String(error));
@@ -757,7 +1577,7 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
 function waitConditionMet(message: WaitMessage): boolean {
   if (message.mode === 'selector') {
-    return Boolean(document.querySelector(message.value));
+    return Boolean(querySelectorAcrossOpenShadow(document, message.value));
   }
 
   if (message.mode === 'text') {
@@ -816,6 +1636,412 @@ async function waitFor(message: WaitMessage): Promise<ActionResult> {
   });
 }
 
+async function dispatchRpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  switch (method) {
+    case 'page.title':
+      return { title: document.title };
+    case 'page.url':
+      return { url: window.location.href };
+    case 'page.text':
+      return {
+        chunks: pageTextChunks(
+          typeof params.maxChunks === 'number' ? params.maxChunks : 24,
+          typeof params.chunkSize === 'number' ? params.chunkSize : 320
+        )
+      };
+    case 'page.dom':
+      return { summary: domSummary() };
+    case 'page.accessibilityTree':
+      return {
+        nodes: pageAccessibility(typeof params.limit === 'number' ? params.limit : 200)
+      };
+    case 'page.scrollTo': {
+      const x = typeof params.x === 'number' ? params.x : window.scrollX;
+      const y = typeof params.y === 'number' ? params.y : window.scrollY;
+      const behavior = params.behavior === 'smooth' ? 'smooth' : 'auto';
+      window.scrollTo({ left: x, top: y, behavior });
+      return { ok: true, x: window.scrollX, y: window.scrollY };
+    }
+    case 'page.metrics':
+      return pageMetrics();
+    case 'page.viewport':
+      return {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio
+      };
+
+    case 'element.hover':
+      return handleAction({ type: 'bak.performAction', action: 'hover', locator: params.locator as Locator }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.doubleClick':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'doubleClick',
+        locator: params.locator as Locator,
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.rightClick':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'rightClick',
+        locator: params.locator as Locator,
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.dragDrop':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'dragDrop',
+        locator: params.from as Locator,
+        from: params.from as Locator,
+        to: params.to as Locator,
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.select':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'select',
+        locator: params.locator as Locator,
+        values: Array.isArray(params.values) ? (params.values as string[]) : [],
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.check':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'check',
+        locator: params.locator as Locator,
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.uncheck':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'uncheck',
+        locator: params.locator as Locator,
+        requiresConfirm: params.requiresConfirm === true
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.scrollIntoView':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'scrollIntoView',
+        locator: params.locator as Locator
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.focus':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'focus',
+        locator: params.locator as Locator
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.blur':
+      return handleAction({
+        type: 'bak.performAction',
+        action: 'blur',
+        locator: params.locator as Locator
+      }).then((res) => {
+        if (!res.ok) {
+          throw res.error;
+        }
+        return { ok: true };
+      });
+    case 'element.get': {
+      const target = resolveLocator(params.locator as Locator);
+      if (!target) {
+        throw { code: 'E_NOT_FOUND', message: 'element.get target not found' } satisfies ActionError;
+      }
+
+      const elements = collectElements({}, params.locator as Locator);
+      const eid = buildEid(target);
+      const element = elements.find((item) => item.eid === eid);
+      if (!element) {
+        throw { code: 'E_NOT_FOUND', message: 'element metadata not found' } satisfies ActionError;
+      }
+
+      const attributes: Record<string, string> = {};
+      for (const attr of Array.from(target.attributes)) {
+        attributes[attr.name] = attr.value;
+      }
+
+      return {
+        element,
+        value: isEditable(target) ? target.value : target.isContentEditable ? target.textContent ?? '' : undefined,
+        checked: isInputElement(target) ? target.checked : undefined,
+        attributes
+      };
+    }
+
+    case 'keyboard.press': {
+      const key = String(params.key ?? '').trim();
+      if (!key) {
+        throw { code: 'E_INVALID_PARAMS', message: 'key is required' } satisfies ActionError;
+      }
+      const target = (document.activeElement as HTMLElement | null) ?? document.body;
+      target.dispatchEvent(keyEvent('keydown', key));
+      target.dispatchEvent(keyEvent('keyup', key));
+      return { ok: true };
+    }
+    case 'keyboard.type': {
+      const text = String(params.text ?? '');
+      const delayMs = typeof params.delayMs === 'number' ? Math.max(0, params.delayMs) : 0;
+      const target = (document.activeElement as HTMLElement | null) ?? null;
+      if (!target || !(isEditable(target) || target.isContentEditable)) {
+        throw { code: 'E_NOT_FOUND', message: 'No editable active element for keyboard.type' } satisfies ActionError;
+      }
+
+      for (const char of text) {
+        target.dispatchEvent(keyEvent('keydown', char));
+        if (isEditable(target)) {
+          setNativeValue(target, `${target.value}${char}`);
+          dispatchInputEvents(target);
+        } else {
+          insertContentEditableText(target, char, false);
+        }
+        target.dispatchEvent(keyEvent('keyup', char));
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      return { ok: true };
+    }
+    case 'keyboard.hotkey': {
+      const keys = Array.isArray(params.keys) ? (params.keys as string[]) : [];
+      if (keys.length === 0) {
+        throw { code: 'E_INVALID_PARAMS', message: 'keys is required' } satisfies ActionError;
+      }
+      const parsed = parseHotkey(keys);
+      const target = (document.activeElement as HTMLElement | null) ?? document.body;
+      target.dispatchEvent(
+        keyEvent('keydown', parsed.key, {
+          ctrlKey: parsed.ctrlKey,
+          altKey: parsed.altKey,
+          shiftKey: parsed.shiftKey,
+          metaKey: parsed.metaKey
+        })
+      );
+      target.dispatchEvent(
+        keyEvent('keyup', parsed.key, {
+          ctrlKey: parsed.ctrlKey,
+          altKey: parsed.altKey,
+          shiftKey: parsed.shiftKey,
+          metaKey: parsed.metaKey
+        })
+      );
+      return { ok: true };
+    }
+
+    case 'mouse.move': {
+      const x = Number(params.x);
+      const y = Number(params.y);
+      const target = document.elementFromPoint(x, y) as HTMLElement | null;
+      if (!target) {
+        throw { code: 'E_NOT_FOUND', message: 'mouse.move target not found' } satisfies ActionError;
+      }
+      target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }));
+      return { ok: true };
+    }
+    case 'mouse.click': {
+      const x = Number(params.x);
+      const y = Number(params.y);
+      const button = params.button === 'right' ? 2 : params.button === 'middle' ? 1 : 0;
+      const target = document.elementFromPoint(x, y) as HTMLElement | null;
+      if (!target) {
+        throw { code: 'E_NOT_FOUND', message: 'mouse.click target not found' } satisfies ActionError;
+      }
+      target.dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: x, clientY: y, button })
+      );
+      target.dispatchEvent(
+        new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: x, clientY: y, button })
+      );
+      target.dispatchEvent(
+        new MouseEvent(button === 2 ? 'contextmenu' : 'click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          button
+        })
+      );
+      return { ok: true };
+    }
+    case 'mouse.wheel': {
+      const dx = typeof params.dx === 'number' ? params.dx : 0;
+      const dy = typeof params.dy === 'number' ? params.dy : 120;
+      window.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaX: dx, deltaY: dy }));
+      window.scrollBy({ left: dx, top: dy, behavior: 'auto' });
+      return { ok: true };
+    }
+
+    case 'file.upload': {
+      const target = resolveLocator(params.locator as Locator);
+      if (!target || !isInputElement(target) || target.type !== 'file') {
+        throw { code: 'E_NOT_FOUND', message: 'file.upload target must be <input type=file>' } satisfies ActionError;
+      }
+
+      const files = Array.isArray(params.files) ? params.files : [];
+      if (files.length === 0) {
+        throw { code: 'E_INVALID_PARAMS', message: 'files is required' } satisfies ActionError;
+      }
+
+      const transfer = new DataTransfer();
+      for (const file of files as Array<{ name?: unknown; contentBase64?: unknown; mimeType?: unknown }>) {
+        const name = typeof file.name === 'string' ? file.name : 'upload.bin';
+        const contentBase64 = typeof file.contentBase64 === 'string' ? file.contentBase64 : '';
+        const mimeType = typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream';
+        const bytes = Uint8Array.from(atob(contentBase64), (char) => char.charCodeAt(0));
+        transfer.items.add(new File([bytes], name, { type: mimeType }));
+      }
+      target.files = transfer.files;
+      dispatchInputEvents(target);
+      return { ok: true, fileCount: transfer.files.length };
+    }
+
+    case 'context.enterFrame': {
+      if (params.reset === true) {
+        contextState.framePath = [];
+      }
+      const framePath = Array.isArray(params.framePath) ? params.framePath.map(String) : [];
+      if (framePath.length === 0 && params.locator && typeof (params.locator as Locator).css === 'string') {
+        framePath.push((params.locator as Locator).css!);
+      }
+      if (framePath.length === 0) {
+        throw { code: 'E_INVALID_PARAMS', message: 'framePath or locator.css is required' } satisfies ActionError;
+      }
+
+      const candidate = [...contextState.framePath, ...framePath];
+      const check = resolveFrameDocument(candidate);
+      if (!check.ok) {
+        throw check.error;
+      }
+      contextState.framePath = candidate;
+      return { ok: true, frameDepth: contextState.framePath.length, framePath: [...contextState.framePath] };
+    }
+    case 'context.exitFrame': {
+      if (params.reset === true) {
+        contextState.framePath = [];
+      } else {
+        const levels = typeof params.levels === 'number' ? Math.max(1, Math.floor(params.levels)) : 1;
+        contextState.framePath = contextState.framePath.slice(0, Math.max(0, contextState.framePath.length - levels));
+      }
+      return { ok: true, frameDepth: contextState.framePath.length, framePath: [...contextState.framePath] };
+    }
+    case 'context.enterShadow': {
+      if (params.reset === true) {
+        contextState.shadowPath = [];
+      }
+      const hostSelectors = Array.isArray(params.hostSelectors) ? params.hostSelectors.map(String) : [];
+      if (hostSelectors.length === 0 && params.locator && typeof (params.locator as Locator).css === 'string') {
+        hostSelectors.push((params.locator as Locator).css!);
+      }
+      if (hostSelectors.length === 0) {
+        throw { code: 'E_INVALID_PARAMS', message: 'hostSelectors or locator.css is required' } satisfies ActionError;
+      }
+      const rootResult = resolveRootForLocator();
+      if (!rootResult.ok) {
+        throw rootResult.error;
+      }
+      const candidate = [...contextState.shadowPath, ...hostSelectors];
+      const check = resolveShadowRoot(rootResult.root, candidate);
+      if (!check.ok) {
+        throw check.error;
+      }
+      contextState.shadowPath = candidate;
+      return { ok: true, shadowDepth: contextState.shadowPath.length, shadowPath: [...contextState.shadowPath] };
+    }
+    case 'context.exitShadow': {
+      if (params.reset === true) {
+        contextState.shadowPath = [];
+      } else {
+        const levels = typeof params.levels === 'number' ? Math.max(1, Math.floor(params.levels)) : 1;
+        contextState.shadowPath = contextState.shadowPath.slice(0, Math.max(0, contextState.shadowPath.length - levels));
+      }
+      return { ok: true, shadowDepth: contextState.shadowPath.length, shadowPath: [...contextState.shadowPath] };
+    }
+    case 'context.reset':
+      contextState.framePath = [];
+      contextState.shadowPath = [];
+      return { ok: true, frameDepth: 0, shadowDepth: 0 };
+
+    case 'network.list':
+      return { entries: filterNetworkEntries(params) };
+    case 'network.get': {
+      const id = String(params.id ?? '');
+      const found = networkSnapshotEntries().find((entry) => entry.id === id);
+      if (!found) {
+        throw { code: 'E_NOT_FOUND', message: `network entry not found: ${id}` } satisfies ActionError;
+      }
+      return { entry: found };
+    }
+    case 'network.waitFor':
+      return { entry: await waitForNetwork(params) };
+    case 'network.clear':
+      networkEntries.length = 0;
+      performanceBaselineMs = performance.now();
+      return { ok: true };
+
+    case 'debug.dumpState': {
+      const consoleLimit = typeof params.consoleLimit === 'number' ? Math.max(1, Math.floor(params.consoleLimit)) : 80;
+      const networkLimit = typeof params.networkLimit === 'number' ? Math.max(1, Math.floor(params.networkLimit)) : 80;
+      return {
+        url: window.location.href,
+        title: document.title,
+        context: {
+          framePath: [...contextState.framePath],
+          shadowPath: [...contextState.shadowPath]
+        },
+        dom: domSummary(),
+        text: pageTextChunks(12, 260),
+        console: consoleEntries.slice(-consoleLimit),
+        network: filterNetworkEntries({ limit: networkLimit })
+      };
+    }
+    default:
+      throw { code: 'E_NOT_FOUND', message: `Unsupported content RPC method: ${method}` } satisfies ActionError;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   if (typeof message !== 'object' || message === null || !('type' in message)) {
     return false;
@@ -853,6 +2079,24 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       }
       sendResponse({ ok: true, selectedEid });
     });
+    return true;
+  }
+
+  if (typed.type === 'bak.rpc') {
+    const request = message as RpcMessage;
+    void dispatchRpc(request.method, request.params ?? {})
+      .then((result) => {
+        const payload: RpcEnvelope = { ok: true, result };
+        sendResponse(payload);
+      })
+      .catch((error) => {
+        const normalized =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? (error as ActionError)
+            : { code: 'E_INTERNAL', message: error instanceof Error ? error.message : String(error) };
+        const payload: RpcEnvelope = { ok: false, error: normalized };
+        sendResponse(payload);
+      });
     return true;
   }
 

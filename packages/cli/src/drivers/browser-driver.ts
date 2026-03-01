@@ -1,4 +1,12 @@
-import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
+import type {
+  ConsoleEntry,
+  ElementMapItem,
+  Locator,
+  NetworkEntry,
+  PageDomSummary,
+  PageMetrics,
+  PageTextChunk
+} from '@bak/protocol';
 import type { BridgeConnectionState } from './extension-bridge.js';
 
 export interface BrowserTab {
@@ -52,4 +60,23 @@ export interface BrowserDriver {
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
   debugGetConsole(limit?: number, tabId?: number): Promise<{ entries: ConsoleEntry[] }>;
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }>;
+  rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult>;
+}
+
+export interface PageDumpState {
+  url: string;
+  title: string;
+  context: {
+    framePath: string[];
+    shadowPath: string[];
+  };
+  dom: PageDomSummary;
+  text: PageTextChunk[];
+  console: ConsoleEntry[];
+  network: NetworkEntry[];
+}
+
+export interface DriverExtendedApis {
+  pageMetrics(tabId?: number): Promise<PageMetrics>;
+  debugDumpState(tabId?: number, options?: { consoleLimit?: number; networkLimit?: number; includeAccessibility?: boolean }): Promise<PageDumpState>;
 }
