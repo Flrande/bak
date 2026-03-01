@@ -155,6 +155,13 @@ Traces are written to `.bak-data/traces/<traceId>.jsonl` as method/result/error 
 
 Policy audit fields intentionally exclude raw sensitive text payloads.
 
+`memory.healing` audit event includes:
+- `skillId`
+- `attempts`
+- `successes`
+- `failed`
+- `successRate`
+
 ## Locator schema
 
 Any of:

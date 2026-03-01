@@ -40,6 +40,17 @@ interface RecordingState {
   anchors: string[];
 }
 
+interface SkillRunHealingSummary {
+  attempts: number;
+  successes: number;
+  failed: boolean;
+}
+
+interface SkillRunOutcome {
+  updatedSkill?: Skill;
+  healing: SkillRunHealingSummary;
+}
+
 export interface ServiceHeartbeatConfig {
   intervalMs?: number;
 }
@@ -78,10 +89,25 @@ function maybeLocatorFromStep(step: SkillPlanStep): Locator | undefined {
   return step.targetCandidates?.[0];
 }
 
-function hasHealingAttemptFlag(error: RpcError): boolean {
+function rpcErrorMetadata(error: RpcError): Record<string, unknown> {
   const source = error as RpcError & { data?: Record<string, unknown>; details?: Record<string, unknown> };
-  const data = source.details ?? source.data;
+  return source.details ?? source.data ?? {};
+}
+
+function hasHealingAttemptFlag(error: RpcError): boolean {
+  const data = rpcErrorMetadata(error);
   return data?.healingAttempted === true;
+}
+
+function healingSummaryFromError(error: RpcError): SkillRunHealingSummary {
+  const data = rpcErrorMetadata(error);
+  const attempts = typeof data.healingAttempts === 'number' ? Math.max(0, data.healingAttempts) : 0;
+  const successes = typeof data.healingSuccesses === 'number' ? Math.max(0, data.healingSuccesses) : 0;
+  return {
+    attempts,
+    successes,
+    failed: true
+  };
 }
 
 export class BakService {
@@ -335,6 +361,23 @@ export class BakService {
     });
   }
 
+  private appendHealingAudit(traceId: string, skillId: string, healing: SkillRunHealingSummary): void {
+    if (healing.attempts <= 0 && healing.successes <= 0) {
+      return;
+    }
+
+    this.traceStore.append(traceId, {
+      method: 'memory.healing',
+      params: {
+        skillId,
+        attempts: healing.attempts,
+        successes: healing.successes,
+        failed: healing.failed,
+        successRate: healing.attempts > 0 ? healing.successes / healing.attempts : 0
+      }
+    });
+  }
+
   private async evaluatePolicy(action: PolicyAction, locator: Locator): Promise<{ requiresConfirm: boolean }> {
     const traceId = this.currentTraceId || this.traceStore.newTraceId();
     this.currentTraceId = traceId;
@@ -480,7 +523,7 @@ export class BakService {
     };
   }
 
-  private async runSkill(skill: Skill, options: { tabId?: number; params?: Record<string, string> }): Promise<Skill | undefined> {
+  private async runSkill(skill: Skill, options: { tabId?: number; params?: Record<string, string> }): Promise<SkillRunOutcome> {
     let updated = false;
     let healingAttempts = 0;
     let healingSuccesses = 0;
@@ -517,7 +560,12 @@ export class BakService {
             healingAttempts += 1;
           }
           this.applyHealingStats(skill, healingAttempts, healingSuccesses);
-          throw normalized;
+          throw new RpcError(normalized.message, normalized.code, normalized.bakCode, {
+            ...rpcErrorMetadata(normalized),
+            healingAttempts,
+            healingSuccesses,
+            healingAttempted: healingAttempts > 0
+          });
         }
         continue;
       }
@@ -526,13 +574,21 @@ export class BakService {
     skill.stats.runs += 1;
     skill.stats.success += 1;
     this.applyHealingStats(skill, healingAttempts, healingSuccesses);
+    const healing: SkillRunHealingSummary = {
+      attempts: healingAttempts,
+      successes: healingSuccesses,
+      failed: false
+    };
 
     if (updated) {
-      return this.memoryStore.updateSkill(skill);
+      return {
+        updatedSkill: this.memoryStore.updateSkill(skill),
+        healing
+      };
     }
 
     this.memoryStore.updateSkill(skill);
-    return undefined;
+    return { healing };
   }
 
   async invoke<TMethod extends MethodName>(
@@ -865,19 +921,26 @@ export class BakService {
           const paramsInput = (args.params as Record<string, string> | undefined) ?? {};
 
           try {
-            const updatedSkill = await this.runSkill(skill, {
+            const runOutcome = await this.runSkill(skill, {
               params: paramsInput,
               tabId
             });
+            const traceId = this.currentTraceId || this.traceStore.newTraceId();
+            this.currentTraceId = traceId;
+            this.appendHealingAudit(traceId, skill.id, runOutcome.healing);
             return {
               ok: true,
-              updatedSkill
+              updatedSkill: runOutcome.updatedSkill
             };
           } catch (error) {
             skill.stats.runs += 1;
             skill.stats.failure += 1;
             this.memoryStore.updateSkill(skill);
-            throw error;
+            const normalized = this.normalizeError(error);
+            const traceId = this.currentTraceId || this.traceStore.newTraceId();
+            this.currentTraceId = traceId;
+            this.appendHealingAudit(traceId, skill.id, healingSummaryFromError(normalized));
+            throw normalized;
           }
         }) as Promise<MethodResult<TMethod>>;
       }

@@ -131,6 +131,16 @@ describe('memory healing telemetry', () => {
       expect(updated?.stats.runs).toBe(1);
       expect(updated?.stats.success).toBe(1);
       expect(updated?.stats.failure).toBe(0);
+
+      const traceId = service.getCurrentTraceId();
+      const traceEntries = traceStore.readTrace(traceId);
+      const healingEvent = traceEntries.find((entry) => entry.method === 'memory.healing');
+      expect(healingEvent?.params).toMatchObject({
+        skillId: skill.id,
+        attempts: 1,
+        successes: 1,
+        failed: false
+      });
     });
   });
 
@@ -159,6 +169,16 @@ describe('memory healing telemetry', () => {
       expect(updated?.stats.runs).toBe(1);
       expect(updated?.stats.success).toBe(0);
       expect(updated?.stats.failure).toBe(1);
+
+      const traceId = service.getCurrentTraceId();
+      const traceEntries = traceStore.readTrace(traceId);
+      const healingEvent = traceEntries.find((entry) => entry.method === 'memory.healing');
+      expect(healingEvent?.params).toMatchObject({
+        skillId: skill.id,
+        attempts: 1,
+        successes: 0,
+        failed: true
+      });
     });
   });
 });
