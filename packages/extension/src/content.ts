@@ -1,5 +1,6 @@
 import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
+import { unsupportedLocatorHint } from './limitations.js';
 
 type ActionName = 'click' | 'type' | 'scroll';
 
@@ -690,7 +691,8 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
     const target = resolveLocator(message.locator);
     if (!target) {
-      return failAction('E_NOT_FOUND', 'Target not found');
+      const hint = unsupportedLocatorHint(message.locator);
+      return failAction('E_NOT_FOUND', hint ? `Target not found: ${hint}` : 'Target not found');
     }
 
     const name = inferName(target);
