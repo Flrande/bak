@@ -28,6 +28,7 @@ export interface DoctorResult {
     extensionBridgePort: DoctorCheck;
     rpcPort: DoctorCheck;
     rpcSessionInfo: DoctorCheck;
+    rpcConnectionHealth: DoctorCheck;
   };
 }
 
@@ -125,6 +126,73 @@ async function checkRpcSessionInfo(rpcWsPort: number): Promise<DoctorCheck> {
   }
 }
 
+export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCheck {
+  const state = typeof info.connectionState === 'string' ? info.connectionState : 'unknown';
+  const reason = typeof info.connectionReason === 'string' ? info.connectionReason : null;
+  const extensionConnected = info.extensionConnected === true;
+  const heartbeatStale = info.heartbeatStale === true;
+  const heartbeatAgeMs = typeof info.heartbeatAgeMs === 'number' ? info.heartbeatAgeMs : null;
+  const staleAfterMs = typeof info.staleAfterMs === 'number' ? info.staleAfterMs : null;
+
+  if (extensionConnected && state === 'connected' && !heartbeatStale) {
+    return {
+      ok: true,
+      message: 'extension bridge connected and heartbeat healthy',
+      details: {
+        state,
+        reason,
+        extensionConnected,
+        heartbeatStale,
+        heartbeatAgeMs,
+        staleAfterMs
+      }
+    };
+  }
+
+  if (heartbeatStale) {
+    return {
+      ok: false,
+      message: 'extension heartbeat is stale',
+      details: {
+        state,
+        reason,
+        extensionConnected,
+        heartbeatStale,
+        heartbeatAgeMs,
+        staleAfterMs
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'extension bridge is not connected',
+    details: {
+      state,
+      reason,
+      extensionConnected,
+      heartbeatStale,
+      heartbeatAgeMs,
+      staleAfterMs
+    }
+  };
+}
+
+async function checkRpcConnectionHealth(rpcWsPort: number): Promise<DoctorCheck> {
+  try {
+    const info = (await callRpc('session.info', {}, rpcWsPort)) as Record<string, unknown>;
+    return assessSessionInfoHealth(info);
+  } catch (error) {
+    return {
+      ok: false,
+      message: 'rpc connection health unavailable',
+      details: {
+        detail: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
+}
+
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const dataDir = options.dataDir ? resolve(options.dataDir) : resolveDataDir();
 
@@ -133,7 +201,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     pairing: checkPairing(dataDir),
     extensionBridgePort: await probePortAvailable(options.port),
     rpcPort: await probePortAvailable(options.rpcWsPort),
-    rpcSessionInfo: await checkRpcSessionInfo(options.rpcWsPort)
+    rpcSessionInfo: await checkRpcSessionInfo(options.rpcWsPort),
+    rpcConnectionHealth: await checkRpcConnectionHealth(options.rpcWsPort)
   };
 
   const ok = Object.values(checks).every((check) => check.ok);

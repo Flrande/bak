@@ -11,6 +11,7 @@ Checks:
 - pairing token presence
 - bridge/rpc port availability
 - `session.info` reachability
+- extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
 
 ## Pair token lifecycle
 
