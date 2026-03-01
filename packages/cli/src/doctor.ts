@@ -248,7 +248,7 @@ export function assessHealingTelemetry(summary: HealingTelemetrySummary): Doctor
     return {
       ok: true,
       message: 'no healing telemetry events found',
-      details: summary
+      details: { ...summary }
     };
   }
 
@@ -257,14 +257,14 @@ export function assessHealingTelemetry(summary: HealingTelemetrySummary): Doctor
       ok: false,
       message: 'healing failure rate is elevated',
       severity: 'warn',
-      details: summary
+      details: { ...summary }
     };
   }
 
   return {
     ok: true,
     message: 'healing telemetry looks healthy',
-    details: summary
+    details: { ...summary }
   };
 }
 
