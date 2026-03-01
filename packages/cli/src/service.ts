@@ -76,11 +76,19 @@ function maybeParamValue(text: string, params?: Record<string, string>): string 
 }
 
 function sanitizeInputText(locator: Locator, text: string): string {
+  if (!text.trim()) {
+    return '';
+  }
   const lower = `${locator.name ?? ''} ${locator.text ?? ''}`.toLowerCase();
   if (lower.includes('password') || lower.includes('otp') || lower.includes('验证码')) {
     return '[REDACTED]';
   }
-  return text;
+
+  if (process.env.BAK_MEMORY_RECORD_INPUT_TEXT !== '1') {
+    return '[REDACTED:input]';
+  }
+
+  return redactText(text);
 }
 
 function redactTraceParams(method: string, params: unknown): unknown {
