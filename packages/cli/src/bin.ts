@@ -5,9 +5,10 @@ import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
 import { startBakDaemon } from './server.js';
 import { runGc } from './gc.js';
+import { runDoctor } from './doctor.js';
+import { exportDiagnosticZip } from './diagnostic-export.js';
 import { createMemoryStore, exportMemory, migrateMemoryJsonToSqlite, resolveMemoryBackend } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
-import { TraceStore } from './trace-store.js';
 import { readEnvInt, resolveDataDir } from './utils.js';
 
 const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
@@ -86,6 +87,21 @@ program
     const store = new PairingStore();
     const token = store.createToken();
     printResult({ token });
+  });
+
+program
+  .command('doctor')
+  .description('Run local diagnostics for bak runtime')
+  .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .option('--data-dir <path>', 'override data dir')
+  .action(async (options) => {
+    const result = await runDoctor({
+      port: Number.parseInt(String(options.port), 10),
+      rpcWsPort: Number.parseInt(String(options.rpcWsPort), 10),
+      dataDir: options.dataDir ? resolve(String(options.dataDir)) : undefined
+    });
+    printResult(result);
   });
 
 program
@@ -234,14 +250,21 @@ memory
       episodeCount: payload.episodes.length,
       skillCount: payload.skills.length
     });
-  });
+    });
 
 program
-  .command('export <traceId>')
-  .description('Export trace path for debug package')
-  .action((traceId) => {
-    const traces = new TraceStore();
-    printResult(traces.export(traceId));
+  .command('export')
+  .description('Export redacted diagnostic zip package')
+  .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
+  .option('--data-dir <path>', 'override data dir')
+  .option('--out <path>', 'output zip path')
+  .action((options) => {
+    const result = exportDiagnosticZip({
+      traceId: options.traceId ? String(options.traceId) : undefined,
+      dataDir: options.dataDir ? resolve(String(options.dataDir)) : undefined,
+      outPath: options.out ? resolve(String(options.out)) : undefined
+    });
+    printResult(result);
   });
 
 program

@@ -35,6 +35,8 @@ repo/
     PROTOCOL.md
     SECURITY.md
     PRIVACY.md
+    OPS_RUNBOOK.md
+    RELEASE.md
   scripts/
     demo-rpc.ps1
 ```
@@ -52,6 +54,10 @@ pnpm build
 pnpm dev
 pnpm test
 ```
+
+CI strategy:
+- PR/push: typecheck + lint + unit tests (`.github/workflows/ci.yml`)
+- e2e: nightly/manual workflow (`.github/workflows/e2e-nightly.yml`)
 
 `pnpm dev` starts:
 - protocol watcher
@@ -111,6 +117,8 @@ pnpm --filter @bak/cli exec bak call --method session.create --params '{"clientN
 pnpm --filter @bak/cli exec bak call --method page.goto --params '{"url":"http://127.0.0.1:4173/form.html"}'
 pnpm --filter @bak/cli exec bak call --method element.type --params '{"locator":{"css":"#name-input"},"text":"hello"}'
 pnpm --filter @bak/cli exec bak call --method page.snapshot --params '{}'
+pnpm --filter @bak/cli exec bak doctor
+pnpm --filter @bak/cli exec bak export --out ./.bak-data/diag.zip
 ```
 
 ## Memory CLI commands
