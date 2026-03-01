@@ -99,23 +99,127 @@ function textScore(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
+function isTemplateParam(value: string): boolean {
+  return /^\{\{[a-zA-Z0-9_]+\}\}$/.test(value.trim());
+}
+
+function collectLocatorAnchors(locator: Locator | undefined): string[] {
+  if (!locator) {
+    return [];
+  }
+
+  return [locator.name, locator.text, locator.role, locator.css]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+}
+
+function collectStepAnchors(step: SkillPlanStep): string[] {
+  const anchors: string[] = [];
+  anchors.push(...collectLocatorAnchors(step.locator));
+
+  if (Array.isArray(step.targetCandidates)) {
+    for (const candidate of step.targetCandidates) {
+      anchors.push(...collectLocatorAnchors(candidate));
+    }
+  }
+
+  if (typeof step.waitFor?.value === 'string') {
+    anchors.push(step.waitFor.value);
+  }
+  if (typeof step.url === 'string') {
+    anchors.push(step.url);
+  }
+  if (typeof step.text === 'string' && !isTemplateParam(step.text)) {
+    anchors.push(step.text);
+  }
+
+  return anchors
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function collectSkillAnchors(skill: Skill): string[] {
+  const anchors = new Set<string>();
+  anchors.add(skill.intent);
+  anchors.add(skill.description);
+
+  for (const step of skill.plan) {
+    for (const anchor of collectStepAnchors(step)) {
+      anchors.add(anchor);
+    }
+  }
+
+  return [...anchors.values()];
+}
+
+function normalizeMinScore(minScore: number | undefined): number {
+  if (!Number.isFinite(minScore)) {
+    return 0.2;
+  }
+  return Math.min(1, Math.max(0, minScore ?? 0.2));
+}
+
+function scoreDomain(skillDomain: string, queryDomain: string): number {
+  const normalizedSkill = skillDomain.trim().toLowerCase();
+  const normalizedQuery = queryDomain.trim().toLowerCase();
+
+  if (!normalizedQuery || normalizedQuery === 'unknown') {
+    return 0.6;
+  }
+  if (normalizedSkill === normalizedQuery) {
+    return 1;
+  }
+  if (normalizedSkill.endsWith(`.${normalizedQuery}`) || normalizedQuery.endsWith(`.${normalizedSkill}`)) {
+    return 0.7;
+  }
+  return 0;
+}
+
+function scoreAnchors(skill: Skill, queryAnchors: string[] | undefined): number {
+  if (!queryAnchors || queryAnchors.length === 0) {
+    return 0;
+  }
+
+  const skillAnchors = collectSkillAnchors(skill);
+  if (skillAnchors.length === 0) {
+    return 0;
+  }
+
+  const anchorScores = queryAnchors
+    .map((anchor) => anchor.trim())
+    .filter(Boolean)
+    .map((anchor) => Math.max(...skillAnchors.map((candidate) => textScore(candidate, anchor))));
+
+  if (anchorScores.length === 0) {
+    return 0;
+  }
+
+  return anchorScores.reduce((sum, score) => sum + score, 0) / anchorScores.length;
+}
+
 export function retrieveSkills(
   skills: Skill[],
-  query: { domain: string; intent: string; anchors?: string[] }
+  query: { domain: string; intent: string; anchors?: string[]; minScore?: number }
 ): Skill[] {
+  const minScore = normalizeMinScore(query.minScore);
   const ranked = skills
     .map((skill) => {
-      const domainScore = skill.domain === query.domain ? 1 : 0;
-      const intentScore = textScore(skill.intent, query.intent);
-      const anchorScore =
-        query.anchors && query.anchors.length > 0
-          ? Math.max(...query.anchors.map((anchor) => textScore(skill.description, anchor)))
-          : 0;
-      const score = domainScore * 0.55 + intentScore * 0.35 + anchorScore * 0.1;
+      const domainScore = scoreDomain(skill.domain, query.domain);
+      const intentScore = Math.max(textScore(skill.intent, query.intent), textScore(skill.description, query.intent) * 0.85);
+      const anchorScore = scoreAnchors(skill, query.anchors);
+      const score = domainScore * 0.45 + intentScore * 0.35 + anchorScore * 0.2;
       return { skill, score };
     })
-    .filter((item) => item.score > 0.2)
-    .sort((a, b) => b.score - a.score);
+    .filter((item) => item.score >= minScore)
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      if (a.skill.createdAt !== b.skill.createdAt) {
+        return b.skill.createdAt.localeCompare(a.skill.createdAt);
+      }
+      return a.skill.id.localeCompare(b.skill.id);
+    });
 
   return ranked.map((item) => item.skill);
 }

@@ -78,6 +78,7 @@ export class BakService {
   private readonly memoryStore: MemoryStoreBackend;
   private readonly dataDir: string;
   private readonly policyEngine: PolicyEngine;
+  private readonly memoryRetrieveMinScore: number;
 
   private sessionId: string | null = null;
   private currentTraceId: string = '';
@@ -99,6 +100,10 @@ export class BakService {
     this.memoryStore = memoryStore;
     this.dataDir = resolveDataDir();
     this.policyEngine = new PolicyEngine(this.dataDir);
+    const configuredRetrieveMinScore = Number.parseFloat(process.env.BAK_MEMORY_RETRIEVE_MIN_SCORE ?? '');
+    this.memoryRetrieveMinScore = Number.isFinite(configuredRetrieveMinScore)
+      ? Math.min(1, Math.max(0, configuredRetrieveMinScore))
+      : 0.2;
     const configured = heartbeatConfig.intervalMs ?? 10_000;
     this.heartbeatIntervalMs = Math.max(500, configured);
     this.heartbeatStaleAfterMs = Math.max(this.heartbeatIntervalMs * 3, 5_000);
@@ -755,7 +760,8 @@ export class BakService {
           const skills = retrieveSkills(this.memoryStore.listSkills(), {
             domain: domain || 'unknown',
             intent,
-            anchors
+            anchors,
+            minScore: this.memoryRetrieveMinScore
           });
           return { skills };
         }) as Promise<MethodResult<TMethod>>;
