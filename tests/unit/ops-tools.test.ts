@@ -54,8 +54,11 @@ describe('ops tools', () => {
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
     expect(report.checks.activeTabTelemetry.ok).toBe(false);
     expect(report.checks.activeTabTelemetry.severity).toBe('warn');
+    expect(report.checks.protocolCompatibility.ok).toBe(false);
+    expect(report.checks.protocolCompatibility.severity).toBe('warn');
     expect(report.checks.versionCompatibility.ok).toBe(false);
     expect(report.checks.versionCompatibility.severity).toBe('warn');
+    expect(report.summary.warningChecks).toContain('protocolCompatibility');
     expect(report.summary.warningChecks).toContain('versionCompatibility');
     expect(report.summary.warningChecks).toContain('activeTabTelemetry');
     expect(report.summary.errorChecks).toContain('pairing');

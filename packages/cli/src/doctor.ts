@@ -2,6 +2,7 @@ import { createServer } from 'node:net';
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PROTOCOL_VERSION } from '@bak/protocol';
 import { createMemoryStoreResolved, type MemoryStoreResolution } from './memory/factory.js';
 import { callRpc } from './rpc/client.js';
 import { PairingStore } from './pairing-store.js';
@@ -40,6 +41,7 @@ export interface DoctorResult {
     rpcSessionInfo: DoctorCheck;
     rpcConnectionHealth: DoctorCheck;
     activeTabTelemetry: DoctorCheck;
+    protocolCompatibility: DoctorCheck;
     versionCompatibility: DoctorCheck;
   };
 }
@@ -497,6 +499,57 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
   };
 }
 
+export function assessProtocolCompatibility(info: Record<string, unknown>): DoctorCheck {
+  const protocolVersion = typeof info.protocolVersion === 'string' ? info.protocolVersion : null;
+
+  if (!protocolVersion) {
+    return {
+      ok: false,
+      message: 'protocol version missing from session.info',
+      severity: 'warn',
+      details: {
+        expectedProtocolVersion: PROTOCOL_VERSION
+      }
+    };
+  }
+
+  if (protocolVersion === PROTOCOL_VERSION) {
+    return {
+      ok: true,
+      message: 'protocol versions are aligned',
+      details: {
+        expectedProtocolVersion: PROTOCOL_VERSION,
+        protocolVersion
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'protocol version mismatch',
+    severity: 'warn',
+    details: {
+      expectedProtocolVersion: PROTOCOL_VERSION,
+      protocolVersion
+    }
+  };
+}
+
+function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe): DoctorCheck {
+  if (!probe.ok || !probe.info) {
+    return {
+      ok: false,
+      message: 'protocol compatibility unknown (session.info unavailable)',
+      severity: 'warn',
+      details: {
+        expectedProtocolVersion: PROTOCOL_VERSION,
+        detail: probe.detail ?? 'unknown'
+      }
+    };
+  }
+  return assessProtocolCompatibility(probe.info);
+}
+
 function checkVersionCompatibilityFromProbe(probe: SessionInfoProbe, cliVersion: string): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
@@ -544,6 +597,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
             detail: sessionInfo.detail ?? 'unknown'
           }
         },
+    protocolCompatibility: checkProtocolCompatibilityFromProbe(sessionInfo),
     versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion)
   };
 

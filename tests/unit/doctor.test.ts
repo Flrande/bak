@@ -3,6 +3,7 @@ import {
   assessActiveTabTelemetry,
   assessHealingTelemetry,
   assessMemoryBackendResolution,
+  assessProtocolCompatibility,
   assessSessionInfoHealth,
   assessVersionCompatibility
 } from '../../packages/cli/src/doctor.js';
@@ -91,6 +92,33 @@ describe('doctor session.info health assessment', () => {
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('unable to compare');
+    expect(check.severity).toBe('warn');
+  });
+
+  it('detects aligned protocol versions', () => {
+    const check = assessProtocolCompatibility({
+      protocolVersion: 'v1'
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('aligned');
+  });
+
+  it('warns when protocol version is missing', () => {
+    const check = assessProtocolCompatibility({});
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('missing');
+    expect(check.severity).toBe('warn');
+  });
+
+  it('warns when protocol version mismatches', () => {
+    const check = assessProtocolCompatibility({
+      protocolVersion: 'v2'
+    });
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('mismatch');
     expect(check.severity).toBe('warn');
   });
 
