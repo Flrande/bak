@@ -67,6 +67,17 @@ async function waitForRpcReady(): Promise<void> {
   throw new Error('RPC not ready');
 }
 
+async function findTabIdByUrl(urlPart: string): Promise<number> {
+  const result = (await rpcCall('tabs.list', {})) as {
+    tabs: Array<{ id: number; url: string; active: boolean }>;
+  };
+  const matched = result.tabs.find((tab) => tab.url.includes(urlPart));
+  if (!matched) {
+    throw new Error(`tab not found for ${urlPart}`);
+  }
+  return matched.id;
+}
+
 test.describe('bak e2e', () => {
   let daemon: ChildProcess | null = null;
   let dataDir = '';
@@ -170,6 +181,7 @@ test.describe('bak e2e', () => {
 
     expect(extensionState.stored.pairToken).toBe(token);
     expect(extensionState.status.hasToken).toBe(true);
+    await popup.close();
 
     await expect
       .poll(
@@ -205,9 +217,13 @@ test.describe('bak e2e', () => {
 
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4173/form.html');
+    await page.bringToFront();
+    await expect(page.locator('#name-input')).toBeVisible();
+    const tabId = await findTabIdByUrl('/form.html');
 
     await rpcCall('session.create', { clientName: 'playwright-e2e' });
     await rpcCall('element.type', {
+      tabId,
       locator: { css: '#name-input' },
       text: 'Agent QA'
     });
@@ -216,20 +232,31 @@ test.describe('bak e2e', () => {
 
     await expect(async () => {
       await rpcCall('element.click', {
+        tabId,
         locator: { css: '#cancel-btn' }
       });
     }).rejects.toThrow(/E_PERMISSION/);
 
     await rpcCall('element.click', {
+      tabId,
       locator: { css: '#next-page' }
     });
 
     await expect(page).toHaveURL(/table\.html/);
+    await rpcCall('page.wait', {
+      tabId,
+      mode: 'text',
+      value: 'Alpha',
+      timeoutMs: 5000
+    });
+    await expect(page.locator('button.delete-btn[data-id="1"]')).toBeVisible();
 
-    await rpcCall('page.goto', { url: 'http://127.0.0.1:4173/controlled.html' });
+    await rpcCall('page.goto', { tabId, url: 'http://127.0.0.1:4173/controlled.html' });
     await expect(page).toHaveURL(/controlled\.html/);
+    await expect(page.locator('#controlled-input')).toBeVisible();
 
     await rpcCall('element.type', {
+      tabId,
       locator: { css: '#controlled-input' },
       text: 'Native Setter',
       clear: true
@@ -238,14 +265,14 @@ test.describe('bak e2e', () => {
     await expect(page.locator('#controlled-mirror')).toContainText('Native Setter');
 
     await expect(async () => {
-      await rpcCall('element.click', { locator: { css: '#blocked-action' } });
+      await rpcCall('element.click', { tabId, locator: { css: '#blocked-action' } });
     }).rejects.toThrow(/E_PERMISSION/);
 
-    await rpcCall('element.click', { locator: { css: '#toggle-cover' } });
-    await rpcCall('element.click', { locator: { css: '#blocked-action' } });
+    await rpcCall('element.click', { tabId, locator: { css: '#toggle-cover' } });
+    await rpcCall('element.click', { tabId, locator: { css: '#blocked-action' } });
     await expect(page.locator('#action-result')).toContainText('clicked');
 
-    const snapshot = (await rpcCall('page.snapshot', {})) as {
+    const snapshot = (await rpcCall('page.snapshot', { tabId })) as {
       imagePath: string;
       elementsPath: string;
       elementCount: number;
