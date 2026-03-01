@@ -1,5 +1,6 @@
 import type { ConsoleEntry, Locator } from '@bak/protocol';
 import { isSupportedAutomationUrl } from './url-policy.js';
+import { computeReconnectDelayMs } from './reconnect.js';
 
 interface CliRequest {
   id: string;
@@ -24,6 +25,12 @@ interface ExtensionConfig {
   debugRichText: boolean;
 }
 
+interface RuntimeErrorDetails {
+  message: string;
+  context: 'config' | 'socket' | 'request' | 'parse';
+  at: number;
+}
+
 const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
@@ -31,7 +38,9 @@ const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
-let lastError: string | null = null;
+let nextReconnectInMs: number | null = null;
+let reconnectAttempt = 0;
+let lastError: RuntimeErrorDetails | null = null;
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -56,6 +65,22 @@ async function setConfig(config: Partial<ExtensionConfig>): Promise<void> {
   if (Object.keys(payload).length > 0) {
     await chrome.storage.local.set(payload);
   }
+}
+
+function setRuntimeError(message: string, context: RuntimeErrorDetails['context']): void {
+  lastError = {
+    message,
+    context,
+    at: Date.now()
+  };
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  nextReconnectInMs = null;
 }
 
 function sendResponse(payload: CliResponse): void {
@@ -255,23 +280,35 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
   }
 }
 
-function scheduleReconnect(): void {
+function scheduleReconnect(reason: string): void {
   if (reconnectTimer !== null) {
-    clearTimeout(reconnectTimer);
+    return;
   }
+
+  const delayMs = computeReconnectDelayMs(reconnectAttempt);
+  reconnectAttempt += 1;
+  nextReconnectInMs = delayMs;
   reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    nextReconnectInMs = null;
     void connectWebSocket();
-  }, 1500) as unknown as number;
+  }, delayMs) as unknown as number;
+
+  if (!lastError) {
+    setRuntimeError(`Reconnect scheduled: ${reason}`, 'socket');
+  }
 }
 
 async function connectWebSocket(): Promise<void> {
+  clearReconnectTimer();
+
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
 
   const config = await getConfig();
   if (!config.token) {
-    lastError = 'Pair token is empty';
+    setRuntimeError('Pair token is empty', 'config');
     return;
   }
 
@@ -279,6 +316,7 @@ async function connectWebSocket(): Promise<void> {
   ws = new WebSocket(url);
 
   ws.addEventListener('open', () => {
+    reconnectAttempt = 0;
     lastError = null;
     ws?.send(JSON.stringify({
       type: 'hello',
@@ -306,6 +344,7 @@ async function connectWebSocket(): Promise<void> {
           sendResponse({ id: request.id, ok: false, error: normalized });
         });
     } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error), 'parse');
       sendResponse({
         id: 'parse-error',
         ok: false,
@@ -315,11 +354,12 @@ async function connectWebSocket(): Promise<void> {
   });
 
   ws.addEventListener('close', () => {
-    scheduleReconnect();
+    ws = null;
+    scheduleReconnect('socket-closed');
   });
 
   ws.addEventListener('error', () => {
-    lastError = 'Cannot connect to bak cli';
+    setRuntimeError('Cannot connect to bak cli', 'socket');
     ws?.close();
   });
 }
@@ -355,14 +395,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         hasToken: Boolean(config.token),
         port: config.port,
         debugRichText: config.debugRichText,
-        lastError
+        lastError: lastError?.message ?? null,
+        lastErrorAt: lastError?.at ?? null,
+        lastErrorContext: lastError?.context ?? null,
+        reconnectAttempt,
+        nextReconnectInMs
       });
     });
     return true;
   }
 
   if (message?.type === 'bak.disconnect') {
+    clearReconnectTimer();
+    reconnectAttempt = 0;
     ws?.close();
+    ws = null;
     sendResponse({ ok: true });
     return false;
   }

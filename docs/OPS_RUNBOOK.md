@@ -19,6 +19,11 @@ Doctor output also includes:
 - `summary.errorChecks` (blocking failures)
 - `summary.warningChecks` (non-blocking warnings)
 
+Extension popup state (`bak.getState`) also exposes reconnect diagnostics:
+- `lastError` / `lastErrorContext` / `lastErrorAt`
+- `reconnectAttempt`
+- `nextReconnectInMs`
+
 ## Pair token lifecycle
 
 ```powershell
