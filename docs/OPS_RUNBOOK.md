@@ -12,6 +12,14 @@ Checks:
 - bridge/rpc port availability
 - `session.info` reachability
 
+## Pair token lifecycle
+
+```powershell
+pnpm --filter @bak/cli exec bak pair
+pnpm --filter @bak/cli exec bak pair status
+pnpm --filter @bak/cli exec bak pair revoke --reason "rotation"
+```
+
 ## Retention cleanup
 
 ```powershell

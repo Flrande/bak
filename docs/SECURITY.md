@@ -9,6 +9,8 @@
 - daemon verifies token during websocket upgrade
 - extension stores token in `chrome.storage.local`
 - unauthenticated extensions are rejected
+- token metadata includes `createdAt` + `expiresAt`
+- CLI supports rotate (`bak pair`), revoke (`bak pair revoke`) and status (`bak pair status`)
 
 3. High-risk action gate
 - keyword-based high-risk detection in content script (`submit/delete/send/upload` + CN variants)
@@ -44,7 +46,7 @@
 
 - Keyword risk detector can have false positives/false negatives.
 - Pair token stored locally in plain text under `.bak-data/pairing.json`.
-- Extension popup currently does not provide token rotation UI; rotate by re-running `bak pair`.
+- Extension popup currently does not provide rotate/revoke buttons; use CLI commands.
 - Memory backend (`memory.json` or `memory.sqlite`) is local-only but not encrypted at rest.
 - Healing candidate ranking is heuristic and can select wrong elements on dense UIs.
 - Rich text debug mode can still capture non-secret page copy; enable only when needed.

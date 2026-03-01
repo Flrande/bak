@@ -47,7 +47,8 @@ describe('ExtensionBridge reliability', () => {
     const port = await getFreePort();
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-bridge-close-'));
     const store = new PairingStore(dataDir);
-    const token = store.createToken();
+    const created = store.createToken();
+    const token = created.token;
     const bridge = new ExtensionBridge(port, store);
     await bridge.start();
 

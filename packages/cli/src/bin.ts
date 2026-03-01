@@ -80,13 +80,41 @@ program
     }, 15_000);
   });
 
-program
-  .command('pair')
-  .description('Generate pairing token for extension')
+const pair = program.command('pair').description('Pairing token operations');
+pair
+  .option('--ttl-days <days>', 'token ttl in days', `${readEnvInt('BAK_PAIR_TTL_DAYS', 30)}`)
+  .description('Generate and rotate pairing token for extension')
+  .action((options) => {
+    const ttlDays = Number.parseInt(String(options.ttlDays), 10);
+    if (!Number.isInteger(ttlDays) || ttlDays <= 0) {
+      throw new Error('ttl-days must be an integer > 0');
+    }
+
+    const store = new PairingStore();
+    const created = store.createToken({ ttlDays, reason: 'manual-rotate' });
+    printResult({
+      token: created.token,
+      createdAt: created.createdAt,
+      expiresAt: created.expiresAt
+    });
+  });
+
+pair
+  .command('revoke')
+  .description('Revoke current active pairing token')
+  .option('--reason <reason>', 'revocation reason', 'manual-revoke')
+  .action((options) => {
+    const store = new PairingStore();
+    const result = store.revokeActive(String(options.reason));
+    printResult(result);
+  });
+
+pair
+  .command('status')
+  .description('Show pairing token status')
   .action(() => {
     const store = new PairingStore();
-    const token = store.createToken();
-    printResult({ token });
+    printResult(store.status());
   });
 
 program

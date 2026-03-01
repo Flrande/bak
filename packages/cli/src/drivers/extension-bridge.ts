@@ -95,10 +95,9 @@ export class ExtensionBridge {
       }
 
       const token = url.searchParams.get('token') ?? '';
-      const expected = this.pairingStore.getToken();
-
-      if (!expected || token !== expected) {
-        this.lastError = 'pair-token-mismatch';
+      const validation = this.pairingStore.validateToken(token);
+      if (!validation.ok) {
+        this.lastError = validation.reason ?? 'pair-token-invalid';
         socket.destroy();
         return;
       }

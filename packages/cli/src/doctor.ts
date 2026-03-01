@@ -75,10 +75,26 @@ function checkDataDirWritable(dataDir: string): DoctorCheck {
 function checkPairing(dataDir: string): DoctorCheck {
   try {
     const pairing = new PairingStore(dataDir);
-    const hasToken = Boolean(pairing.getToken());
-    return hasToken
-      ? { ok: true, message: 'pair token exists' }
-      : { ok: false, message: 'pair token missing, run `bak pair`' };
+    const status = pairing.status();
+    if (status.paired) {
+      return {
+        ok: true,
+        message: 'pair token is active',
+        details: status
+      };
+    }
+    if (status.expired) {
+      return {
+        ok: false,
+        message: 'pair token expired, rotate with `bak pair`',
+        details: status
+      };
+    }
+    return {
+      ok: false,
+      message: 'pair token missing or revoked, run `bak pair`',
+      details: status
+    };
   } catch (error) {
     return {
       ok: false,

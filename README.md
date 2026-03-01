@@ -89,6 +89,9 @@ pnpm --filter @bak/test-sites dev
 
 ```powershell
 pnpm --filter @bak/cli exec bak pair
+pnpm --filter @bak/cli exec bak pair status
+# revoke current token if needed
+pnpm --filter @bak/cli exec bak pair revoke
 ```
 
 3) Start daemon:
