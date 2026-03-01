@@ -31,6 +31,24 @@
         border-radius: 6px;
         font-size: 12px;
       }
+      .toggle {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 8px;
+        border: 1px solid #fbbf24;
+        border-radius: 6px;
+        background: #fffbeb;
+      }
+      .toggle input {
+        width: auto;
+        margin-top: 2px;
+      }
+      .toggle-text {
+        font-size: 11px;
+        color: #92400e;
+      }
       .row {
         display: flex;
         gap: 8px;
@@ -72,6 +90,10 @@
     <label>
       CLI port
       <input id="port" value="17373" />
+    </label>
+    <label class="toggle">
+      <input id="debugRichText" type="checkbox" />
+      <span class="toggle-text">Allow richer text capture for debugging (still redacted, off by default)</span>
     </label>
     <div class="row">
       <button id="save">Save & Connect</button>

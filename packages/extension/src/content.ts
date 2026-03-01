@@ -1,4 +1,5 @@
 import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
+import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
 
 type ActionName = 'click' | 'type' | 'scroll';
 
@@ -22,6 +23,11 @@ interface WaitMessage {
 interface CandidateMessage {
   type: 'bak.selectCandidate';
   candidates: ElementMapItem[];
+}
+
+interface CollectElementsMessage {
+  type: 'bak.collectElements';
+  debugRichText?: boolean;
 }
 
 const consoleEntries: ConsoleEntry[] = [];
@@ -87,45 +93,46 @@ function inferRole(element: HTMLElement): string {
   }
 }
 
-function inferName(element: HTMLElement): string {
-  const ariaLabel = element.getAttribute('aria-label');
-  if (ariaLabel) {
-    return ariaLabel.trim();
-  }
-
+function labelledByText(element: HTMLElement): string {
   const labelledBy = element.getAttribute('aria-labelledby');
-  if (labelledBy) {
-    const text = labelledBy
-      .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
-      .filter(Boolean)
-      .join(' ');
-    if (text) {
-      return text;
+  if (!labelledBy) {
+    return '';
+  }
+  return labelledBy
+    .split(/\s+/)
+    .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
+    .filter(Boolean)
+    .join(' ');
+}
+
+function labelText(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement && element.id) {
+    const explicit = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+    if (explicit?.textContent) {
+      return explicit.textContent.trim();
     }
   }
 
-  const placeholder = (element as HTMLInputElement).placeholder;
-  if (placeholder) {
-    return placeholder.trim();
-  }
+  const wrapper = element.closest('label');
+  return wrapper?.textContent?.trim() ?? '';
+}
 
-  const value = (element as HTMLInputElement).value;
-  if (value && element.tagName.toLowerCase() !== 'select') {
-    return value.trim().slice(0, 100);
-  }
-
-  const text = (element.innerText || element.textContent || '').trim();
-  if (text) {
-    return text.slice(0, 100);
-  }
-
-  const nameAttr = element.getAttribute('name');
-  if (nameAttr) {
-    return nameAttr.trim();
-  }
-
-  return element.tagName.toLowerCase();
+function inferName(element: HTMLElement, options: RedactTextOptions = {}): string {
+  const inputType = element instanceof HTMLInputElement ? element.type : null;
+  return inferSafeName(
+    {
+      tag: element.tagName,
+      role: inferRole(element),
+      inputType,
+      ariaLabel: element.getAttribute('aria-label'),
+      labelledByText: labelledByText(element),
+      labelText: labelText(element),
+      placeholder: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.placeholder : '',
+      text: element.innerText || element.textContent || '',
+      nameAttr: element.getAttribute('name')
+    },
+    options
+  );
 }
 
 function isElementVisible(element: HTMLElement): boolean {
@@ -209,7 +216,7 @@ function buildEid(element: HTMLElement): string {
   return `eid_${fnv1a(payload)}`;
 }
 
-function collectElements(): ElementMapItem[] {
+function collectElements(options: RedactTextOptions = {}): ElementMapItem[] {
   const nodes = Array.from(document.querySelectorAll<HTMLElement>('*'));
   const results: ElementMapItem[] = [];
   elementCache.clear();
@@ -220,9 +227,9 @@ function collectElements(): ElementMapItem[] {
     }
 
     const rect = element.getBoundingClientRect();
-    const name = inferName(element);
+    const name = inferName(element, options);
     const role = inferRole(element);
-    const text = (element.innerText || element.textContent || '').trim().slice(0, 120);
+    const text = redactElementText(element.innerText || element.textContent || '', options);
     const eid = buildEid(element);
     const selectors = {
       css: toCssSelector(element),
@@ -604,7 +611,8 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   const typed = message as { type: string };
 
   if (typed.type === 'bak.collectElements') {
-    sendResponse({ elements: collectElements() });
+    const request = message as CollectElementsMessage;
+    sendResponse({ elements: collectElements({ debugRichText: Boolean(request.debugRichText) }) });
     return false;
   }
 

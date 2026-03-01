@@ -34,6 +34,7 @@ repo/
     TECH_SPEC.md
     PROTOCOL.md
     SECURITY.md
+    PRIVACY.md
   scripts/
     demo-rpc.ps1
 ```
@@ -138,6 +139,7 @@ Default data root: `./.bak-data`
 - CLI/extension token pairing required
 - High-risk actions require user approval overlay (`submit/delete/send/upload` semantics)
 - Sensitive input masking in record traces (basic)
+- Snapshot element maps avoid `input.value`; richer capture is explicit opt-in in popup
 - No cookie/password exfiltration features
 
-See `docs/SECURITY.md` for known limits and mitigations.
+See `docs/SECURITY.md` and `docs/PRIVACY.md` for defaults and operational guidance.

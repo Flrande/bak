@@ -20,21 +20,24 @@ interface CliResponse {
 interface ExtensionConfig {
   token: string;
   port: number;
+  debugRichText: boolean;
 }
 
 const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
+const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
 
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let lastError: string | null = null;
 
 async function getConfig(): Promise<ExtensionConfig> {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT]);
+  const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
   return {
     token: typeof stored[STORAGE_KEY_TOKEN] === 'string' ? stored[STORAGE_KEY_TOKEN] : '',
-    port: typeof stored[STORAGE_KEY_PORT] === 'number' ? stored[STORAGE_KEY_PORT] : DEFAULT_PORT
+    port: typeof stored[STORAGE_KEY_PORT] === 'number' ? stored[STORAGE_KEY_PORT] : DEFAULT_PORT,
+    debugRichText: stored[STORAGE_KEY_DEBUG_RICH_TEXT] === true
   };
 }
 
@@ -45,6 +48,9 @@ async function setConfig(config: Partial<ExtensionConfig>): Promise<void> {
   }
   if (typeof config.port === 'number') {
     payload[STORAGE_KEY_PORT] = config.port;
+  }
+  if (typeof config.debugRichText === 'boolean') {
+    payload[STORAGE_KEY_DEBUG_RICH_TEXT] = config.debugRichText;
   }
   if (Object.keys(payload).length > 0) {
     await chrome.storage.local.set(payload);
@@ -141,7 +147,11 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       if (!tab.id || !tab.windowId) {
         throw toError('E_NOT_FOUND', 'Tab missing id');
       }
-      const elements = await sendToContent<{ elements: unknown[] }>(tab.id, { type: 'bak.collectElements' });
+      const config = await getConfig();
+      const elements = await sendToContent<{ elements: unknown[] }>(tab.id, {
+        type: 'bak.collectElements',
+        debugRichText: config.debugRichText
+      });
       const imageData = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
       return {
         imageBase64: imageData.replace(/^data:image\/png;base64,/, ''),
@@ -300,7 +310,7 @@ async function connectWebSocket(): Promise<void> {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  void setConfig({ port: DEFAULT_PORT });
+  void setConfig({ port: DEFAULT_PORT, debugRichText: false });
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -311,7 +321,11 @@ void connectWebSocket();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'bak.updateConfig') {
-    void setConfig({ token: message.token, port: Number(message.port ?? DEFAULT_PORT) }).then(() => {
+    void setConfig({
+      token: message.token,
+      port: Number(message.port ?? DEFAULT_PORT),
+      debugRichText: message.debugRichText === true
+    }).then(() => {
       ws?.close();
       void connectWebSocket().then(() => sendResponse({ ok: true }));
     });
@@ -325,6 +339,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         connected: ws?.readyState === WebSocket.OPEN,
         hasToken: Boolean(config.token),
         port: config.port,
+        debugRichText: config.debugRichText,
         lastError
       });
     });

@@ -1,0 +1,22 @@
+# PRIVACY (v1)
+
+## Default collection behavior
+
+1. Snapshot element maps do not read `input.value` for naming or text extraction.
+2. Element `name`/`text` fields are minimized and passed through redaction rules.
+3. Potential secrets (email-like strings, OTP-like digits, long numeric sequences, token-like query strings) are replaced with redacted markers.
+4. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
+
+## Debug rich-text mode
+
+- The extension popup exposes `Allow richer text capture for debugging`.
+- Default is `OFF`.
+- When enabled, collection keeps the same redaction rules but allows longer text snippets to help diagnose locator issues.
+
+Use this mode only for short debugging sessions and disable it afterward.
+
+## Non-goals
+
+- No cookie/password/session-secret exfiltration.
+- No cloud upload channel.
+- No hidden sensitive capture path; richer collection requires explicit local opt-in.

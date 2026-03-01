@@ -1,6 +1,7 @@
 const statusEl = document.getElementById('status') as HTMLDivElement;
 const tokenInput = document.getElementById('token') as HTMLInputElement;
 const portInput = document.getElementById('port') as HTMLInputElement;
+const debugRichTextInput = document.getElementById('debugRichText') as HTMLInputElement;
 const saveBtn = document.getElementById('save') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement;
 
@@ -15,11 +16,13 @@ async function refreshState(): Promise<void> {
     connected: boolean;
     hasToken: boolean;
     port: number;
+    debugRichText: boolean;
     lastError: string | null;
   };
 
   if (state.ok) {
     portInput.value = String(state.port);
+    debugRichTextInput.checked = Boolean(state.debugRichText);
     if (state.connected) {
       setStatus('Connected to bak CLI');
     } else if (state.lastError) {
@@ -47,7 +50,8 @@ saveBtn.addEventListener('click', async () => {
   await chrome.runtime.sendMessage({
     type: 'bak.updateConfig',
     token,
-    port
+    port,
+    debugRichText: debugRichTextInput.checked
   });
 
   await refreshState();

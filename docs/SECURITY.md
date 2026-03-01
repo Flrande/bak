@@ -19,8 +19,15 @@
 - no cookie export API
 - no password/captcha bypass feature
 - recording text is masked for likely password/otp fields
+- element map naming no longer reads `input.value`
+- snapshot text fields use rule-based redaction before leaving content script
 
-5. Debug scope limitation
+5. Explicit debug gate
+- popup exposes `debugRichText` toggle for richer diagnostics
+- default is disabled
+- even when enabled, redaction still applies
+
+6. Debug scope limitation
 - debug v1 only returns buffered page error events (and optional console scope)
 - no full network interception in v1
 
@@ -31,6 +38,7 @@
 - Extension popup currently does not provide token rotation UI; rotate by re-running `bak pair`.
 - `memory.json` is file-based and not encrypted.
 - Healing candidate ranking is heuristic and can select wrong elements on dense UIs.
+- Rich text debug mode can still capture non-secret page copy; enable only when needed.
 
 ## Mitigations and operational guidance
 
@@ -38,6 +46,7 @@
 - Rotate token regularly (`bak pair`) and re-pair extension.
 - Keep `.bak-data` out of source control.
 - Require human supervision for destructive operations.
+- Keep rich-text debug capture disabled unless investigating locator failures.
 - For production-hardening, replace file memory with encrypted store and add stronger auth.
 
 ## Explicit non-goals
