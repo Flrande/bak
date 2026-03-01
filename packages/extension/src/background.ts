@@ -1,4 +1,5 @@
 import type { ConsoleEntry, Locator } from '@bak/protocol';
+import { isSupportedAutomationUrl } from './url-policy.js';
 
 interface CliRequest {
   id: string;
@@ -68,16 +69,28 @@ function toError(code: string, message: string, data?: Record<string, unknown>):
 }
 
 async function withTab(tabId?: number): Promise<chrome.tabs.Tab> {
+  const validate = (tab: chrome.tabs.Tab): chrome.tabs.Tab => {
+    if (!tab.id) {
+      throw toError('E_NOT_FOUND', 'Tab missing id');
+    }
+    if (!isSupportedAutomationUrl(tab.url)) {
+      throw toError('E_PERMISSION', 'Unsupported tab URL: only http/https pages can be automated', {
+        url: tab.url ?? ''
+      });
+    }
+    return tab;
+  };
+
   if (typeof tabId === 'number') {
     const tab = await chrome.tabs.get(tabId);
-    return tab;
+    return validate(tab);
   }
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const tab = tabs[0];
-  if (!tab?.id) {
+  if (!tab) {
     throw toError('E_NOT_FOUND', 'No active tab');
   }
-  return tab;
+  return validate(tab);
 }
 
 async function sendToContent<TResponse>(tabId: number, message: Record<string, unknown>): Promise<TResponse> {

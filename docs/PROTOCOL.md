@@ -137,3 +137,4 @@ CLI/skill healing tries candidates in this order.
 - Nested cross-origin iframe content is not targeted in v1.
 - Shadow DOM locator coverage is best-effort and may miss closed-shadow targets.
 - When locator css explicitly targets unsupported iframe/shadow patterns, API returns `E_NOT_FOUND` with a limitation hint.
+- Browser-internal URLs (`chrome://`, `chrome-extension://`, `file://`) are intentionally blocked and return `E_PERMISSION`.

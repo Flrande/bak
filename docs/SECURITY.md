@@ -42,6 +42,11 @@
   - destructive/payment/submit-like actions require confirmation
 - every decision is appended to trace as `policy.decision` (locator summary only, no raw sensitive text)
 
+8. Extension least-privilege hardening
+- extension keeps `<all_urls>` host permission for `captureVisibleTab` compatibility
+- content scripts are still limited to `http://*/*` and `https://*/*` only
+- unsupported tabs (`chrome://`, `chrome-extension://`, `file://`) are blocked by runtime URL policy and return `E_PERMISSION`
+
 ## Known limitations / risks (v1)
 
 - Keyword risk detector can have false positives/false negatives.
