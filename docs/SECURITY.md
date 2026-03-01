@@ -46,6 +46,31 @@
   - matched rule summaries and fallback/default decision
   - no raw sensitive text payload
 
+Example (`policy.decision` params excerpt):
+
+```json
+{
+  "action": "element.click",
+  "decision": "deny",
+  "reason": "file upload is denied by default policy",
+  "source": "default",
+  "domain": "example.com",
+  "path": "/upload",
+  "locatorSummary": {
+    "hasEid": false,
+    "hasRole": false,
+    "hasName": true,
+    "hasText": false,
+    "hasCss": true
+  },
+  "tags": ["fileUpload", "highRisk"],
+  "matchedRuleCount": 0,
+  "matchedRules": [],
+  "defaultDecision": "deny",
+  "defaultReason": "file upload is denied by default policy"
+}
+```
+
 8. Extension least-privilege hardening
 - extension keeps `<all_urls>` host permission for `captureVisibleTab` compatibility
 - content scripts are still limited to `http://*/*` and `https://*/*` only
