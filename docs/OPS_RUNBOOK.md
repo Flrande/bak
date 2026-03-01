@@ -15,6 +15,10 @@ Checks:
 - extension runtime version reported by bridge handshake (`extensionVersion`)
 - cli/extension version compatibility drift check (`versionCompatibility`, `severity=warn` and non-blocking)
 
+Doctor output also includes:
+- `summary.errorChecks` (blocking failures)
+- `summary.warningChecks` (non-blocking warnings)
+
 ## Pair token lifecycle
 
 ```powershell

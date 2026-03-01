@@ -25,6 +25,10 @@ export interface DoctorResult {
   nodeVersion: string;
   cliVersion: string;
   dataDir: string;
+  summary: {
+    errorChecks: string[];
+    warningChecks: string[];
+  };
   checks: {
     dataDirWritable: DoctorCheck;
     pairing: DoctorCheck;
@@ -324,19 +328,30 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion)
   };
 
-  const ok =
-    checks.dataDirWritable.ok &&
-    checks.pairing.ok &&
-    checks.extensionBridgePort.ok &&
-    checks.rpcPort.ok &&
-    checks.rpcSessionInfo.ok &&
-    checks.rpcConnectionHealth.ok;
+  const summary = {
+    errorChecks: [] as string[],
+    warningChecks: [] as string[]
+  };
+
+  for (const [name, check] of Object.entries(checks)) {
+    if (check.ok) {
+      continue;
+    }
+    if (check.severity === 'warn') {
+      summary.warningChecks.push(name);
+      continue;
+    }
+    summary.errorChecks.push(name);
+  }
+
+  const ok = summary.errorChecks.length === 0;
   return {
     ok,
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
     cliVersion,
     dataDir,
+    summary,
     checks
   };
 }
