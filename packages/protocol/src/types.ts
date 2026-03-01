@@ -174,6 +174,9 @@ export interface MethodMap {
       connectionState: 'connecting' | 'connected' | 'disconnected';
       connectionReason: string | null;
       recording: boolean;
+      heartbeatStale: boolean;
+      heartbeatAgeMs: number | null;
+      staleAfterMs: number;
       lastSeenTs: number | null;
       lastHeartbeatTs: number | null;
       bridgePendingRequests: number;

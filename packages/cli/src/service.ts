@@ -15,6 +15,7 @@ import {
 } from '@bak/protocol';
 import type { BrowserDriver } from './drivers/browser-driver.js';
 import { BridgeError } from './drivers/extension-bridge.js';
+import { evaluateConnectionHealth } from './connection-health.js';
 import {
   buildTargetCandidates,
   extractSkillFromEpisode,
@@ -83,6 +84,7 @@ export class BakService {
   private recording: RecordingState | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatStaleAfterMs: number;
 
   constructor(
     driver: BrowserDriver,
@@ -99,6 +101,7 @@ export class BakService {
     this.policyEngine = new PolicyEngine(this.dataDir);
     const configured = heartbeatConfig.intervalMs ?? 10_000;
     this.heartbeatIntervalMs = Math.max(500, configured);
+    this.heartbeatStaleAfterMs = Math.max(this.heartbeatIntervalMs * 3, 5_000);
   }
 
   startHeartbeat(): void {
@@ -137,9 +140,31 @@ export class BakService {
     }
   }
 
+  private effectiveConnection(nowTs = Date.now()): {
+    extensionConnected: boolean;
+    connectionState: 'connecting' | 'connected' | 'disconnected';
+    connectionReason: string | null;
+    heartbeatStale: boolean;
+    heartbeatAgeMs: number | null;
+    raw: ReturnType<BrowserDriver['connectionStatus']>;
+  } {
+    const raw = this.driver.connectionStatus();
+    const health = evaluateConnectionHealth(raw, nowTs, this.heartbeatStaleAfterMs);
+    return {
+      ...health,
+      raw
+    };
+  }
+
   private ensureConnected(): void {
-    if (!this.driver.isConnected()) {
-      throw new RpcError('Extension not connected', 4250, BakErrorCode.E_NOT_READY);
+    const connection = this.effectiveConnection();
+    if (!connection.extensionConnected) {
+      throw new RpcError('Extension not connected', 4250, BakErrorCode.E_NOT_READY, {
+        connectionState: connection.connectionState,
+        connectionReason: connection.connectionReason,
+        heartbeatStale: connection.heartbeatStale,
+        heartbeatAgeMs: connection.heartbeatAgeMs
+      });
     }
   }
 
@@ -430,18 +455,21 @@ export class BakService {
         return { closed: true } as MethodResult<TMethod>;
       }
       case 'session.info': {
-        const connection = this.driver.connectionStatus();
+        const connection = this.effectiveConnection();
         return {
           sessionId: this.sessionId,
           paired: Boolean(this.pairingStore.getToken()),
-          extensionConnected: this.driver.isConnected(),
-          connectionState: connection.state,
-          connectionReason: connection.reason,
+          extensionConnected: connection.extensionConnected,
+          connectionState: connection.connectionState,
+          connectionReason: connection.connectionReason,
           recording: Boolean(this.recording),
-          lastSeenTs: connection.lastSeenTs,
-          lastHeartbeatTs: connection.lastHeartbeatTs,
-          bridgePendingRequests: connection.pendingRequests,
-          bridgeLastError: connection.lastError
+          heartbeatStale: connection.heartbeatStale,
+          heartbeatAgeMs: connection.heartbeatAgeMs,
+          staleAfterMs: this.heartbeatStaleAfterMs,
+          lastSeenTs: connection.raw.lastSeenTs,
+          lastHeartbeatTs: connection.raw.lastHeartbeatTs,
+          bridgePendingRequests: connection.raw.pendingRequests,
+          bridgeLastError: connection.raw.lastError
         } as MethodResult<TMethod>;
       }
       case 'tabs.list': {
@@ -759,24 +787,30 @@ export class BakService {
     connectionState: 'connecting' | 'connected' | 'disconnected';
     connectionReason: string | null;
     recording: boolean;
+    heartbeatStale: boolean;
+    heartbeatAgeMs: number | null;
+    staleAfterMs: number;
     lastSeenTs: number | null;
     lastHeartbeatTs: number | null;
     bridgePendingRequests: number;
     bridgeLastError: string | null;
     domain?: string;
   } {
-    const connection = this.driver.connectionStatus();
+    const connection = this.effectiveConnection();
     return {
       sessionId: this.sessionId,
       paired: Boolean(this.pairingStore.getToken()),
-      extensionConnected: this.driver.isConnected(),
-      connectionState: connection.state,
-      connectionReason: connection.reason,
+      extensionConnected: connection.extensionConnected,
+      connectionState: connection.connectionState,
+      connectionReason: connection.connectionReason,
       recording: Boolean(this.recording),
-      lastSeenTs: connection.lastSeenTs,
-      lastHeartbeatTs: connection.lastHeartbeatTs,
-      bridgePendingRequests: connection.pendingRequests,
-      bridgeLastError: connection.lastError,
+      heartbeatStale: connection.heartbeatStale,
+      heartbeatAgeMs: connection.heartbeatAgeMs,
+      staleAfterMs: this.heartbeatStaleAfterMs,
+      lastSeenTs: connection.raw.lastSeenTs,
+      lastHeartbeatTs: connection.raw.lastHeartbeatTs,
+      bridgePendingRequests: connection.raw.pendingRequests,
+      bridgeLastError: connection.raw.lastError,
       domain: this.recording?.domain
     };
   }

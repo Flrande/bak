@@ -67,10 +67,15 @@ Response failure:
 - `connectionState` (`connecting|connected|disconnected`)
 - `connectionReason`
 - `recording`
+- `heartbeatStale`
+- `heartbeatAgeMs`
+- `staleAfterMs`
 - `lastSeenTs`
 - `lastHeartbeatTs`
 - `bridgePendingRequests`
 - `bridgeLastError`
+
+When heartbeat age exceeds `staleAfterMs`, service reports `connectionState=disconnected` with `connectionReason=heartbeat-timeout`.
 
 ### Tabs
 
