@@ -93,12 +93,17 @@ function toError(code: string, message: string, data?: Record<string, unknown>):
   return { code, message, data };
 }
 
-async function withTab(tabId?: number): Promise<chrome.tabs.Tab> {
+interface WithTabOptions {
+  requireSupportedAutomationUrl?: boolean;
+}
+
+async function withTab(tabId?: number, options: WithTabOptions = {}): Promise<chrome.tabs.Tab> {
+  const requireSupportedAutomationUrl = options.requireSupportedAutomationUrl !== false;
   const validate = (tab: chrome.tabs.Tab): chrome.tabs.Tab => {
     if (!tab.id) {
       throw toError('E_NOT_FOUND', 'Tab missing id');
     }
-    if (!isSupportedAutomationUrl(tab.url)) {
+    if (requireSupportedAutomationUrl && !isSupportedAutomationUrl(tab.url)) {
       throw toError('E_PERMISSION', 'Unsupported tab URL: only http/https pages can be automated', {
         url: tab.url ?? ''
       });
@@ -161,7 +166,9 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'page.goto': {
-      const tab = await withTab(request.params?.tabId as number | undefined);
+      const tab = await withTab(request.params?.tabId as number | undefined, {
+        requireSupportedAutomationUrl: false
+      });
       await chrome.tabs.update(tab.id!, { url: String(request.params?.url ?? 'about:blank') });
       return { ok: true };
     }

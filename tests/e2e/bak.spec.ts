@@ -237,6 +237,13 @@ test.describe('bak e2e', () => {
       )
       .toBeGreaterThan(typeof firstSeen.lastSeenTs === 'number' ? firstSeen.lastSeenTs : 0);
 
+    const createdTab = (await rpcCall('tabs.new', {})) as { tabId: number };
+    await rpcCall('page.goto', {
+      tabId: createdTab.tabId,
+      url: 'http://127.0.0.1:4173/form.html'
+    });
+    await rpcCall('tabs.close', { tabId: createdTab.tabId });
+
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4173/form.html');
     await page.bringToFront();
