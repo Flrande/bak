@@ -7,6 +7,8 @@
 3. Potential secrets (email-like strings, OTP-like digits, long numeric sequences, token-like query strings) are replaced with redacted markers.
 4. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
 
+Run `bak gc` to clean old traces/snapshots. The command is dry-run by default and requires `--force` to delete.
+
 ## Debug rich-text mode
 
 - The extension popup exposes `Allow richer text capture for debugging`.

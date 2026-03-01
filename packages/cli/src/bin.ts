@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
 import { startBakDaemon } from './server.js';
+import { runGc } from './gc.js';
 import { PairingStore } from './pairing-store.js';
 import { TraceStore } from './trace-store.js';
 import { readEnvInt } from './utils.js';
@@ -23,6 +24,17 @@ function parseParams(values: string[]): Record<string, string> {
 
 function printResult(result: unknown): void {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function parseNonNegativeInt(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be an integer >= 0`);
+  }
+  return parsed;
 }
 
 const program = new Command();
@@ -196,6 +208,27 @@ program
   .action((traceId) => {
     const traces = new TraceStore();
     printResult(traces.export(traceId));
+  });
+
+program
+  .command('gc')
+  .description('Apply retention policy to traces and snapshots')
+  .option('--data-dir <path>', 'override BAK_DATA_DIR for this command')
+  .option('--trace-days <days>', 'retain traces newer than N days')
+  .option('--snapshot-days <days>', 'retain snapshot folders newer than N days')
+  .option('--trace-keep <count>', 'always keep at least newest N traces')
+  .option('--snapshot-keep <count>', 'always keep at least newest N snapshot folders')
+  .option('--force', 'execute deletion (default is dry-run)', false)
+  .action((options) => {
+    const result = runGc({
+      dataDir: options.dataDir ? String(options.dataDir) : undefined,
+      traceDays: parseNonNegativeInt(options.traceDays, 'trace-days'),
+      snapshotDays: parseNonNegativeInt(options.snapshotDays, 'snapshot-days'),
+      traceKeep: parseNonNegativeInt(options.traceKeep, 'trace-keep'),
+      snapshotKeep: parseNonNegativeInt(options.snapshotKeep, 'snapshot-keep'),
+      force: Boolean(options.force)
+    });
+    printResult(result);
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

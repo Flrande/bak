@@ -133,6 +133,22 @@ Default data root: `./.bak-data`
 - memory db file: `.bak-data/memory.json`
 - pairing token: `.bak-data/pairing.json`
 
+### Retention and cleanup
+
+`bak gc` is dry-run by default and only deletes files with `--force`.
+
+```powershell
+# preview what would be deleted
+pnpm --filter @bak/cli exec bak gc
+
+# apply retention with explicit force
+pnpm --filter @bak/cli exec bak gc --trace-days 7 --snapshot-days 7 --force
+```
+
+Retention defaults (override via `.bak-data/retention.json` or env):
+- traces: keep 14 days + newest 200
+- snapshots: keep 14 days + newest 100
+
 ## Safety defaults
 
 - Extension only connects to `ws://127.0.0.1`

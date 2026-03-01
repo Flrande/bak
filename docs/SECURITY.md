@@ -46,6 +46,7 @@
 - Keep daemon bound to localhost only (default behavior).
 - Rotate token regularly (`bak pair`) and re-pair extension.
 - Keep `.bak-data` out of source control.
+- Run `bak gc` regularly to enforce local retention and reduce stale artifacts.
 - Require human supervision for destructive operations.
 - Keep rich-text debug capture disabled unless investigating locator failures.
 - For production-hardening, replace file memory with encrypted store and add stronger auth.
