@@ -75,7 +75,7 @@ program
     setInterval(() => {
       const status = daemon.service.status();
       process.stderr.write(
-        `[bak] paired=${status.paired} state=${status.connectionState} extensionConnected=${status.extensionConnected} heartbeatStale=${status.heartbeatStale} recording=${status.recording} lastSeen=${status.lastSeenTs ?? 'n/a'} memory=${status.memoryBackend.backend} requestedMemory=${status.memoryBackend.requestedBackend}\n`
+        `[bak] paired=${status.paired} state=${status.connectionState} extensionConnected=${status.extensionConnected} heartbeatStale=${status.heartbeatStale} recording=${status.recording} lastSeen=${status.lastSeenTs ?? 'n/a'} protocol=${status.protocolVersion} memory=${status.memoryBackend.backend} requestedMemory=${status.memoryBackend.requestedBackend}\n`
       );
     }, 15_000);
   });

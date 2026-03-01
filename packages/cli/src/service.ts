@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   BakErrorCode,
+  PROTOCOL_VERSION,
   type ElementMapItem,
   type Episode,
   type Locator,
@@ -652,6 +653,7 @@ export class BakService {
           extensionConnected: connection.extensionConnected,
           connectionState: connection.connectionState,
           connectionReason: connection.connectionReason,
+          protocolVersion: PROTOCOL_VERSION,
           extensionVersion: connection.raw.extensionVersion,
           memoryBackend: {
             requestedBackend: this.memoryRuntime.requestedBackend,
@@ -995,6 +997,7 @@ export class BakService {
     extensionConnected: boolean;
     connectionState: 'connecting' | 'connected' | 'disconnected';
     connectionReason: string | null;
+    protocolVersion: string;
     extensionVersion: string | null;
     memoryBackend: {
       requestedBackend: MemoryBackend;
@@ -1022,6 +1025,7 @@ export class BakService {
       extensionConnected: connection.extensionConnected,
       connectionState: connection.connectionState,
       connectionReason: connection.connectionReason,
+      protocolVersion: PROTOCOL_VERSION,
       extensionVersion: connection.raw.extensionVersion,
       memoryBackend: {
         requestedBackend: this.memoryRuntime.requestedBackend,

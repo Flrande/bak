@@ -66,6 +66,7 @@ Response failure:
 - `extensionConnected`
 - `connectionState` (`connecting|connected|disconnected`)
 - `connectionReason`
+- `protocolVersion` (`v1`)
 - `extensionVersion`
 - `memoryBackend` (`requestedBackend`, `backend`, `fallbackReason`)
 - `activeTab` (`null` or `{ id, title, url }`)

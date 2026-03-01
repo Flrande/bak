@@ -14,6 +14,7 @@ export const BakErrorCode = {
 export type BakErrorCodeValue = (typeof BakErrorCode)[keyof typeof BakErrorCode];
 
 export const JSON_RPC_VERSION = '2.0' as const;
+export const PROTOCOL_VERSION = 'v1' as const;
 
 export type JsonRpcId = string | number | null;
 
@@ -175,6 +176,7 @@ export interface MethodMap {
       extensionConnected: boolean;
       connectionState: 'connecting' | 'connected' | 'disconnected';
       connectionReason: string | null;
+      protocolVersion: typeof PROTOCOL_VERSION;
       extensionVersion: string | null;
       memoryBackend: {
         requestedBackend: 'json' | 'sqlite';

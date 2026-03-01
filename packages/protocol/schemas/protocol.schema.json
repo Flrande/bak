@@ -149,6 +149,7 @@
         "extensionConnected",
         "connectionState",
         "connectionReason",
+        "protocolVersion",
         "extensionVersion",
         "memoryBackend",
         "activeTab",
@@ -171,6 +172,7 @@
         "extensionConnected": { "type": "boolean" },
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
+        "protocolVersion": { "type": "string", "const": "v1" },
         "extensionVersion": { "type": ["string", "null"] },
         "memoryBackend": {
           "type": "object",
