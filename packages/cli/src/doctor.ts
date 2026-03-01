@@ -2,6 +2,7 @@ import { createServer } from 'node:net';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createMemoryStoreResolved, type MemoryStoreResolution } from './memory/factory.js';
 import { callRpc } from './rpc/client.js';
 import { PairingStore } from './pairing-store.js';
 import { ensureDir, resolveDataDir } from './utils.js';
@@ -31,6 +32,7 @@ export interface DoctorResult {
   };
   checks: {
     dataDirWritable: DoctorCheck;
+    memoryBackend: DoctorCheck;
     pairing: DoctorCheck;
     extensionBridgePort: DoctorCheck;
     rpcPort: DoctorCheck;
@@ -115,6 +117,48 @@ function checkPairing(dataDir: string): DoctorCheck {
     return {
       ok: false,
       message: 'unable to read pairing state',
+      details: {
+        detail: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
+}
+
+export function assessMemoryBackendResolution(
+  resolution: Pick<MemoryStoreResolution, 'requestedBackend' | 'backend' | 'fallbackReason'>
+): DoctorCheck {
+  if (resolution.fallbackReason) {
+    return {
+      ok: false,
+      message: 'memory backend fallback detected',
+      severity: 'warn',
+      details: {
+        requestedBackend: resolution.requestedBackend,
+        backend: resolution.backend,
+        fallbackReason: resolution.fallbackReason
+      }
+    };
+  }
+
+  return {
+    ok: true,
+    message: `memory backend ready (${resolution.backend})`,
+    details: {
+      requestedBackend: resolution.requestedBackend,
+      backend: resolution.backend
+    }
+  };
+}
+
+function checkMemoryBackend(dataDir: string): DoctorCheck {
+  try {
+    const resolution = createMemoryStoreResolved({ dataDir });
+    resolution.store.close?.();
+    return assessMemoryBackendResolution(resolution);
+  } catch (error) {
+    return {
+      ok: false,
+      message: 'memory backend initialization failed',
       details: {
         detail: error instanceof Error ? error.message : String(error)
       }
@@ -357,6 +401,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
 
   const checks: DoctorResult['checks'] = {
     dataDirWritable: checkDataDirWritable(dataDir),
+    memoryBackend: checkMemoryBackend(dataDir),
     pairing: checkPairing(dataDir),
     extensionBridgePort: await probePortAvailable(options.port),
     rpcPort: await probePortAvailable(options.rpcWsPort),

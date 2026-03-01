@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { assessActiveTabTelemetry, assessSessionInfoHealth, assessVersionCompatibility } from '../../packages/cli/src/doctor.js';
+import {
+  assessActiveTabTelemetry,
+  assessMemoryBackendResolution,
+  assessSessionInfoHealth,
+  assessVersionCompatibility
+} from '../../packages/cli/src/doctor.js';
 
 describe('doctor session.info health assessment', () => {
   it('passes when connected and heartbeat is healthy', () => {
@@ -124,5 +129,27 @@ describe('doctor session.info health assessment', () => {
 
     expect(check.ok).toBe(true);
     expect(check.message).toContain('skipped');
+  });
+
+  it('passes memory backend check when no fallback happened', () => {
+    const check = assessMemoryBackendResolution({
+      requestedBackend: 'json',
+      backend: 'json'
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('ready');
+  });
+
+  it('warns memory backend check when fallback happened', () => {
+    const check = assessMemoryBackendResolution({
+      requestedBackend: 'sqlite',
+      backend: 'json',
+      fallbackReason: 'sqlite unavailable'
+    });
+
+    expect(check.ok).toBe(false);
+    expect(check.severity).toBe('warn');
+    expect(check.message).toContain('fallback');
   });
 });
