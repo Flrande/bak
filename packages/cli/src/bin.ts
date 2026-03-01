@@ -286,13 +286,20 @@ program
   .command('export')
   .description('Export redacted diagnostic zip package')
   .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
+  .option('--trace <traceId>', 'deprecated alias for --trace-id')
   .option('--port <port>', 'extension websocket port for doctor snapshot', `${DEFAULT_PORT}`)
   .option('--rpc-ws-port <port>', 'rpc websocket port for doctor snapshot', `${DEFAULT_RPC_PORT}`)
+  .option('--include-snapshots', 'include raw snapshot image folders (may contain sensitive visual data)', false)
   .option('--include-memory', 'include redacted memory export in package', false)
   .option('--memory-backend <backend>', 'memory backend for export (json|sqlite)', process.env.BAK_MEMORY_BACKEND ?? 'json')
   .option('--data-dir <path>', 'override data dir')
   .option('--out <path>', 'output zip path')
   .action(async (options) => {
+    const traceId = options.traceId ? String(options.traceId) : options.trace ? String(options.trace) : undefined;
+    if (!options.traceId && options.trace) {
+      process.stderr.write('[bak] --trace is deprecated; use --trace-id\n');
+    }
+
     const dataDir = options.dataDir ? resolve(String(options.dataDir)) : undefined;
     const doctorReport = await runDoctor({
       dataDir,
@@ -301,10 +308,11 @@ program
     });
 
     const result = exportDiagnosticZip({
-      traceId: options.traceId ? String(options.traceId) : undefined,
+      traceId,
       dataDir,
       outPath: options.out ? resolve(String(options.out)) : undefined,
       doctorReport,
+      includeSnapshots: options.includeSnapshots === true,
       includeMemory: options.includeMemory === true,
       memoryBackend: String(options.memoryBackend)
     });

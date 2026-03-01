@@ -61,27 +61,74 @@ interface HealingTelemetrySummary {
   failureRate: number;
 }
 
-async function probePortAvailable(port: number): Promise<DoctorCheck> {
-  return new Promise<DoctorCheck>((resolveCheck) => {
+interface PortProbeResult {
+  available: boolean;
+  code?: string;
+}
+
+async function probePortState(port: number): Promise<PortProbeResult> {
+  return new Promise<PortProbeResult>((resolveProbe) => {
     const server = createServer();
     server.once('error', (error) => {
-      resolveCheck({
-        ok: false,
-        message: `port ${port} already in use`,
-        details: {
-          code: (error as NodeJS.ErrnoException).code
-        }
+      resolveProbe({
+        available: false,
+        code: (error as NodeJS.ErrnoException).code
       });
     });
     server.listen(port, '127.0.0.1', () => {
       server.close(() => {
-        resolveCheck({
-          ok: true,
-          message: `port ${port} is available`
+        resolveProbe({
+          available: true
         });
       });
     });
   });
+}
+
+export function assessPortAvailability(
+  port: number,
+  available: boolean,
+  mode: 'preflight' | 'runtime',
+  code?: string
+): DoctorCheck {
+  if (mode === 'runtime') {
+    if (!available) {
+      return {
+        ok: true,
+        message: `port ${port} is bound (runtime expected)`,
+        details: {
+          mode,
+          code: code ?? null
+        }
+      };
+    }
+    return {
+      ok: false,
+      message: `port ${port} is available but runtime expects daemon binding`,
+      details: {
+        mode
+      }
+    };
+  }
+
+  if (available) {
+    return {
+      ok: true,
+      message: `port ${port} is available`,
+      details: {
+        mode
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: `port ${port} already in use`,
+    details: {
+      mode,
+      code: code ?? null
+    }
+  };
 }
 
 function checkDataDirWritable(dataDir: string): DoctorCheck {
@@ -148,6 +195,18 @@ export function assessMemoryBackendResolution(
         requestedBackend: resolution.requestedBackend,
         backend: resolution.backend,
         fallbackReason: resolution.fallbackReason
+      }
+    };
+  }
+
+  if (resolution.backend === 'sqlite') {
+    return {
+      ok: true,
+      message: 'memory backend ready (sqlite; node:sqlite runtime is experimental)',
+      details: {
+        requestedBackend: resolution.requestedBackend,
+        backend: resolution.backend,
+        advisory: 'If sqlite warnings are noisy in your environment, switch to BAK_MEMORY_BACKEND=json.'
       }
     };
   }
@@ -329,6 +388,7 @@ function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe): DoctorCheck {
     return {
       ok: false,
       message: 'rpc session.info unavailable',
+      severity: 'warn',
       details: {
         detail: probe.detail ?? 'unknown'
       }
@@ -569,20 +629,26 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const dataDir = options.dataDir ? resolve(options.dataDir) : resolveDataDir();
   const cliVersion = readCliVersion();
   const sessionInfo = await probeRpcSessionInfo(options.rpcWsPort);
+  const portMode: 'preflight' | 'runtime' = sessionInfo.ok && sessionInfo.info ? 'runtime' : 'preflight';
+  const [extensionPort, rpcPort] = await Promise.all([
+    probePortState(options.port),
+    probePortState(options.rpcWsPort)
+  ]);
 
   const checks: DoctorResult['checks'] = {
     dataDirWritable: checkDataDirWritable(dataDir),
     memoryBackend: checkMemoryBackend(dataDir),
     healingTelemetry: checkHealingTelemetry(dataDir),
     pairing: checkPairing(dataDir),
-    extensionBridgePort: await probePortAvailable(options.port),
-    rpcPort: await probePortAvailable(options.rpcWsPort),
+    extensionBridgePort: assessPortAvailability(options.port, extensionPort.available, portMode, extensionPort.code),
+    rpcPort: assessPortAvailability(options.rpcWsPort, rpcPort.available, portMode, rpcPort.code),
     rpcSessionInfo: checkRpcSessionInfoFromProbe(sessionInfo),
     rpcConnectionHealth: sessionInfo.ok && sessionInfo.info
       ? assessSessionInfoHealth(sessionInfo.info)
       : {
           ok: false,
-          message: 'rpc connection health unavailable',
+          message: 'rpc connection health unavailable (session.info unavailable)',
+          severity: 'warn',
           details: {
             detail: sessionInfo.detail ?? 'unknown'
           }

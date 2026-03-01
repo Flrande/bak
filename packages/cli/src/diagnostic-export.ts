@@ -12,6 +12,7 @@ export interface DiagnosticExportOptions {
   outPath?: string;
   traceId?: string;
   doctorReport?: unknown;
+  includeSnapshots?: boolean;
   includeMemory?: boolean;
   memoryBackend?: string;
 }
@@ -22,6 +23,7 @@ export interface DiagnosticExportResult {
   redacted: true;
   traceCount: number;
   snapshotCount: number;
+  includesSnapshots: boolean;
   includesDoctorReport: boolean;
   includesIndex: boolean;
   includesHealingSummary: boolean;
@@ -292,6 +294,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
   try {
     let includesDoctorReport = false;
     let includesHealingSummary = false;
+    const includesSnapshots = options.includeSnapshots === true;
     let includesMemory = false;
     let memoryBackend: string | null = null;
     let memoryExportError: string | undefined;
@@ -303,7 +306,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
 
     const snapshotSource = join(dataDir, 'snapshots');
     const snapshotTarget = join(stageDir, 'snapshots');
-    mkdirSync(snapshotTarget, { recursive: true });
+    if (includesSnapshots) {
+      mkdirSync(snapshotTarget, { recursive: true });
+    }
 
     const traceFiles = existsSync(tracesSource)
       ? readdirSync(tracesSource).filter((name) => name.endsWith('.jsonl'))
@@ -330,10 +335,14 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       ? snapshotDirs.filter((entry) => entry.name === options.traceId)
       : snapshotDirs;
 
-    for (const entry of selectedSnapshotDirs) {
-      const sourcePath = join(snapshotSource, entry.name);
-      assertWithinDataDir(dataDir, sourcePath);
-      cpSync(sourcePath, join(snapshotTarget, entry.name), { recursive: true });
+    if (includesSnapshots) {
+      for (const entry of selectedSnapshotDirs) {
+        const sourcePath = join(snapshotSource, entry.name);
+        assertWithinDataDir(dataDir, sourcePath);
+        cpSync(sourcePath, join(snapshotTarget, entry.name), { recursive: true });
+      }
+    } else if (selectedSnapshotDirs.length > 0) {
+      warnings.push('snapshot images excluded by default; use --include-snapshots to include visual artifacts');
     }
 
     const policyPath = join(dataDir, '.bak-policy.json');
@@ -393,6 +402,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
         {
           exportedAt: new Date().toISOString(),
           redacted: true,
+          includesSnapshots,
           includesDoctorReport,
           includesHealingSummary,
           healingEventCount: healingSummary.eventCount,
@@ -402,7 +412,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
           memoryExportError: memoryExportError ?? null,
           warnings,
           traceFiles: selectedTraceFiles,
-          snapshotDirs: selectedSnapshotDirs.map((entry) => entry.name),
+          snapshotDirs: includesSnapshots ? selectedSnapshotDirs.map((entry) => entry.name) : [],
           hasPolicyFile: existsSync(policyPath)
         },
         null,
@@ -436,7 +446,8 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       dataDir,
       redacted: true,
       traceCount: selectedTraceFiles.length,
-      snapshotCount: selectedSnapshotDirs.length,
+      snapshotCount: includesSnapshots ? selectedSnapshotDirs.length : 0,
+      includesSnapshots,
       includesDoctorReport,
       includesIndex: true,
       includesHealingSummary,

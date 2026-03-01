@@ -3,6 +3,7 @@ import {
   assessActiveTabTelemetry,
   assessHealingTelemetry,
   assessMemoryBackendResolution,
+  assessPortAvailability,
   assessProtocolCompatibility,
   assessSessionInfoHealth,
   assessVersionCompatibility
@@ -170,6 +171,16 @@ describe('doctor session.info health assessment', () => {
     expect(check.message).toContain('ready');
   });
 
+  it('adds advisory message when sqlite backend is selected', () => {
+    const check = assessMemoryBackendResolution({
+      requestedBackend: 'sqlite',
+      backend: 'sqlite'
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('experimental');
+  });
+
   it('warns memory backend check when fallback happened', () => {
     const check = assessMemoryBackendResolution({
       requestedBackend: 'sqlite',
@@ -209,5 +220,33 @@ describe('doctor session.info health assessment', () => {
     expect(check.ok).toBe(false);
     expect(check.severity).toBe('warn');
     expect(check.message).toContain('failure rate');
+  });
+
+  it('treats bound port as healthy in runtime mode', () => {
+    const check = assessPortAvailability(17373, false, 'runtime', 'EADDRINUSE');
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('runtime expected');
+  });
+
+  it('flags available port as issue in runtime mode', () => {
+    const check = assessPortAvailability(17373, true, 'runtime');
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('runtime expects daemon binding');
+  });
+
+  it('treats available port as healthy in preflight mode', () => {
+    const check = assessPortAvailability(17373, true, 'preflight');
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('available');
+  });
+
+  it('flags occupied port in preflight mode', () => {
+    const check = assessPortAvailability(17373, false, 'preflight', 'EADDRINUSE');
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('already in use');
   });
 });

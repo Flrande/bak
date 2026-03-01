@@ -19,11 +19,13 @@ describe('ops tools', () => {
     const result = exportDiagnosticZip({
       dataDir,
       outPath,
-      traceId: 'trace_demo'
+      traceId: 'trace_demo',
+      includeSnapshots: true
     });
 
     expect(result.traceCount).toBe(1);
     expect(result.snapshotCount).toBe(1);
+    expect(result.includesSnapshots).toBe(true);
     expect(result.includesDoctorReport).toBe(false);
     expect(result.includesIndex).toBe(true);
     expect(result.includesHealingSummary).toBe(false);
@@ -33,6 +35,34 @@ describe('ops tools', () => {
     expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toEqual([]);
     expect(result.redacted).toBe(true);
+    expect(existsSync(outPath)).toBe(true);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('excludes snapshot images by default and emits warning', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-snapshot-default-test-'));
+    const tracesDir = join(dataDir, 'traces');
+    const snapshotsDir = join(dataDir, 'snapshots', 'trace_demo');
+    mkdirSync(tracesDir, { recursive: true });
+    mkdirSync(snapshotsDir, { recursive: true });
+    writeFileSync(join(tracesDir, 'trace_demo.jsonl'), JSON.stringify({ text: 'hello' }) + '\n', 'utf8');
+    writeFileSync(join(snapshotsDir, 'a.txt'), 'snapshot', 'utf8');
+
+    const outPath = join(dataDir, 'diag-default.zip');
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      traceId: 'trace_demo'
+    });
+
+    expect(result.includesSnapshots).toBe(false);
+    expect(result.snapshotCount).toBe(0);
+    expect(
+      result.warnings.some((message) =>
+        message.includes('snapshot images excluded by default')
+      )
+    ).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
@@ -51,7 +81,9 @@ describe('ops tools', () => {
     expect(report.checks.healingTelemetry.ok).toBe(true);
     expect(report.checks.pairing.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
+    expect(report.checks.rpcSessionInfo.severity).toBe('warn');
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
+    expect(report.checks.rpcConnectionHealth.severity).toBe('warn');
     expect(report.checks.activeTabTelemetry.ok).toBe(false);
     expect(report.checks.activeTabTelemetry.severity).toBe('warn');
     expect(report.checks.protocolCompatibility.ok).toBe(false);
@@ -61,8 +93,10 @@ describe('ops tools', () => {
     expect(report.summary.warningChecks).toContain('protocolCompatibility');
     expect(report.summary.warningChecks).toContain('versionCompatibility');
     expect(report.summary.warningChecks).toContain('activeTabTelemetry');
+    expect(report.summary.warningChecks).toContain('rpcSessionInfo');
+    expect(report.summary.warningChecks).toContain('rpcConnectionHealth');
     expect(report.summary.errorChecks).toContain('pairing');
-    expect(report.summary.errorChecks).toContain('rpcSessionInfo');
+    expect(report.summary.errorChecks).not.toContain('rpcSessionInfo');
     expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(report.ok).toBe(false);
 
