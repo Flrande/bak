@@ -4,3 +4,6 @@ export * from './pairing-store.js';
 export * from './trace-store.js';
 export * from './gc.js';
 export * from './policy.js';
+export * from './memory/store.js';
+export * from './memory/sqlite-store.js';
+export * from './memory/factory.js';

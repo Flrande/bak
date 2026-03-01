@@ -1,4 +1,4 @@
-import { MemoryStore } from './memory/store.js';
+import { createMemoryStore } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { ExtensionBridge } from './drivers/extension-bridge.js';
 import { ExtensionDriver } from './drivers/extension-driver.js';
@@ -15,7 +15,7 @@ export interface BakDaemon {
 export async function startBakDaemon(port: number, rpcWsPort: number): Promise<BakDaemon> {
   const pairingStore = new PairingStore();
   const traceStore = new TraceStore();
-  const memoryStore = new MemoryStore();
+  const memoryStore = createMemoryStore();
 
   const bridge = new ExtensionBridge(port, pairingStore);
   await bridge.start();
@@ -33,6 +33,7 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
 
   const stop = async (): Promise<void> => {
     service.stopHeartbeat();
+    memoryStore.close?.();
     await rpcServer.stop();
     await bridge.stop();
   };

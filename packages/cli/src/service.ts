@@ -22,7 +22,7 @@ import {
   rankCandidates,
   retrieveSkills
 } from './memory/extract.js';
-import type { MemoryStore } from './memory/store.js';
+import type { MemoryStoreBackend } from './memory/store.js';
 import { PolicyEngine, type PolicyAction } from './policy.js';
 import { redactElements } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
@@ -74,7 +74,7 @@ export class BakService {
   private readonly driver: BrowserDriver;
   private readonly pairingStore: PairingStore;
   private readonly traceStore: TraceStore;
-  private readonly memoryStore: MemoryStore;
+  private readonly memoryStore: MemoryStoreBackend;
   private readonly dataDir: string;
   private readonly policyEngine: PolicyEngine;
 
@@ -88,7 +88,7 @@ export class BakService {
     driver: BrowserDriver,
     pairingStore: PairingStore,
     traceStore: TraceStore,
-    memoryStore: MemoryStore,
+    memoryStore: MemoryStoreBackend,
     heartbeatConfig: ServiceHeartbeatConfig = {}
   ) {
     this.driver = driver;

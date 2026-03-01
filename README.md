@@ -122,7 +122,13 @@ pnpm --filter @bak/cli exec bak skills list
 pnpm --filter @bak/cli exec bak skills retrieve --intent "fill form" --anchor save
 pnpm --filter @bak/cli exec bak skills run <skillId> --param param_1=Alice --param param_2=alice@example.com
 pnpm --filter @bak/cli exec bak skills delete <skillId>
+pnpm --filter @bak/cli exec bak memory migrate
+pnpm --filter @bak/cli exec bak memory export --backend sqlite
 ```
+
+Memory backend selection:
+- default: `json` (`.bak-data/memory.json`)
+- opt-in sqlite: set `BAK_MEMORY_BACKEND=sqlite` (uses `.bak-data/memory.sqlite`)
 
 ## Trace / snapshot output
 

@@ -45,7 +45,7 @@
 - Keyword risk detector can have false positives/false negatives.
 - Pair token stored locally in plain text under `.bak-data/pairing.json`.
 - Extension popup currently does not provide token rotation UI; rotate by re-running `bak pair`.
-- `memory.json` is file-based and not encrypted.
+- Memory backend (`memory.json` or `memory.sqlite`) is local-only but not encrypted at rest.
 - Healing candidate ranking is heuristic and can select wrong elements on dense UIs.
 - Rich text debug mode can still capture non-secret page copy; enable only when needed.
 

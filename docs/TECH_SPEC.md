@@ -54,13 +54,21 @@
   - stdio JSON-RPC reader
   - websocket JSON-RPC endpoint for easier local debug
 
-## Memory model (file store)
+## Memory model
 
-`memory.json`
+Backends:
+- `json` (default): `memory.json`
+- `sqlite` (opt-in): `memory.sqlite` (WAL, indexed)
+
+Common data shape:
 - episodes[]
   - domain, startUrl, intent, steps, anchors, outcome
 - skills[]
   - domain, intent, description, plan, paramsSchema, healing, stats
+
+Migration / export:
+- `bak memory migrate` imports JSON records into SQLite (`INSERT OR IGNORE`, idempotent)
+- `bak memory export --backend <json|sqlite>` writes a portable JSON backup
 
 Extraction rules (v1):
 - successful recording auto-creates skill

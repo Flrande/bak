@@ -1,11 +1,14 @@
 #!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
 import { startBakDaemon } from './server.js';
 import { runGc } from './gc.js';
+import { createMemoryStore, exportMemory, migrateMemoryJsonToSqlite, resolveMemoryBackend } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { TraceStore } from './trace-store.js';
-import { readEnvInt } from './utils.js';
+import { readEnvInt, resolveDataDir } from './utils.js';
 
 const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
 const DEFAULT_RPC_PORT = readEnvInt('BAK_RPC_WS_PORT', DEFAULT_PORT + 1);
@@ -200,6 +203,37 @@ skills
       Number.parseInt(String(options.rpcWsPort), 10)
     );
     printResult(result);
+  });
+
+const memory = program.command('memory').description('Memory storage utilities');
+memory
+  .command('migrate')
+  .description('Migrate memory.json into memory.sqlite (idempotent)')
+  .option('--data-dir <path>', 'override data dir')
+  .action((options) => {
+    const result = migrateMemoryJsonToSqlite(options.dataDir ? resolve(String(options.dataDir)) : undefined);
+    printResult(result);
+  });
+
+memory
+  .command('export')
+  .description('Export memory payload from selected backend')
+  .option('--backend <backend>', 'json or sqlite', process.env.BAK_MEMORY_BACKEND ?? 'json')
+  .option('--data-dir <path>', 'override data dir')
+  .option('--out <path>', 'output path')
+  .action((options) => {
+    const dataDir = options.dataDir ? resolve(String(options.dataDir)) : resolveDataDir();
+    const backend = resolveMemoryBackend(String(options.backend));
+    const store = createMemoryStore({ dataDir, backend });
+    const payload = exportMemory(store, backend);
+    const outPath = options.out ? resolve(String(options.out)) : join(dataDir, `memory-export-${Date.now()}.json`);
+    writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    printResult({
+      outPath,
+      backend,
+      episodeCount: payload.episodes.length,
+      skillCount: payload.skills.length
+    });
   });
 
 program

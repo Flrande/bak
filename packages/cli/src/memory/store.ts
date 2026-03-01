@@ -8,7 +8,18 @@ interface MemoryState {
   skills: Skill[];
 }
 
-export class MemoryStore {
+export interface MemoryStoreBackend {
+  createEpisode(input: Omit<Episode, 'id' | 'createdAt'>): Episode;
+  listEpisodes(): Episode[];
+  createSkill(input: Omit<Skill, 'id' | 'createdAt' | 'stats'>): Skill;
+  updateSkill(skill: Skill): Skill;
+  listSkills(filters?: { domain?: string; intent?: string }): Skill[];
+  getSkill(idValue: string): Skill | null;
+  deleteSkill(idValue: string): boolean;
+  close?(): void;
+}
+
+export class MemoryStore implements MemoryStoreBackend {
   private readonly path: string;
   private cache: MemoryState | null = null;
 
@@ -109,5 +120,9 @@ export class MemoryStore {
       this.persist(state);
     }
     return changed;
+  }
+
+  close(): void {
+    // No-op for JSON file backend.
   }
 }
