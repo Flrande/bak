@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessSessionInfoHealth, assessVersionCompatibility } from '../../packages/cli/src/doctor.js';
+import { assessActiveTabTelemetry, assessSessionInfoHealth, assessVersionCompatibility } from '../../packages/cli/src/doctor.js';
 
 describe('doctor session.info health assessment', () => {
   it('passes when connected and heartbeat is healthy', () => {
@@ -86,5 +86,43 @@ describe('doctor session.info health assessment', () => {
     expect(check.ok).toBe(false);
     expect(check.message).toContain('unable to compare');
     expect(check.severity).toBe('warn');
+  });
+
+  it('passes when active tab telemetry is present while connected', () => {
+    const check = assessActiveTabTelemetry({
+      extensionConnected: true,
+      connectionState: 'connected',
+      activeTab: {
+        id: 42,
+        url: 'https://example.com/form',
+        title: 'Example'
+      }
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('available');
+  });
+
+  it('warns when connected session has no active tab telemetry', () => {
+    const check = assessActiveTabTelemetry({
+      extensionConnected: true,
+      connectionState: 'connected',
+      activeTab: null
+    });
+
+    expect(check.ok).toBe(false);
+    expect(check.severity).toBe('warn');
+    expect(check.message).toContain('missing');
+  });
+
+  it('skips active tab telemetry when disconnected', () => {
+    const check = assessActiveTabTelemetry({
+      extensionConnected: false,
+      connectionState: 'disconnected',
+      activeTab: null
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('skipped');
   });
 });

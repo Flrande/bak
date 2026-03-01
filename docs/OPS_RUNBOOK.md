@@ -12,6 +12,7 @@ Checks:
 - bridge/rpc port availability
 - `session.info` reachability
 - extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
+- active tab telemetry availability (`activeTabTelemetry`, non-blocking warning)
 - extension runtime version reported by bridge handshake (`extensionVersion`)
 - cli/extension version compatibility drift check (`versionCompatibility`, `severity=warn` and non-blocking)
 

@@ -47,9 +47,12 @@ describe('ops tools', () => {
     expect(report.checks.pairing.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
+    expect(report.checks.activeTabTelemetry.ok).toBe(false);
+    expect(report.checks.activeTabTelemetry.severity).toBe('warn');
     expect(report.checks.versionCompatibility.ok).toBe(false);
     expect(report.checks.versionCompatibility.severity).toBe('warn');
     expect(report.summary.warningChecks).toContain('versionCompatibility');
+    expect(report.summary.warningChecks).toContain('activeTabTelemetry');
     expect(report.summary.errorChecks).toContain('pairing');
     expect(report.summary.errorChecks).toContain('rpcSessionInfo');
     expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);

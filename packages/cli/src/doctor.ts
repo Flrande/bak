@@ -36,6 +36,7 @@ export interface DoctorResult {
     rpcPort: DoctorCheck;
     rpcSessionInfo: DoctorCheck;
     rpcConnectionHealth: DoctorCheck;
+    activeTabTelemetry: DoctorCheck;
     versionCompatibility: DoctorCheck;
   };
 }
@@ -228,6 +229,50 @@ export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCh
   };
 }
 
+export function assessActiveTabTelemetry(info: Record<string, unknown>): DoctorCheck {
+  const extensionConnected = info.extensionConnected === true;
+  const state = typeof info.connectionState === 'string' ? info.connectionState : 'unknown';
+  const activeTab = typeof info.activeTab === 'object' && info.activeTab !== null
+    ? (info.activeTab as Record<string, unknown>)
+    : null;
+
+  if (!extensionConnected || state !== 'connected') {
+    return {
+      ok: true,
+      message: 'active tab telemetry skipped while extension is disconnected',
+      details: {
+        extensionConnected,
+        state,
+        skipped: true
+      }
+    };
+  }
+
+  const hasValidId = typeof activeTab?.id === 'number';
+  const hasValidUrl = typeof activeTab?.url === 'string';
+  if (hasValidId && hasValidUrl) {
+    return {
+      ok: true,
+      message: 'active tab telemetry available',
+      details: {
+        id: activeTab!.id,
+        url: activeTab!.url
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'active tab telemetry missing while extension is connected',
+    severity: 'warn',
+    details: {
+      extensionConnected,
+      state,
+      activeTab
+    }
+  };
+}
+
 export function assessVersionCompatibility(info: Record<string, unknown>, cliVersion: string): DoctorCheck {
   const extensionVersion = typeof info.extensionVersion === 'string' ? info.extensionVersion : null;
   const cliSemver = parseSemver(cliVersion);
@@ -321,6 +366,16 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
       : {
           ok: false,
           message: 'rpc connection health unavailable',
+          details: {
+            detail: sessionInfo.detail ?? 'unknown'
+          }
+        },
+    activeTabTelemetry: sessionInfo.ok && sessionInfo.info
+      ? assessActiveTabTelemetry(sessionInfo.info)
+      : {
+          ok: false,
+          message: 'active tab telemetry unavailable (session.info unavailable)',
+          severity: 'warn',
           details: {
             detail: sessionInfo.detail ?? 'unknown'
           }
