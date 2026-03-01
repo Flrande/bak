@@ -1,5 +1,9 @@
 # PROTOCOL (JSON-RPC v1)
 
+Schema artifact:
+- `packages/protocol/schemas/protocol.schema.json`
+- this file is versioned as `v1` and updated with additive compatibility by default
+
 Base envelope:
 
 ```json

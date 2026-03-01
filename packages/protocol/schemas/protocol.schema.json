@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bak.local/schemas/protocol-v1.json",
+  "title": "Browser Agent Kit Protocol v1",
+  "type": "object",
+  "definitions": {
+    "jsonRpcRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "method"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "session.create",
+            "session.close",
+            "session.info",
+            "tabs.list",
+            "tabs.focus",
+            "tabs.new",
+            "tabs.close",
+            "page.goto",
+            "page.back",
+            "page.forward",
+            "page.reload",
+            "page.wait",
+            "page.snapshot",
+            "element.click",
+            "element.type",
+            "element.scroll",
+            "debug.getConsole",
+            "memory.recordStart",
+            "memory.recordStop",
+            "memory.skills.list",
+            "memory.skills.show",
+            "memory.skills.retrieve",
+            "memory.skills.run",
+            "memory.skills.delete"
+          ]
+        },
+        "params": {}
+      },
+      "additionalProperties": false
+    },
+    "jsonRpcSuccess": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+        },
+        "result": {}
+      },
+      "additionalProperties": false
+    },
+    "jsonRpcFailure": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": {
+          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+        },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "number" },
+            "message": { "type": "string" },
+            "data": {
+              "type": "object",
+              "properties": {
+                "bakCode": {
+                  "type": "string",
+                  "enum": [
+                    "E_NOT_PAIRED",
+                    "E_PERMISSION",
+                    "E_NOT_FOUND",
+                    "E_NEED_USER_CONFIRM",
+                    "E_TIMEOUT",
+                    "E_INVALID_PARAMS",
+                    "E_INTERNAL",
+                    "E_NOT_READY"
+                  ]
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "locator": {
+      "type": "object",
+      "properties": {
+        "eid": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "text": { "type": "string" },
+        "css": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "elementMapItem": {
+      "type": "object",
+      "required": ["eid", "tag", "role", "name", "text", "bbox", "selectors", "risk"],
+      "properties": {
+        "eid": { "type": "string" },
+        "tag": { "type": "string" },
+        "role": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "text": { "type": "string" },
+        "bbox": {
+          "type": "object",
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "width": { "type": "number" },
+            "height": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "selectors": {
+          "type": "object",
+          "required": ["css", "text", "aria"],
+          "properties": {
+            "css": { "type": ["string", "null"] },
+            "text": { "type": ["string", "null"] },
+            "aria": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "risk": { "type": "string", "enum": ["low", "high"] }
+      },
+      "additionalProperties": false
+    },
+    "sessionInfoResult": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "paired",
+        "extensionConnected",
+        "connectionState",
+        "connectionReason",
+        "recording",
+        "lastSeenTs",
+        "lastHeartbeatTs",
+        "bridgePendingRequests",
+        "bridgeLastError"
+      ],
+      "properties": {
+        "sessionId": { "type": ["string", "null"] },
+        "paired": { "type": "boolean" },
+        "extensionConnected": { "type": "boolean" },
+        "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
+        "connectionReason": { "type": ["string", "null"] },
+        "recording": { "type": "boolean" },
+        "lastSeenTs": { "type": ["number", "null"] },
+        "lastHeartbeatTs": { "type": ["number", "null"] },
+        "bridgePendingRequests": { "type": "number" },
+        "bridgeLastError": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/jsonRpcRequest" },
+    { "$ref": "#/definitions/jsonRpcSuccess" },
+    { "$ref": "#/definitions/jsonRpcFailure" }
+  ]
+}
