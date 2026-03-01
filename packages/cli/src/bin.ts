@@ -306,9 +306,18 @@ program
       includeMemory: options.includeMemory === true,
       memoryBackend: String(options.memoryBackend)
     });
+
+    const warnings: string[] = [];
+    if (result.memoryExportError) {
+      warnings.push(`memory export skipped: ${result.memoryExportError}`);
+    }
+    if (doctorReport.checks.versionCompatibility.ok === false) {
+      warnings.push(`version compatibility warning: ${doctorReport.checks.versionCompatibility.message}`);
+    }
     printResult({
       ...result,
-      doctorOk: doctorReport.ok
+      doctorOk: doctorReport.ok,
+      warnings
     });
   });
 
