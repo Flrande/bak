@@ -149,6 +149,13 @@ Retention defaults (override via `.bak-data/retention.json` or env):
 - traces: keep 14 days + newest 200
 - snapshots: keep 14 days + newest 100
 
+### Policy guardrails
+
+The CLI checks a local policy file before `element.click` / `element.type`:
+- default path: `.bak-data/.bak-policy.json`
+- override path: `BAK_POLICY_PATH`
+- decisions: `allow`, `deny`, `requireConfirm`
+
 ## Safety defaults
 
 - Extension only connects to `ws://127.0.0.1`

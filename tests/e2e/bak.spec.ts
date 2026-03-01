@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test, expect, chromium, type BrowserContext } from '@playwright/test';
@@ -102,6 +102,24 @@ test.describe('bak e2e', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'bak-e2e-data-'));
     userDataDir = mkdtempSync(join(tmpdir(), 'bak-e2e-chrome-'));
 
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'deny-cancel-on-form',
+            action: 'element.click',
+            domain: '127.0.0.1',
+            pathPrefix: '/form.html',
+            locatorPattern: 'cancel-btn',
+            decision: 'deny',
+            reason: 'test policy deny path'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
     const pairRaw = execFileSync('node', [cliBin, 'pair'], {
       cwd: repoRoot,
       env: { ...process.env, BAK_DATA_DIR: dataDir },
@@ -195,6 +213,12 @@ test.describe('bak e2e', () => {
     });
 
     await expect(page.locator('#name-input')).toHaveValue('Agent QA');
+
+    await expect(async () => {
+      await rpcCall('element.click', {
+        locator: { css: '#cancel-btn' }
+      });
+    }).rejects.toThrow(/E_PERMISSION/);
 
     await rpcCall('element.click', {
       locator: { css: '#next-page' }

@@ -23,10 +23,11 @@ import {
   retrieveSkills
 } from './memory/extract.js';
 import type { MemoryStore } from './memory/store.js';
+import { PolicyEngine, type PolicyAction } from './policy.js';
 import { redactElements } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
-import { ensureDir, getDomain, id, resolveDataDir } from './utils.js';
+import { ensureDir, getDomain, getPathname, id, resolveDataDir } from './utils.js';
 
 interface RecordingState {
   recordingId: string;
@@ -75,6 +76,7 @@ export class BakService {
   private readonly traceStore: TraceStore;
   private readonly memoryStore: MemoryStore;
   private readonly dataDir: string;
+  private readonly policyEngine: PolicyEngine;
 
   private sessionId: string | null = null;
   private currentTraceId: string = '';
@@ -94,6 +96,7 @@ export class BakService {
     this.traceStore = traceStore;
     this.memoryStore = memoryStore;
     this.dataDir = resolveDataDir();
+    this.policyEngine = new PolicyEngine(this.dataDir);
     const configured = heartbeatConfig.intervalMs ?? 10_000;
     this.heartbeatIntervalMs = Math.max(500, configured);
   }
@@ -210,6 +213,96 @@ export class BakService {
     }
   }
 
+  private async activeLocation(): Promise<{ domain: string; path: string }> {
+    if (!this.driver.isConnected()) {
+      return { domain: 'unknown', path: '/' };
+    }
+
+    try {
+      const tabs = await this.driver.tabsList();
+      const active = tabs.tabs.find((tab) => tab.active) ?? tabs.tabs[0];
+      if (!active?.url) {
+        return { domain: 'unknown', path: '/' };
+      }
+      return {
+        domain: getDomain(active.url),
+        path: getPathname(active.url)
+      };
+    } catch {
+      return { domain: 'unknown', path: '/' };
+    }
+  }
+
+  private appendPolicyAudit(
+    traceId: string,
+    action: PolicyAction,
+    locator: Locator,
+    decision: { decision: 'allow' | 'deny' | 'requireConfirm'; reason: string; source: 'rule' | 'default'; ruleId?: string },
+    location: { domain: string; path: string }
+  ): void {
+    this.traceStore.append(traceId, {
+      method: 'policy.decision',
+      params: {
+        action,
+        decision: decision.decision,
+        reason: decision.reason,
+        source: decision.source,
+        ruleId: decision.ruleId,
+        domain: location.domain,
+        path: location.path,
+        locatorSummary: {
+          hasEid: Boolean(locator.eid),
+          hasRole: Boolean(locator.role),
+          hasName: Boolean(locator.name),
+          hasText: Boolean(locator.text),
+          hasCss: Boolean(locator.css)
+        }
+      }
+    });
+  }
+
+  private async evaluatePolicy(action: PolicyAction, locator: Locator): Promise<{ requiresConfirm: boolean }> {
+    const traceId = this.currentTraceId || this.traceStore.newTraceId();
+    this.currentTraceId = traceId;
+
+    const location = await this.activeLocation();
+    const decision = this.policyEngine.evaluate({
+      action,
+      domain: location.domain,
+      path: location.path,
+      locator
+    });
+
+    this.appendPolicyAudit(traceId, action, locator, decision, location);
+
+    if (decision.decision === 'deny') {
+      throw new RpcError(`Blocked by policy: ${decision.reason}`, 4030, BakErrorCode.E_PERMISSION, {
+        policyDecision: decision.decision,
+        policyReason: decision.reason,
+        policySource: decision.source,
+        policyRuleId: decision.ruleId
+      });
+    }
+
+    return { requiresConfirm: decision.decision === 'requireConfirm' };
+  }
+
+  private async clickWithPolicy(locator: Locator, tabId?: number, requiresConfirm = false): Promise<{ ok: true }> {
+    const policy = await this.evaluatePolicy('element.click', locator);
+    return this.driver.elementClick(locator, tabId, requiresConfirm || policy.requiresConfirm);
+  }
+
+  private async typeWithPolicy(
+    locator: Locator,
+    text: string,
+    clear: boolean,
+    tabId?: number,
+    requiresConfirm = false
+  ): Promise<{ ok: true }> {
+    const policy = await this.evaluatePolicy('element.type', locator);
+    return this.driver.elementType(locator, text, clear, tabId, requiresConfirm || policy.requiresConfirm);
+  }
+
   private async pickRunCandidate(
     step: SkillPlanStep,
     options: { tabId?: number; params?: Record<string, string> }
@@ -229,13 +322,17 @@ export class BakService {
     for (const candidate of ordered) {
       try {
         if (step.kind === 'click') {
-          await this.driver.elementClick(candidate, options.tabId);
+          await this.clickWithPolicy(candidate, options.tabId, Boolean(step.requiresConfirmation));
         } else if (step.kind === 'type') {
           const raw = maybeParamValue(step.text ?? '', options.params);
-          await this.driver.elementType(candidate, raw, true, options.tabId);
+          await this.typeWithPolicy(candidate, raw, true, options.tabId, Boolean(step.requiresConfirmation));
         }
         return { ok: true, chosen: candidate };
-      } catch {
+      } catch (error) {
+        const normalized = this.normalizeError(error);
+        if (normalized.bakCode === BakErrorCode.E_PERMISSION) {
+          throw normalized;
+        }
         continue;
       }
     }
@@ -270,10 +367,10 @@ export class BakService {
     }
 
     if (step.kind === 'click') {
-      await this.driver.elementClick(retry, options.tabId);
+      await this.clickWithPolicy(retry, options.tabId, Boolean(step.requiresConfirmation));
     } else {
       const raw = maybeParamValue(step.text ?? '', options.params);
-      await this.driver.elementType(retry, raw, true, options.tabId);
+      await this.typeWithPolicy(retry, raw, true, options.tabId, Boolean(step.requiresConfirmation));
     }
 
     return { ok: true, chosen: retry, updated: true };
@@ -459,10 +556,12 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           const locator = args.locator as Locator;
           const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
-          const result = await this.driver.elementClick(locator, tabId);
+          const requiresConfirm = args.requiresConfirm === true;
+          const result = await this.clickWithPolicy(locator, tabId, requiresConfirm);
           this.captureStep({
             kind: 'click',
             locator,
+            requiresConfirmation: requiresConfirm,
             targetCandidates: buildTargetCandidates(locator)
           });
           return result;
@@ -476,11 +575,13 @@ export class BakService {
           const text = String(args.text ?? '');
           const clear = Boolean(args.clear);
           const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
-          const result = await this.driver.elementType(locator, text, clear, tabId);
+          const requiresConfirm = args.requiresConfirm === true;
+          const result = await this.typeWithPolicy(locator, text, clear, tabId, requiresConfirm);
           this.captureStep({
             kind: 'type',
             locator,
             text: sanitizeInputText(locator, text),
+            requiresConfirmation: requiresConfirm,
             targetCandidates: buildTargetCandidates(locator)
           });
           return result;

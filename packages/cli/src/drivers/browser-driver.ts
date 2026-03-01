@@ -42,8 +42,8 @@ export interface BrowserDriver {
   pageReload(tabId?: number): Promise<{ ok: true }>;
   pageWait(mode: 'selector' | 'text' | 'url', value: string, timeoutMs?: number, tabId?: number): Promise<{ ok: true }>;
   pageSnapshot(tabId?: number): Promise<SnapshotResult>;
-  elementClick(locator: Locator, tabId?: number): Promise<{ ok: true }>;
-  elementType(locator: Locator, text: string, clear?: boolean, tabId?: number): Promise<{ ok: true }>;
+  elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
+  elementType(locator: Locator, text: string, clear?: boolean, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
   debugGetConsole(limit?: number, tabId?: number): Promise<{ entries: ConsoleEntry[] }>;
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }>;

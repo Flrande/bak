@@ -142,6 +142,26 @@ export interface NeedUserConfirmData {
   action: 'click' | 'type';
 }
 
+export interface PolicyDecision {
+  decision: 'allow' | 'deny' | 'requireConfirm';
+  reason: string;
+  source: 'rule' | 'default';
+  ruleId?: string;
+}
+
+export interface PolicyAuditEntry extends PolicyDecision {
+  action: 'element.click' | 'element.type';
+  domain: string;
+  path: string;
+  locatorSummary: {
+    hasEid: boolean;
+    hasRole: boolean;
+    hasName: boolean;
+    hasText: boolean;
+    hasCss: boolean;
+  };
+}
+
 export interface MethodMap {
   'session.create': { params: { clientName?: string }; result: { sessionId: string } };
   'session.close': { params: { sessionId: string }; result: { closed: true } };
@@ -190,9 +210,9 @@ export interface MethodMap {
     };
     result: { ok: true };
   };
-  'element.click': { params: { tabId?: number; locator: Locator }; result: { ok: true } };
+  'element.click': { params: { tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
   'element.type': {
-    params: { tabId?: number; locator: Locator; text: string; clear?: boolean };
+    params: { tabId?: number; locator: Locator; text: string; clear?: boolean; requiresConfirm?: boolean };
     result: { ok: true };
   };
   'element.scroll': {

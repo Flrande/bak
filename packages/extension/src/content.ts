@@ -9,6 +9,7 @@ interface ActionMessage {
   locator?: Locator;
   text?: string;
   clear?: boolean;
+  requiresConfirm?: boolean;
   dx?: number;
   dy?: number;
 }
@@ -695,7 +696,7 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
     const name = inferName(target);
     const text = (target.innerText || target.textContent || '').trim();
     const riskText = `${name} ${text}`;
-    const isHighRisk = unsafeKeywords.test(riskText) || (target as HTMLInputElement).type === 'file';
+    const isHighRisk = message.requiresConfirm === true || unsafeKeywords.test(riskText) || (target as HTMLInputElement).type === 'file';
 
     if (isHighRisk) {
       const approved = await askConfirm(`Action: ${message.action} on "${name || text || target.tagName}"`);

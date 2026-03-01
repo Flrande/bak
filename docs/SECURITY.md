@@ -32,6 +32,14 @@
 - debug v1 only returns buffered page error events (and optional console scope)
 - no full network interception in v1
 
+7. Policy engine + audit (MVP)
+- CLI loads local policy file `.bak-data/.bak-policy.json` (override with `BAK_POLICY_PATH`)
+- decisions: `allow | deny | requireConfirm`
+- default conservative behavior:
+  - file upload actions denied
+  - destructive/payment/submit-like actions require confirmation
+- every decision is appended to trace as `policy.decision` (locator summary only, no raw sensitive text)
+
 ## Known limitations / risks (v1)
 
 - Keyword risk detector can have false positives/false negatives.
@@ -47,6 +55,24 @@
 - Rotate token regularly (`bak pair`) and re-pair extension.
 - Keep `.bak-data` out of source control.
 - Run `bak gc` regularly to enforce local retention and reduce stale artifacts.
+- Use policy file for domain/path/action guardrails:
+
+```json
+{
+  "rules": [
+    {
+      "id": "allow-upload-internal-admin",
+      "action": "element.click",
+      "domain": "admin.example.com",
+      "pathPrefix": "/files",
+      "tag": "fileUpload",
+      "decision": "allow",
+      "reason": "internal reviewed flow"
+    }
+  ]
+}
+```
+
 - Require human supervision for destructive operations.
 - Keep rich-text debug capture disabled unless investigating locator failures.
 - For production-hardening, replace file memory with encrypted store and add stronger auth.

@@ -94,6 +94,7 @@ Action behavior notes:
 - `element.click` scrolls target into view, checks center-point obstruction, then dispatches pointer/mouse click sequence.
 - `element.type` uses native input/textarea value setter + `input/change` events.
 - Covered/disabled targets return structured permission failures instead of silent no-op.
+- `element.click` / `element.type` accept optional `requiresConfirm` to force explicit user confirmation.
 
 ### Debug
 

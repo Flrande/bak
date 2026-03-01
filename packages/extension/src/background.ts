@@ -165,7 +165,8 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
         type: 'bak.performAction',
         action: 'click',
-        locator: request.params?.locator as Locator
+        locator: request.params?.locator as Locator,
+        requiresConfirm: request.params?.requiresConfirm === true
       });
       if (!response.ok) {
         throw response.error ?? toError('E_INTERNAL', 'element.click failed');
@@ -179,7 +180,8 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         action: 'type',
         locator: request.params?.locator as Locator,
         text: String(request.params?.text ?? ''),
-        clear: Boolean(request.params?.clear)
+        clear: Boolean(request.params?.clear),
+        requiresConfirm: request.params?.requiresConfirm === true
       });
       if (!response.ok) {
         throw response.error ?? toError('E_INTERNAL', 'element.type failed');

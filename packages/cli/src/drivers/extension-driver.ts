@@ -80,12 +80,12 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('page.snapshot', { tabId });
   }
 
-  elementClick(locator: Locator, tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('element.click', { locator, tabId });
+  elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }> {
+    return this.bridge.request('element.click', { locator, tabId, requiresConfirm });
   }
 
-  elementType(locator: Locator, text: string, clear?: boolean, tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('element.type', { locator, text, clear, tabId });
+  elementType(locator: Locator, text: string, clear?: boolean, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }> {
+    return this.bridge.request('element.type', { locator, text, clear, tabId, requiresConfirm });
   }
 
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }> {
