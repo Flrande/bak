@@ -67,6 +67,10 @@ pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
 
 The command result and `index.json` both include `warnings` for non-blocking issues (for example version drift or memory export fallback).
 
+## CI / nightly e2e notes
+
+- `.github/workflows/e2e-nightly.yml` uploads `playwright-report` and `test-results` artifacts on every run (`if: always()`), so failures keep diagnostics.
+
 ## Memory backend operations
 
 ```powershell
