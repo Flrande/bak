@@ -195,6 +195,19 @@ function scoreAnchors(skill: Skill, queryAnchors: string[] | undefined): number 
   return anchorScores.reduce((sum, score) => sum + score, 0) / anchorScores.length;
 }
 
+function scoreHealingReliability(skill: Skill): number {
+  const attempts = typeof skill.healing.attempts === 'number' ? skill.healing.attempts : 0;
+  const successes = typeof skill.healing.successes === 'number' ? skill.healing.successes : 0;
+  if (attempts <= 0) {
+    return 0;
+  }
+
+  const boundedSuccesses = Math.min(Math.max(successes, 0), attempts);
+  const successRate = boundedSuccesses / attempts;
+  const confidence = Math.min(1, attempts / 5);
+  return successRate * confidence;
+}
+
 export function retrieveSkills(
   skills: Skill[],
   query: { domain: string; intent: string; anchors?: string[]; minScore?: number }
@@ -205,13 +218,17 @@ export function retrieveSkills(
       const domainScore = scoreDomain(skill.domain, query.domain);
       const intentScore = Math.max(textScore(skill.intent, query.intent), textScore(skill.description, query.intent) * 0.85);
       const anchorScore = scoreAnchors(skill, query.anchors);
+      const healingScore = scoreHealingReliability(skill);
       const score = domainScore * 0.45 + intentScore * 0.35 + anchorScore * 0.2;
-      return { skill, score };
+      return { skill, score, healingScore };
     })
     .filter((item) => item.score >= minScore)
     .sort((a, b) => {
       if (b.score !== a.score) {
         return b.score - a.score;
+      }
+      if (b.healingScore !== a.healingScore) {
+        return b.healingScore - a.healingScore;
       }
       if (a.skill.createdAt !== b.skill.createdAt) {
         return b.skill.createdAt.localeCompare(a.skill.createdAt);

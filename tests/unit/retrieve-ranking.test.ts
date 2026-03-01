@@ -134,4 +134,42 @@ describe('retrieveSkills ranking', () => {
     expect(ranked.length).toBeGreaterThan(0);
     expect(ranked[0]?.id).toBe('skill_reset_password');
   });
+
+  it('uses healing reliability as tie-breaker for similar scores', () => {
+    const basePlan: SkillPlanStep[] = [
+      {
+        kind: 'click',
+        locator: { role: 'button', name: 'Approve' },
+        targetCandidates: [{ text: 'Approve' }]
+      }
+    ];
+
+    const skillLow = createSkill({
+      id: 'skill_low_reliability',
+      domain: 'portal.local',
+      intent: 'approve request',
+      description: 'approve request flow',
+      plan: basePlan,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    skillLow.healing = { retries: 1, attempts: 5, successes: 1 };
+
+    const skillHigh = createSkill({
+      id: 'skill_high_reliability',
+      domain: 'portal.local',
+      intent: 'approve request',
+      description: 'approve request flow',
+      plan: basePlan,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    });
+    skillHigh.healing = { retries: 1, attempts: 5, successes: 5 };
+
+    const ranked = retrieveSkills([skillLow, skillHigh], {
+      domain: 'portal.local',
+      intent: 'approve request',
+      anchors: ['approve']
+    });
+
+    expect(ranked[0]?.id).toBe('skill_high_reliability');
+  });
 });

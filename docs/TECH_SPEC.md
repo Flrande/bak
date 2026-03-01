@@ -87,6 +87,11 @@ Healing rules (v1):
 4) show overlay candidate picker once (NeedUserConfirm flow)
 5) if user selects, prepend selected eid and continue
 
+Healing telemetry:
+- each skill tracks optional `healing.attempts` and `healing.successes`
+- stats are updated during `memory.skills.run` (including failed runs after heal attempt)
+- retrieve ranking uses healing reliability as a tie-breaker for otherwise similar matches
+
 Retrieve ranking (v2 hardening):
 - score combines domain, intent similarity, and structured plan anchors (locator name/text/role/css, wait value, url, non-template type text)
 - deterministic ordering for score ties (`createdAt` then `id`)

@@ -78,6 +78,12 @@ function maybeLocatorFromStep(step: SkillPlanStep): Locator | undefined {
   return step.targetCandidates?.[0];
 }
 
+function hasHealingAttemptFlag(error: RpcError): boolean {
+  const source = error as RpcError & { data?: Record<string, unknown>; details?: Record<string, unknown> };
+  const data = source.details ?? source.data;
+  return data?.healingAttempted === true;
+}
+
 export class BakService {
   private readonly driver: BrowserDriver;
   private readonly pairingStore: PairingStore;
@@ -375,7 +381,7 @@ export class BakService {
   private async pickRunCandidate(
     step: SkillPlanStep,
     options: { tabId?: number; params?: Record<string, string> }
-  ): Promise<{ ok: true; chosen?: Locator; updated?: boolean }> {
+  ): Promise<{ ok: true; chosen?: Locator; updated?: boolean; healingAttempted: boolean; healingSucceeded: boolean }> {
     const candidates = (step.targetCandidates ?? []).slice();
     if (step.locator) {
       candidates.unshift(step.locator);
@@ -396,7 +402,7 @@ export class BakService {
           const raw = maybeParamValue(step.text ?? '', options.params);
           await this.typeWithPolicy(candidate, raw, true, options.tabId, Boolean(step.requiresConfirmation));
         }
-        return { ok: true, chosen: candidate };
+        return { ok: true, chosen: candidate, healingAttempted: false, healingSucceeded: false };
       } catch (error) {
         const normalized = this.normalizeError(error);
         if (normalized.bakCode === BakErrorCode.E_PERMISSION) {
@@ -410,7 +416,9 @@ export class BakService {
     const ranked = rankCandidates(refreshed.elements, ordered, 3);
 
     if (ranked.length === 0) {
-      throw new RpcError('No matching candidate after refresh', 4004, BakErrorCode.E_NOT_FOUND);
+      throw new RpcError('No matching candidate after refresh', 4004, BakErrorCode.E_NOT_FOUND, {
+        healingAttempted: true
+      });
     }
 
     let selectedEid: string;
@@ -423,7 +431,8 @@ export class BakService {
         4090,
         BakErrorCode.E_NEED_USER_CONFIRM,
         {
-          candidates: ranked
+          candidates: ranked,
+          healingAttempted: true
         }
       );
     }
@@ -435,18 +444,46 @@ export class BakService {
       throw new RpcError('Unable to heal step', -32603, BakErrorCode.E_INTERNAL);
     }
 
-    if (step.kind === 'click') {
-      await this.clickWithPolicy(retry, options.tabId, Boolean(step.requiresConfirmation));
-    } else {
-      const raw = maybeParamValue(step.text ?? '', options.params);
-      await this.typeWithPolicy(retry, raw, true, options.tabId, Boolean(step.requiresConfirmation));
+    try {
+      if (step.kind === 'click') {
+        await this.clickWithPolicy(retry, options.tabId, Boolean(step.requiresConfirmation));
+      } else {
+        const raw = maybeParamValue(step.text ?? '', options.params);
+        await this.typeWithPolicy(retry, raw, true, options.tabId, Boolean(step.requiresConfirmation));
+      }
+    } catch (error) {
+      const normalized = this.normalizeError(error);
+      const normalizedMeta = normalized as RpcError & {
+        data?: Record<string, unknown>;
+        details?: Record<string, unknown>;
+      };
+      throw new RpcError(normalized.message, normalized.code, normalized.bakCode, {
+        ...(normalizedMeta.details ?? normalizedMeta.data ?? {}),
+        healingAttempted: true
+      });
     }
 
-    return { ok: true, chosen: retry, updated: true };
+    return { ok: true, chosen: retry, updated: true, healingAttempted: true, healingSucceeded: true };
+  }
+
+  private applyHealingStats(skill: Skill, attempts: number, successes: number): void {
+    if (attempts <= 0 && successes <= 0) {
+      return;
+    }
+
+    const currentAttempts = typeof skill.healing.attempts === 'number' ? skill.healing.attempts : 0;
+    const currentSuccesses = typeof skill.healing.successes === 'number' ? skill.healing.successes : 0;
+    skill.healing = {
+      ...skill.healing,
+      attempts: currentAttempts + Math.max(0, attempts),
+      successes: currentSuccesses + Math.max(0, successes)
+    };
   }
 
   private async runSkill(skill: Skill, options: { tabId?: number; params?: Record<string, string> }): Promise<Skill | undefined> {
     let updated = false;
+    let healingAttempts = 0;
+    let healingSuccesses = 0;
 
     for (const step of skill.plan) {
       if (step.kind === 'goto' && step.url) {
@@ -465,14 +502,30 @@ export class BakService {
       }
 
       if (step.kind === 'click' || step.kind === 'type') {
-        const result = await this.pickRunCandidate(step, options);
-        updated = updated || Boolean(result.updated);
+        try {
+          const result = await this.pickRunCandidate(step, options);
+          updated = updated || Boolean(result.updated);
+          if (result.healingAttempted) {
+            healingAttempts += 1;
+          }
+          if (result.healingSucceeded) {
+            healingSuccesses += 1;
+          }
+        } catch (error) {
+          const normalized = this.normalizeError(error);
+          if (hasHealingAttemptFlag(normalized)) {
+            healingAttempts += 1;
+          }
+          this.applyHealingStats(skill, healingAttempts, healingSuccesses);
+          throw normalized;
+        }
         continue;
       }
     }
 
     skill.stats.runs += 1;
     skill.stats.success += 1;
+    this.applyHealingStats(skill, healingAttempts, healingSuccesses);
 
     if (updated) {
       return this.memoryStore.updateSkill(skill);
