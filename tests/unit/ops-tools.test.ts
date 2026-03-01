@@ -48,6 +48,7 @@ describe('ops tools', () => {
 
     expect(report.checks.dataDirWritable.ok).toBe(true);
     expect(report.checks.memoryBackend.ok).toBe(true);
+    expect(report.checks.healingTelemetry.ok).toBe(true);
     expect(report.checks.pairing.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);

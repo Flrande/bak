@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMemoryStoreResolved, type MemoryStoreResolution } from './memory/factory.js';
@@ -33,6 +33,7 @@ export interface DoctorResult {
   checks: {
     dataDirWritable: DoctorCheck;
     memoryBackend: DoctorCheck;
+    healingTelemetry: DoctorCheck;
     pairing: DoctorCheck;
     extensionBridgePort: DoctorCheck;
     rpcPort: DoctorCheck;
@@ -47,6 +48,15 @@ interface SessionInfoProbe {
   ok: boolean;
   info?: Record<string, unknown>;
   detail?: string;
+}
+
+interface HealingTelemetrySummary {
+  eventCount: number;
+  totalAttempts: number;
+  totalSuccesses: number;
+  totalFailures: number;
+  successRate: number;
+  failureRate: number;
 }
 
 async function probePortAvailable(port: number): Promise<DoctorCheck> {
@@ -159,6 +169,114 @@ function checkMemoryBackend(dataDir: string): DoctorCheck {
     return {
       ok: false,
       message: 'memory backend initialization failed',
+      details: {
+        detail: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
+}
+
+function asNonNegativeNumber(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, value);
+}
+
+function collectHealingTelemetry(dataDir: string): HealingTelemetrySummary {
+  const tracesDir = join(dataDir, 'traces');
+  if (!existsSync(tracesDir)) {
+    return {
+      eventCount: 0,
+      totalAttempts: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+      successRate: 0,
+      failureRate: 0
+    };
+  }
+
+  let eventCount = 0;
+  let totalAttempts = 0;
+  let totalSuccesses = 0;
+  let totalFailures = 0;
+  const traceFiles = readdirSync(tracesDir).filter((file) => file.endsWith('.jsonl'));
+
+  for (const traceFile of traceFiles) {
+    const tracePath = join(tracesDir, traceFile);
+    const lines = readFileSync(tracePath, 'utf8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        if (parsed.method !== 'memory.healing') {
+          continue;
+        }
+        const params = typeof parsed.params === 'object' && parsed.params !== null
+          ? (parsed.params as Record<string, unknown>)
+          : {};
+        const attempts = asNonNegativeNumber(params.attempts);
+        const successes = Math.min(attempts, asNonNegativeNumber(params.successes));
+        const failed = params.failed === true;
+
+        eventCount += 1;
+        totalAttempts += attempts;
+        totalSuccesses += successes;
+        if (failed) {
+          totalFailures += 1;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  const successRate = totalAttempts > 0 ? totalSuccesses / totalAttempts : 0;
+  const failureRate = eventCount > 0 ? totalFailures / eventCount : 0;
+
+  return {
+    eventCount,
+    totalAttempts,
+    totalSuccesses,
+    totalFailures,
+    successRate,
+    failureRate
+  };
+}
+
+export function assessHealingTelemetry(summary: HealingTelemetrySummary): DoctorCheck {
+  if (summary.eventCount === 0) {
+    return {
+      ok: true,
+      message: 'no healing telemetry events found',
+      details: summary
+    };
+  }
+
+  if (summary.eventCount >= 3 && summary.failureRate >= 0.5) {
+    return {
+      ok: false,
+      message: 'healing failure rate is elevated',
+      severity: 'warn',
+      details: summary
+    };
+  }
+
+  return {
+    ok: true,
+    message: 'healing telemetry looks healthy',
+    details: summary
+  };
+}
+
+function checkHealingTelemetry(dataDir: string): DoctorCheck {
+  try {
+    const summary = collectHealingTelemetry(dataDir);
+    return assessHealingTelemetry(summary);
+  } catch (error) {
+    return {
+      ok: false,
+      message: 'unable to evaluate healing telemetry',
+      severity: 'warn',
       details: {
         detail: error instanceof Error ? error.message : String(error)
       }
@@ -402,6 +520,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const checks: DoctorResult['checks'] = {
     dataDirWritable: checkDataDirWritable(dataDir),
     memoryBackend: checkMemoryBackend(dataDir),
+    healingTelemetry: checkHealingTelemetry(dataDir),
     pairing: checkPairing(dataDir),
     extensionBridgePort: await probePortAvailable(options.port),
     rpcPort: await probePortAvailable(options.rpcWsPort),

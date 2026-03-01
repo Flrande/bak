@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assessActiveTabTelemetry,
+  assessHealingTelemetry,
   assessMemoryBackendResolution,
   assessSessionInfoHealth,
   assessVersionCompatibility
@@ -151,5 +152,34 @@ describe('doctor session.info health assessment', () => {
     expect(check.ok).toBe(false);
     expect(check.severity).toBe('warn');
     expect(check.message).toContain('fallback');
+  });
+
+  it('passes healing telemetry check when no events exist', () => {
+    const check = assessHealingTelemetry({
+      eventCount: 0,
+      totalAttempts: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+      successRate: 0,
+      failureRate: 0
+    });
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('no healing telemetry');
+  });
+
+  it('warns healing telemetry check when failure rate is high', () => {
+    const check = assessHealingTelemetry({
+      eventCount: 4,
+      totalAttempts: 4,
+      totalSuccesses: 1,
+      totalFailures: 3,
+      successRate: 0.25,
+      failureRate: 0.75
+    });
+
+    expect(check.ok).toBe(false);
+    expect(check.severity).toBe('warn');
+    expect(check.message).toContain('failure rate');
   });
 });

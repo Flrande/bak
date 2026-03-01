@@ -9,6 +9,7 @@ pnpm --filter @bak/cli exec bak doctor
 Checks:
 - dataDir writable
 - memory backend availability (`requestedBackend/actual backend/fallback reason`)
+- healing telemetry trend (`healingTelemetry`, warns when recent failure rate is elevated)
 - pairing token presence
 - bridge/rpc port availability
 - `session.info` reachability
