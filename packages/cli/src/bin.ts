@@ -284,15 +284,28 @@ program
   .command('export')
   .description('Export redacted diagnostic zip package')
   .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
+  .option('--port <port>', 'extension websocket port for doctor snapshot', `${DEFAULT_PORT}`)
+  .option('--rpc-ws-port <port>', 'rpc websocket port for doctor snapshot', `${DEFAULT_RPC_PORT}`)
   .option('--data-dir <path>', 'override data dir')
   .option('--out <path>', 'output zip path')
-  .action((options) => {
+  .action(async (options) => {
+    const dataDir = options.dataDir ? resolve(String(options.dataDir)) : undefined;
+    const doctorReport = await runDoctor({
+      dataDir,
+      port: Number.parseInt(String(options.port), 10),
+      rpcWsPort: Number.parseInt(String(options.rpcWsPort), 10)
+    });
+
     const result = exportDiagnosticZip({
       traceId: options.traceId ? String(options.traceId) : undefined,
-      dataDir: options.dataDir ? resolve(String(options.dataDir)) : undefined,
-      outPath: options.out ? resolve(String(options.out)) : undefined
+      dataDir,
+      outPath: options.out ? resolve(String(options.out)) : undefined,
+      doctorReport
     });
-    printResult(result);
+    printResult({
+      ...result,
+      doctorOk: doctorReport.ok
+    });
   });
 
 program

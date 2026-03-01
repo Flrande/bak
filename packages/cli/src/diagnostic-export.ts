@@ -10,6 +10,7 @@ export interface DiagnosticExportOptions {
   dataDir?: string;
   outPath?: string;
   traceId?: string;
+  doctorReport?: unknown;
 }
 
 export interface DiagnosticExportResult {
@@ -18,6 +19,7 @@ export interface DiagnosticExportResult {
   redacted: true;
   traceCount: number;
   snapshotCount: number;
+  includesDoctorReport: boolean;
   fileCount: number;
 }
 
@@ -129,6 +131,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
   mkdirSync(stageDir, { recursive: true });
 
   try {
+    let includesDoctorReport = false;
     const tracesSource = join(dataDir, 'traces');
     const tracesTarget = join(stageDir, 'traces');
     mkdirSync(tracesTarget, { recursive: true });
@@ -169,6 +172,12 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       cpSync(policyPath, join(stageDir, '.bak-policy.json'));
     }
 
+    if (options.doctorReport) {
+      const doctorPath = join(stageDir, 'doctor.json');
+      writeFileSync(doctorPath, `${JSON.stringify(redactUnknown(options.doctorReport), null, 2)}\n`, 'utf8');
+      includesDoctorReport = true;
+    }
+
     const versionsPath = join(stageDir, 'versions.json');
     writeFileSync(
       versionsPath,
@@ -195,6 +204,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       redacted: true,
       traceCount: selectedTraceFiles.length,
       snapshotCount: selectedSnapshotDirs.length,
+      includesDoctorReport,
       fileCount
     };
   } finally {

@@ -45,6 +45,7 @@ pnpm --filter @bak/cli exec bak export --trace-id <traceId> --out ./.bak-data/di
 - trace jsonl files (redacted)
 - snapshot folders
 - policy file (if present)
+- `doctor.json` (runtime diagnostics snapshot)
 - runtime version metadata
 
 ## Memory backend operations

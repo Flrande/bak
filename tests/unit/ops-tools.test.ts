@@ -24,6 +24,7 @@ describe('ops tools', () => {
 
     expect(result.traceCount).toBe(1);
     expect(result.snapshotCount).toBe(1);
+    expect(result.includesDoctorReport).toBe(false);
     expect(result.redacted).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
@@ -43,6 +44,30 @@ describe('ops tools', () => {
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
     expect(report.ok).toBe(false);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('embeds doctor report into diagnostic zip when provided', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-doctor-test-'));
+    const outPath = join(dataDir, 'diag-doctor.zip');
+
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      doctorReport: {
+        ok: false,
+        checks: {
+          rpcConnectionHealth: {
+            ok: false,
+            message: 'extension heartbeat is stale'
+          }
+        }
+      }
+    });
+
+    expect(result.includesDoctorReport).toBe(true);
+    expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
   });
