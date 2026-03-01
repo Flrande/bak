@@ -13,7 +13,7 @@ Checks:
 - `session.info` reachability
 - extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
 - extension runtime version reported by bridge handshake (`extensionVersion`)
-- cli/extension version compatibility drift check (`versionCompatibility`, warning-style)
+- cli/extension version compatibility drift check (`versionCompatibility`, `severity=warn` and non-blocking)
 
 ## Pair token lifecycle
 

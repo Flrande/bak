@@ -15,6 +15,7 @@ export interface DoctorOptions {
 interface DoctorCheck {
   ok: boolean;
   message: string;
+  severity?: 'warn' | 'error';
   details?: Record<string, unknown>;
 }
 
@@ -232,6 +233,7 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
     return {
       ok: false,
       message: 'extension version missing from bridge handshake',
+      severity: 'warn',
       details: {
         cliVersion
       }
@@ -253,6 +255,7 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
     return {
       ok: false,
       message: 'unable to compare cli/extension versions',
+      severity: 'warn',
       details: {
         cliVersion,
         extensionVersion
@@ -264,6 +267,7 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
     return {
       ok: false,
       message: 'cli/extension major versions mismatch',
+      severity: 'warn',
       details: {
         cliVersion,
         extensionVersion
@@ -274,6 +278,7 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
   return {
     ok: false,
     message: 'cli/extension version drift detected (same major)',
+    severity: 'warn',
     details: {
       cliVersion,
       extensionVersion
@@ -286,6 +291,7 @@ function checkVersionCompatibilityFromProbe(probe: SessionInfoProbe, cliVersion:
     return {
       ok: false,
       message: 'version compatibility unknown (session.info unavailable)',
+      severity: 'warn',
       details: {
         cliVersion,
         detail: probe.detail ?? 'unknown'

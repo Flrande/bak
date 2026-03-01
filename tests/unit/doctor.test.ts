@@ -64,5 +64,6 @@ describe('doctor session.info health assessment', () => {
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('drift');
+    expect(check.severity).toBe('warn');
   });
 });
