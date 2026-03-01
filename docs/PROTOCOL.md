@@ -1,4 +1,6 @@
-# PROTOCOL (JSON-RPC v1)
+# PROTOCOL (JSON-RPC v1 - Legacy)
+
+`v2` is now the active protocol baseline. See `docs/PROTOCOL_V2.md`.
 
 Schema artifact:
 - `packages/protocol/schemas/protocol.schema.json`
