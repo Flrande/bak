@@ -146,4 +146,44 @@ describe('policy matcher', () => {
     expect(decision.ruleId).toBe('confirm-billing');
     rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it('returns audit summary with matched rules and fallback decision', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-audit-'));
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'confirm-destructive',
+            action: 'element.click',
+            domain: 'example.com',
+            tag: 'destructive',
+            decision: 'requireConfirm'
+          },
+          {
+            id: 'deny-destructive',
+            action: 'element.click',
+            domain: 'example.com',
+            tag: 'destructive',
+            decision: 'deny'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const engine = new PolicyEngine(dataDir);
+    const evaluation = engine.evaluateWithAudit({
+      action: 'element.click',
+      domain: 'example.com',
+      path: '/settings',
+      locator: { name: 'Delete account' }
+    });
+
+    expect(evaluation.decision.decision).toBe('deny');
+    expect(evaluation.audit.matchedRules.length).toBe(2);
+    expect(evaluation.audit.defaultDecision).toBe('requireConfirm');
+    expect(evaluation.audit.tags).toContain('destructive');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
 });

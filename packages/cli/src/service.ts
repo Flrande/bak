@@ -24,7 +24,7 @@ import {
   retrieveSkills
 } from './memory/extract.js';
 import type { MemoryStoreBackend } from './memory/store.js';
-import { PolicyEngine, type PolicyAction } from './policy.js';
+import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy.js';
 import { redactElements } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
@@ -262,9 +262,10 @@ export class BakService {
     traceId: string,
     action: PolicyAction,
     locator: Locator,
-    decision: { decision: 'allow' | 'deny' | 'requireConfirm'; reason: string; source: 'rule' | 'default'; ruleId?: string },
+    evaluation: PolicyEvaluation,
     location: { domain: string; path: string }
   ): void {
+    const decision = evaluation.decision;
     this.traceStore.append(traceId, {
       method: 'policy.decision',
       params: {
@@ -281,7 +282,17 @@ export class BakService {
           hasName: Boolean(locator.name),
           hasText: Boolean(locator.text),
           hasCss: Boolean(locator.css)
-        }
+        },
+        tags: evaluation.audit.tags,
+        matchedRuleCount: evaluation.audit.matchedRules.length,
+        matchedRules: evaluation.audit.matchedRules.map((rule) => ({
+          id: rule.id ?? null,
+          action: rule.action,
+          decision: rule.decision,
+          tag: rule.tag ?? null
+        })),
+        defaultDecision: evaluation.audit.defaultDecision,
+        defaultReason: evaluation.audit.defaultReason
       }
     });
   }
@@ -291,14 +302,15 @@ export class BakService {
     this.currentTraceId = traceId;
 
     const location = await this.activeLocation();
-    const decision = this.policyEngine.evaluate({
+    const evaluation = this.policyEngine.evaluateWithAudit({
       action,
       domain: location.domain,
       path: location.path,
       locator
     });
 
-    this.appendPolicyAudit(traceId, action, locator, decision, location);
+    this.appendPolicyAudit(traceId, action, locator, evaluation, location);
+    const decision = evaluation.decision;
 
     if (decision.decision === 'deny') {
       throw new RpcError(`Blocked by policy: ${decision.reason}`, 4030, BakErrorCode.E_PERMISSION, {

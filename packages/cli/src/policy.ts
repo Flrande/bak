@@ -39,6 +39,23 @@ export interface PolicyDecision {
   source: 'rule' | 'default';
 }
 
+export interface PolicyMatchedRuleSummary {
+  id?: string;
+  action: PolicyAction | '*';
+  decision: PolicyDecisionType;
+  tag?: PolicyTag;
+}
+
+export interface PolicyEvaluation {
+  decision: PolicyDecision;
+  audit: {
+    tags: PolicyTag[];
+    matchedRules: PolicyMatchedRuleSummary[];
+    defaultDecision: PolicyDecisionType;
+    defaultReason: string;
+  };
+}
+
 const DEFAULT_POLICY_FILE = '.bak-policy.json';
 const HIGH_RISK_PATTERN = /(delete|remove|send|submit|upload|payment|pay|付款|支付|删除|提交|发送|上传)/i;
 const FILE_UPLOAD_PATTERN = /(upload|file|附件|上传)/i;
@@ -203,16 +220,19 @@ export class PolicyEngine {
   }
 
   evaluate(context: PolicyContext): PolicyDecision {
+    return this.evaluateWithAudit(context).decision;
+  }
+
+  evaluateWithAudit(context: PolicyContext): PolicyEvaluation {
     const enriched: EvaluatedPolicyContext = {
       ...context,
       tags: detectPolicyTags(context.locator)
     };
 
+    const fallback = defaultDecision(enriched);
+    const matchedRules = this.rules.filter((rule) => ruleMatches(rule, enriched));
     let matchedRule: PolicyRule | null = null;
-    for (const rule of this.rules) {
-      if (!ruleMatches(rule, enriched)) {
-        continue;
-      }
+    for (const rule of matchedRules) {
       if (!matchedRule) {
         matchedRule = rule;
         continue;
@@ -225,13 +245,34 @@ export class PolicyEngine {
 
     if (matchedRule) {
       return {
-        decision: matchedRule.decision,
-        reason: matchedRule.reason ?? `matched policy rule ${matchedRule.id ?? 'unnamed'}`,
-        ruleId: matchedRule.id,
-        source: 'rule'
+        decision: {
+          decision: matchedRule.decision,
+          reason: matchedRule.reason ?? `matched policy rule ${matchedRule.id ?? 'unnamed'}`,
+          ruleId: matchedRule.id,
+          source: 'rule'
+        },
+        audit: {
+          tags: enriched.tags,
+          matchedRules: matchedRules.map((rule) => ({
+            id: rule.id,
+            action: rule.action,
+            decision: rule.decision,
+            tag: rule.tag
+          })),
+          defaultDecision: fallback.decision,
+          defaultReason: fallback.reason
+        }
       };
     }
 
-    return defaultDecision(enriched);
+    return {
+      decision: fallback,
+      audit: {
+        tags: enriched.tags,
+        matchedRules: [],
+        defaultDecision: fallback.decision,
+        defaultReason: fallback.reason
+      }
+    };
   }
 }
