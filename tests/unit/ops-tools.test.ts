@@ -115,6 +115,28 @@ describe('ops tools', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it('surfaces protocol compatibility warning from doctor snapshot', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-doctor-protocol-test-'));
+    const doctorReport = await runDoctor({
+      dataDir,
+      port: 29975,
+      rpcWsPort: 29976
+    });
+    const outPath = join(dataDir, 'diag-doctor-protocol.zip');
+
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      doctorReport
+    });
+
+    expect(result.includesDoctorReport).toBe(true);
+    expect(result.warnings.some((message) => message.startsWith('protocol compatibility warning:'))).toBe(true);
+    expect(existsSync(outPath)).toBe(true);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
   it('includes memory snapshot when includeMemory is enabled', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-test-'));
     const outPath = join(dataDir, 'diag-memory.zip');
