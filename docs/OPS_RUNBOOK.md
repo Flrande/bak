@@ -44,6 +44,7 @@ pnpm --filter @bak/cli exec bak export --trace-id <traceId> --out ./.bak-data/di
 ```
 
 `bak export` produces a redacted zip package containing:
+- `index.json` (content manifest and export timestamp)
 - trace jsonl files (redacted)
 - snapshot folders
 - policy file (if present)

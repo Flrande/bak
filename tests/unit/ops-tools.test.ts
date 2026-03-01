@@ -25,6 +25,7 @@ describe('ops tools', () => {
     expect(result.traceCount).toBe(1);
     expect(result.snapshotCount).toBe(1);
     expect(result.includesDoctorReport).toBe(false);
+    expect(result.includesIndex).toBe(true);
     expect(result.redacted).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
@@ -69,6 +70,7 @@ describe('ops tools', () => {
     });
 
     expect(result.includesDoctorReport).toBe(true);
+    expect(result.includesIndex).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });

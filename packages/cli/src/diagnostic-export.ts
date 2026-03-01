@@ -20,6 +20,7 @@ export interface DiagnosticExportResult {
   traceCount: number;
   snapshotCount: number;
   includesDoctorReport: boolean;
+  includesIndex: boolean;
   fileCount: number;
 }
 
@@ -178,6 +179,24 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       includesDoctorReport = true;
     }
 
+    const indexPath = join(stageDir, 'index.json');
+    writeFileSync(
+      indexPath,
+      `${JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          redacted: true,
+          includesDoctorReport,
+          traceFiles: selectedTraceFiles,
+          snapshotDirs: selectedSnapshotDirs.map((entry) => entry.name),
+          hasPolicyFile: existsSync(policyPath)
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    );
+
     const versionsPath = join(stageDir, 'versions.json');
     writeFileSync(
       versionsPath,
@@ -205,6 +224,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       traceCount: selectedTraceFiles.length,
       snapshotCount: selectedSnapshotDirs.length,
       includesDoctorReport,
+      includesIndex: true,
       fileCount
     };
   } finally {
