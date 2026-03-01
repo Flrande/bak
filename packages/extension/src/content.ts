@@ -30,6 +30,15 @@ interface CollectElementsMessage {
   debugRichText?: boolean;
 }
 
+interface ActionError {
+  code: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+type ActionResult = { ok: true } | { ok: false; error: ActionError };
+type ActionAssessment = { ok: true; point: { x: number; y: number } } | { ok: false; error: ActionError };
+
 const consoleEntries: ConsoleEntry[] = [];
 const elementCache = new Map<string, HTMLElement>();
 
@@ -501,7 +510,167 @@ async function pickCandidate(candidates: ElementMapItem[]): Promise<string | nul
   });
 }
 
-async function handleAction(message: ActionMessage): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
+function failAction(code: string, message: string, data?: Record<string, unknown>): ActionResult {
+  return { ok: false, error: { code, message, data } };
+}
+
+function failAssessment(code: string, message: string, data?: Record<string, unknown>): ActionAssessment {
+  return { ok: false, error: { code, message, data } };
+}
+
+function describeNode(node: Element | null): string {
+  if (!node || !(node instanceof HTMLElement)) {
+    return 'unknown';
+  }
+
+  const id = node.id ? `#${node.id}` : '';
+  const classes = node.classList.length > 0 ? `.${Array.from(node.classList).slice(0, 2).join('.')}` : '';
+  return `${node.tagName.toLowerCase()}${id}${classes}`;
+}
+
+function centerPoint(rect: DOMRect): { x: number; y: number } {
+  const minX = Math.max(1, Math.floor(rect.left + 1));
+  const minY = Math.max(1, Math.floor(rect.top + 1));
+  const maxX = Math.max(minX, Math.floor(rect.right - 1));
+  const maxY = Math.max(minY, Math.floor(rect.bottom - 1));
+
+  const x = Math.min(Math.max(Math.floor(rect.left + rect.width / 2), minX), maxX);
+  const y = Math.min(Math.max(Math.floor(rect.top + rect.height / 2), minY), maxY);
+  return { x, y };
+}
+
+function assessActionTarget(target: HTMLElement, action: ActionName): ActionAssessment {
+  if (!isElementVisible(target)) {
+    return failAssessment('E_NOT_FOUND', `${action} target is not visible`);
+  }
+
+  if ((target as HTMLButtonElement).disabled || target.getAttribute('aria-disabled') === 'true') {
+    return failAssessment('E_PERMISSION', `${action} target is disabled`);
+  }
+
+  target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+  const rect = target.getBoundingClientRect();
+  if (rect.width <= 1 || rect.height <= 1) {
+    return failAssessment('E_NOT_FOUND', `${action} target has invalid bounds`);
+  }
+
+  const point = centerPoint(rect);
+  const hit = document.elementFromPoint(point.x, point.y);
+  if (!hit) {
+    return failAssessment('E_NOT_FOUND', `${action} target is outside viewport`);
+  }
+
+  if (hit !== target && !target.contains(hit)) {
+    return failAssessment('E_PERMISSION', `${action} target is obstructed by ${describeNode(hit)}`, {
+      obstructedBy: describeNode(hit)
+    });
+  }
+
+  return { ok: true, point };
+}
+
+function dispatchPointer(target: HTMLElement, type: string, point: { x: number; y: number }): void {
+  if (typeof PointerEvent === 'undefined') {
+    return;
+  }
+
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: type === 'pointerup' ? 0 : 1
+    })
+  );
+}
+
+function dispatchMouse(target: HTMLElement, type: string, point: { x: number; y: number }): void {
+  target.dispatchEvent(
+    new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      button: 0,
+      buttons: type === 'mouseup' || type === 'click' ? 0 : 1
+    })
+  );
+}
+
+function performClick(target: HTMLElement, point: { x: number; y: number }): void {
+  target.focus({ preventScroll: true });
+  dispatchPointer(target, 'pointerdown', point);
+  dispatchMouse(target, 'mousedown', point);
+  dispatchPointer(target, 'pointerup', point);
+  dispatchMouse(target, 'mouseup', point);
+  dispatchMouse(target, 'click', point);
+}
+
+function dispatchInputEvents(target: HTMLElement): void {
+  try {
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+  } catch {
+    target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  }
+  target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+}
+
+function setNativeValue(target: HTMLInputElement | HTMLTextAreaElement, nextValue: string): void {
+  const proto = target instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (descriptor?.set) {
+    descriptor.set.call(target, nextValue);
+    return;
+  }
+  target.value = nextValue;
+}
+
+function insertContentEditableText(target: HTMLElement, text: string, clear: boolean): void {
+  target.focus({ preventScroll: true });
+
+  if (clear) {
+    target.textContent = '';
+  }
+
+  if (!text) {
+    dispatchInputEvents(target);
+    return;
+  }
+
+  const selection = window.getSelection();
+  if (!selection) {
+    target.append(document.createTextNode(text));
+    dispatchInputEvents(target);
+    return;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.setEndAfter(node);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  dispatchInputEvents(target);
+}
+
+function isEditable(target: HTMLElement): target is HTMLInputElement | HTMLTextAreaElement {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+}
+
+async function handleAction(message: ActionMessage): Promise<ActionResult> {
   try {
     ensureOverlayRoot();
 
@@ -509,7 +678,7 @@ async function handleAction(message: ActionMessage): Promise<{ ok: true } | { ok
       if (message.locator) {
         const target = resolveLocator(message.locator);
         if (!target) {
-          return { ok: false, error: { code: 'E_NOT_FOUND', message: 'scroll target not found' } };
+          return failAction('E_NOT_FOUND', 'scroll target not found');
         }
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
         return { ok: true };
@@ -520,7 +689,7 @@ async function handleAction(message: ActionMessage): Promise<{ ok: true } | { ok
 
     const target = resolveLocator(message.locator);
     if (!target) {
-      return { ok: false, error: { code: 'E_NOT_FOUND', message: 'Target not found' } };
+      return failAction('E_NOT_FOUND', 'Target not found');
     }
 
     const name = inferName(target);
@@ -531,76 +700,102 @@ async function handleAction(message: ActionMessage): Promise<{ ok: true } | { ok
     if (isHighRisk) {
       const approved = await askConfirm(`Action: ${message.action} on "${name || text || target.tagName}"`);
       if (!approved) {
-        return { ok: false, error: { code: 'E_PERMISSION', message: 'User rejected high-risk action' } };
+        return failAction('E_PERMISSION', 'User rejected high-risk action');
       }
     }
 
-    target.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const assessed = assessActionTarget(target, message.action);
+    if (!assessed.ok) {
+      return assessed;
+    }
 
     if (message.action === 'click') {
-      target.click();
+      performClick(target, assessed.point);
       return { ok: true };
     }
 
     if (message.action === 'type') {
-      if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable)) {
-        return { ok: false, error: { code: 'E_NOT_FOUND', message: 'Type target is not editable' } };
+      if (!(isEditable(target) || target.isContentEditable)) {
+        return failAction('E_NOT_FOUND', 'Type target is not editable');
       }
 
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        if (message.clear) {
-          target.value = '';
-        }
-        target.focus();
-        target.value = `${target.value}${message.text ?? ''}`;
-        target.dispatchEvent(new InputEvent('input', { bubbles: true }));
-        target.dispatchEvent(new Event('change', { bubbles: true }));
+      if (isEditable(target)) {
+        target.focus({ preventScroll: true });
+        const appendText = message.text ?? '';
+        const nextValue = message.clear ? appendText : `${target.value}${appendText}`;
+        setNativeValue(target, nextValue);
+        dispatchInputEvents(target);
       } else {
-        if (message.clear) {
-          target.textContent = '';
-        }
-        target.focus();
-        document.execCommand('insertText', false, message.text ?? '');
+        insertContentEditableText(target, message.text ?? '', Boolean(message.clear));
       }
       return { ok: true };
     }
 
-    return { ok: false, error: { code: 'E_NOT_FOUND', message: `Unsupported action ${message.action}` } };
+    return failAction('E_NOT_FOUND', `Unsupported action ${message.action}`);
   } catch (error) {
-    return {
-      ok: false,
-      error: {
-        code: 'E_INTERNAL',
-        message: error instanceof Error ? error.message : String(error)
-      }
-    };
+    return failAction('E_INTERNAL', error instanceof Error ? error.message : String(error));
   }
 }
 
-async function waitFor(message: WaitMessage): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> {
-  const timeoutMs = message.timeoutMs ?? 5000;
-  const started = Date.now();
-
-  while (Date.now() - started < timeoutMs) {
-    if (message.mode === 'selector' && document.querySelector(message.value)) {
-      return { ok: true };
-    }
-
-    if (message.mode === 'text') {
-      const bodyText = document.body?.innerText ?? '';
-      if (bodyText.includes(message.value)) {
-        return { ok: true };
-      }
-    }
-
-    if (message.mode === 'url' && window.location.href.includes(message.value)) {
-      return { ok: true };
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
+function waitConditionMet(message: WaitMessage): boolean {
+  if (message.mode === 'selector') {
+    return Boolean(document.querySelector(message.value));
   }
 
-  return { ok: false, error: { code: 'E_TIMEOUT', message: `wait timeout: ${message.mode}=${message.value}` } };
+  if (message.mode === 'text') {
+    const bodyText = document.body?.innerText ?? '';
+    return bodyText.includes(message.value);
+  }
+
+  return window.location.href.includes(message.value);
+}
+
+async function waitFor(message: WaitMessage): Promise<ActionResult> {
+  const timeoutMs = message.timeoutMs ?? 5000;
+  if (waitConditionMet(message)) {
+    return { ok: true };
+  }
+
+  return new Promise<ActionResult>((resolve) => {
+    let done = false;
+    const finish = (result: ActionResult): void => {
+      if (done) {
+        return;
+      }
+      done = true;
+      observer.disconnect();
+      clearInterval(intervalId);
+      clearTimeout(timerId);
+      resolve(result);
+    };
+
+    const check = (): void => {
+      if (waitConditionMet(message)) {
+        finish({ ok: true });
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      check();
+    });
+    const root = document.documentElement;
+    if (root) {
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true
+      });
+    }
+
+    const intervalId = setInterval(() => {
+      check();
+    }, 120);
+
+    const timerId = setTimeout(() => {
+      finish(failAction('E_TIMEOUT', `wait timeout: ${message.mode}=${message.value}`));
+    }, timeoutMs);
+  });
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {

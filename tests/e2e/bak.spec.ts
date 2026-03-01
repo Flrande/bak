@@ -202,6 +202,25 @@ test.describe('bak e2e', () => {
 
     await expect(page).toHaveURL(/table\.html/);
 
+    await rpcCall('page.goto', { url: 'http://127.0.0.1:4173/controlled.html' });
+    await expect(page).toHaveURL(/controlled\.html/);
+
+    await rpcCall('element.type', {
+      locator: { css: '#controlled-input' },
+      text: 'Native Setter',
+      clear: true
+    });
+    await expect(page.locator('#controlled-input')).toHaveValue('Native Setter');
+    await expect(page.locator('#controlled-mirror')).toContainText('Native Setter');
+
+    await expect(async () => {
+      await rpcCall('element.click', { locator: { css: '#blocked-action' } });
+    }).rejects.toThrow(/E_PERMISSION/);
+
+    await rpcCall('element.click', { locator: { css: '#toggle-cover' } });
+    await rpcCall('element.click', { locator: { css: '#blocked-action' } });
+    await expect(page.locator('#action-result')).toContainText('clicked');
+
     const snapshot = (await rpcCall('page.snapshot', {})) as {
       imagePath: string;
       elementsPath: string;

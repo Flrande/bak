@@ -87,10 +87,53 @@ function initTablePage(): void {
   render();
 }
 
+function initControlledPage(): void {
+  const controlled = document.getElementById('controlled-input') as HTMLInputElement;
+  const mirror = document.getElementById('controlled-mirror') as HTMLDivElement;
+  const setterLog = document.getElementById('setter-log') as HTMLDivElement;
+  const blockedAction = document.getElementById('blocked-action') as HTMLButtonElement;
+  const cover = document.getElementById('cover') as HTMLDivElement;
+  const toggleCover = document.getElementById('toggle-cover') as HTMLButtonElement;
+  const result = document.getElementById('action-result') as HTMLDivElement;
+
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  let instanceSetterWrites = 0;
+
+  if (descriptor?.get && descriptor?.set) {
+    Object.defineProperty(controlled, 'value', {
+      configurable: true,
+      get(this: HTMLInputElement) {
+        return descriptor.get!.call(this) as string;
+      },
+      set(this: HTMLInputElement, next: string) {
+        instanceSetterWrites += 1;
+        setterLog.textContent = `instanceSetterWrites: ${instanceSetterWrites}`;
+        this.setAttribute('data-instance-write', next);
+      }
+    });
+  }
+
+  controlled.addEventListener('input', () => {
+    mirror.textContent = `mirror: ${controlled.value}`;
+  });
+
+  blockedAction.addEventListener('click', () => {
+    result.textContent = `result: clicked @ ${Date.now()}`;
+  });
+
+  toggleCover.addEventListener('click', () => {
+    cover.style.display = cover.style.display === 'none' ? 'block' : 'none';
+  });
+}
+
 if (page === 'form') {
   initFormPage();
 }
 
 if (page === 'table') {
   initTablePage();
+}
+
+if (page === 'controlled') {
+  initControlledPage();
 }

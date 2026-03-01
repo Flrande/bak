@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - Controlled Input</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 20px;
+        color: #0f172a;
+        background: linear-gradient(160deg, #eff6ff, #ecfeff);
+      }
+      .panel {
+        max-width: 760px;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+        padding: 18px;
+        background: white;
+      }
+      .field {
+        margin-top: 12px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .action-wrap {
+        margin-top: 14px;
+        position: relative;
+        display: inline-block;
+      }
+      button {
+        border: none;
+        border-radius: 6px;
+        padding: 10px 14px;
+        cursor: pointer;
+      }
+      #blocked-action {
+        background: #0369a1;
+        color: white;
+      }
+      #cover {
+        position: absolute;
+        inset: -4px;
+        background: rgba(15, 23, 42, 0.55);
+        border-radius: 8px;
+      }
+      #toggle-cover {
+        margin-left: 10px;
+        background: #e2e8f0;
+      }
+      .mono {
+        margin-top: 12px;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body data-page="controlled">
+    <div class="panel">
+      <a href="/">Back</a>
+      <h1>Controlled Input + Obstructed Click</h1>
+      <p>Designed for action-fidelity tests.</p>
+
+      <div class="field">
+        <label for="controlled-input">Controlled input</label>
+        <input id="controlled-input" placeholder="Type through automation" />
+      </div>
+
+      <div id="controlled-mirror" class="mono">mirror: </div>
+      <div id="setter-log" class="mono">instanceSetterWrites: 0</div>
+
+      <div class="action-wrap">
+        <button id="blocked-action">Run Action</button>
+        <div id="cover"></div>
+      </div>
+      <button id="toggle-cover">Toggle Cover</button>
+
+      <div id="action-result" class="mono">result: idle</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

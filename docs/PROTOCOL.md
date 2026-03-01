@@ -90,6 +90,11 @@ Response failure:
 - `element.type`
 - `element.scroll`
 
+Action behavior notes:
+- `element.click` scrolls target into view, checks center-point obstruction, then dispatches pointer/mouse click sequence.
+- `element.type` uses native input/textarea value setter + `input/change` events.
+- Covered/disabled targets return structured permission failures instead of silent no-op.
+
 ### Debug
 
 - `debug.getConsole`
@@ -121,3 +126,8 @@ Any of:
 - `css`
 
 CLI/skill healing tries candidates in this order.
+
+## Known limits (v1)
+
+- Nested cross-origin iframe content is not targeted in v1.
+- Shadow DOM locator coverage is best-effort and may miss closed-shadow targets.
