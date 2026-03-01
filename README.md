@@ -67,14 +67,16 @@ CI strategy:
 
 ## Run `bak` commands
 
-Use either form:
+Build once before invoking the CLI binary:
 
 ```powershell
-# local workspace way
-pnpm --filter @bak/cli exec bak serve --port 17373
+pnpm build
+```
 
-# if you globally linked @bak/cli, this is equivalent
-bak serve --port 17373
+Then run commands from repo root:
+
+```powershell
+node packages/cli/dist/bin.js serve --port 17373
 ```
 
 ## Pairing + launch demo (manual)
@@ -88,16 +90,16 @@ pnpm --filter @bak/test-sites dev
 2) Generate pair token:
 
 ```powershell
-pnpm --filter @bak/cli exec bak pair
-pnpm --filter @bak/cli exec bak pair status
+node packages/cli/dist/bin.js pair
+node packages/cli/dist/bin.js pair status
 # revoke current token if needed
-pnpm --filter @bak/cli exec bak pair revoke
+node packages/cli/dist/bin.js pair revoke
 ```
 
 3) Start daemon:
 
 ```powershell
-pnpm --filter @bak/cli exec bak serve --port 17373 --rpc-ws-port 17374
+node packages/cli/dist/bin.js serve --port 17373 --rpc-ws-port 17374
 ```
 
 4) Load extension in Chrome/Edge:
@@ -116,30 +118,36 @@ pwsh ./scripts/demo-rpc.ps1
 ## JSON-RPC quick call examples
 
 ```powershell
-pnpm --filter @bak/cli exec bak call --method session.create --params '{"clientName":"demo"}'
-pnpm --filter @bak/cli exec bak call --method page.goto --params '{"url":"http://127.0.0.1:4173/form.html"}'
-pnpm --filter @bak/cli exec bak call --method element.type --params '{"locator":{"css":"#name-input"},"text":"hello"}'
-pnpm --filter @bak/cli exec bak call --method page.snapshot --params '{}'
-pnpm --filter @bak/cli exec bak doctor
-pnpm --filter @bak/cli exec bak export --out ./.bak-data/diag.zip
+node packages/cli/dist/bin.js call --method session.create --params '{"clientName":"demo"}'
+node packages/cli/dist/bin.js call --method page.goto --params '{"url":"http://127.0.0.1:4173/form.html"}'
+node packages/cli/dist/bin.js call --method element.type --params '{"locator":{"css":"#name-input"},"text":"hello"}'
+node packages/cli/dist/bin.js call --method page.snapshot --params '{}'
+node packages/cli/dist/bin.js doctor
+node packages/cli/dist/bin.js export --out ./.bak-data/diag.zip
+# include visual snapshot folders explicitly (contains raw screenshots)
+node packages/cli/dist/bin.js export --trace-id <traceId> --include-snapshots --out ./.bak-data/diag-with-images.zip
 ```
+
+`bak export` now generates a redacted diagnostic zip package. Use `--trace-id` (or deprecated alias `--trace`) to limit to one trace set.
+Snapshot images are excluded by default and require explicit `--include-snapshots`.
 
 ## Memory CLI commands
 
 ```powershell
-pnpm --filter @bak/cli exec bak record start --intent "fill form"
-pnpm --filter @bak/cli exec bak record stop --outcome success
-pnpm --filter @bak/cli exec bak skills list
-pnpm --filter @bak/cli exec bak skills retrieve --intent "fill form" --anchor save
-pnpm --filter @bak/cli exec bak skills run <skillId> --param param_1=Alice --param param_2=alice@example.com
-pnpm --filter @bak/cli exec bak skills delete <skillId>
-pnpm --filter @bak/cli exec bak memory migrate
-pnpm --filter @bak/cli exec bak memory export --backend sqlite
+node packages/cli/dist/bin.js record start --intent "fill form"
+node packages/cli/dist/bin.js record stop --outcome success
+node packages/cli/dist/bin.js skills list
+node packages/cli/dist/bin.js skills retrieve --intent "fill form" --anchor save
+node packages/cli/dist/bin.js skills run <skillId> --param param_1=Alice --param param_2=alice@example.com
+node packages/cli/dist/bin.js skills delete <skillId>
+node packages/cli/dist/bin.js memory migrate
+node packages/cli/dist/bin.js memory export --backend sqlite
 ```
 
 Memory backend selection:
 - default: `json` (`.bak-data/memory.json`)
-- opt-in sqlite: set `BAK_MEMORY_BACKEND=sqlite` (uses `.bak-data/memory.sqlite`)
+- opt-in sqlite: set `BAK_MEMORY_BACKEND=sqlite` (uses `.bak-data/memory.sqlite`; `node:sqlite` runtime is currently experimental on Node 22)
+- episode input text recording: default redacted (`[REDACTED:input]`); set `BAK_MEMORY_RECORD_INPUT_TEXT=1` to keep redacted textual hints
 
 ## Trace / snapshot output
 
@@ -156,10 +164,10 @@ Default data root: `./.bak-data`
 
 ```powershell
 # preview what would be deleted
-pnpm --filter @bak/cli exec bak gc
+node packages/cli/dist/bin.js gc
 
 # apply retention with explicit force
-pnpm --filter @bak/cli exec bak gc --trace-days 7 --snapshot-days 7 --force
+node packages/cli/dist/bin.js gc --trace-days 7 --snapshot-days 7 --force
 ```
 
 Retention defaults (override via `.bak-data/retention.json` or env):

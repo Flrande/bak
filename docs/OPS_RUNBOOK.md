@@ -2,8 +2,14 @@
 
 ## Quick health check
 
+Build artifacts once before running CLI commands:
+
 ```powershell
-pnpm --filter @bak/cli exec bak doctor
+pnpm build
+```
+
+```powershell
+node packages/cli/dist/bin.js doctor
 ```
 
 Checks:
@@ -31,39 +37,42 @@ Extension popup state (`bak.getState`) also exposes reconnect diagnostics:
 ## Pair token lifecycle
 
 ```powershell
-pnpm --filter @bak/cli exec bak pair
-pnpm --filter @bak/cli exec bak pair status
-pnpm --filter @bak/cli exec bak pair revoke --reason "rotation"
+node packages/cli/dist/bin.js pair
+node packages/cli/dist/bin.js pair status
+node packages/cli/dist/bin.js pair revoke --reason "rotation"
 ```
 
 ## Retention cleanup
 
 ```powershell
 # preview
-pnpm --filter @bak/cli exec bak gc
+node packages/cli/dist/bin.js gc
 
 # execute
-pnpm --filter @bak/cli exec bak gc --trace-days 7 --snapshot-days 7 --force
+node packages/cli/dist/bin.js gc --trace-days 7 --snapshot-days 7 --force
 ```
 
 ## Diagnostic package export
 
 ```powershell
-# all traces/snapshots
-pnpm --filter @bak/cli exec bak export
+# all traces (snapshot images excluded by default)
+node packages/cli/dist/bin.js export
 
 # single trace package
-pnpm --filter @bak/cli exec bak export --trace-id <traceId> --out ./.bak-data/diag.zip
+node packages/cli/dist/bin.js export --trace-id <traceId> --out ./.bak-data/diag.zip
+
+# include raw snapshot image folders explicitly
+node packages/cli/dist/bin.js export --trace-id <traceId> --include-snapshots --out ./.bak-data/diag-with-images.zip
 
 # include redacted memory payload (opt-in)
-pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
+node packages/cli/dist/bin.js export --include-memory --memory-backend json
 ```
 
 `bak export` produces a redacted zip package containing:
 - `index.json` (content manifest and export timestamp)
 - `healing-summary.json` (optional aggregate of `memory.healing` trace events)
 - trace jsonl files (redacted)
-- snapshot folders
+- snapshot folders (optional, only when `--include-snapshots`)
 - policy file (if present)
 - `doctor.json` (runtime diagnostics snapshot)
 - `memory.json` (optional, redacted, only when `--include-memory`)
@@ -79,8 +88,12 @@ The command result and `index.json` both include `warnings` for non-blocking iss
 
 ```powershell
 # migrate json -> sqlite
-pnpm --filter @bak/cli exec bak memory migrate
+node packages/cli/dist/bin.js memory migrate
 
 # export backend payload
-pnpm --filter @bak/cli exec bak memory export --backend sqlite
+node packages/cli/dist/bin.js memory export --backend sqlite
 ```
+
+Notes:
+- SQLite backend uses `node:sqlite`, which is currently marked experimental on Node 22.
+- Episode typed-input text is redacted by default; enable `BAK_MEMORY_RECORD_INPUT_TEXT=1` only for explicit debugging needs.

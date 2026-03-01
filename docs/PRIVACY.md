@@ -7,6 +7,8 @@
 3. Potential secrets (email-like strings, OTP-like digits, long numeric sequences, token-like query strings) are replaced with redacted markers.
 4. Trace logs are redacted before write (for example `element.type.text` is stored as `[REDACTED]`, and snapshot base64 payloads are not persisted in trace entries).
 5. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
+6. `bak export` excludes snapshot image folders by default; use `--include-snapshots` only when operators explicitly need visual artifacts.
+7. Memory recording stores typed input as `[REDACTED:input]` by default; set `BAK_MEMORY_RECORD_INPUT_TEXT=1` only when explicitly needed.
 
 Run `bak gc` to clean old traces/snapshots. The command is dry-run by default and requires `--force` to delete.
 
