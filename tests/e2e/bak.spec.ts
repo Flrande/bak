@@ -189,6 +189,7 @@ test.describe('bak e2e', () => {
           const info = (await rpcCall('session.info', {})) as {
             extensionConnected: boolean;
             connectionState: string;
+            protocolVersion: string;
             extensionVersion: string | null;
             memoryBackend: {
               requestedBackend: 'json' | 'sqlite';
@@ -206,6 +207,7 @@ test.describe('bak e2e', () => {
           return (
             info.extensionConnected &&
             info.connectionState === 'connected' &&
+            info.protocolVersion === 'v1' &&
             typeof info.extensionVersion === 'string' &&
             (info.memoryBackend.backend === 'json' || info.memoryBackend.backend === 'sqlite') &&
             (info.memoryBackend.requestedBackend === 'json' || info.memoryBackend.requestedBackend === 'sqlite') &&
@@ -241,8 +243,10 @@ test.describe('bak e2e', () => {
     await expect(page.locator('#name-input')).toBeVisible();
     const tabId = await findTabIdByUrl('/form.html');
     const infoWithActiveTab = (await rpcCall('session.info', {})) as {
+      protocolVersion: string;
       activeTab: { id: number; title: string; url: string } | null;
     };
+    expect(infoWithActiveTab.protocolVersion).toBe('v1');
     expect(infoWithActiveTab.activeTab).not.toBeNull();
     expect(infoWithActiveTab.activeTab?.id).toBe(tabId);
     expect(infoWithActiveTab.activeTab?.url).toContain('/form.html');
