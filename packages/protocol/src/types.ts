@@ -151,7 +151,13 @@ export interface MethodMap {
       sessionId: string | null;
       paired: boolean;
       extensionConnected: boolean;
+      connectionState: 'connecting' | 'connected' | 'disconnected';
+      connectionReason: string | null;
       recording: boolean;
+      lastSeenTs: number | null;
+      lastHeartbeatTs: number | null;
+      bridgePendingRequests: number;
+      bridgeLastError: string | null;
     };
   };
   'tabs.list': {

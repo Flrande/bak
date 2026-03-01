@@ -56,6 +56,18 @@ Response failure:
 - `session.close`
 - `session.info`
 
+`session.info` includes:
+- `sessionId`
+- `paired`
+- `extensionConnected`
+- `connectionState` (`connecting|connected|disconnected`)
+- `connectionReason`
+- `recording`
+- `lastSeenTs`
+- `lastHeartbeatTs`
+- `bridgePendingRequests`
+- `bridgeLastError`
+
 ### Tabs
 
 - `tabs.list`

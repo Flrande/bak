@@ -112,7 +112,7 @@ test.describe('bak e2e', () => {
 
     daemon = spawn('node', [cliBin, 'serve', '--port', '17373', '--rpc-ws-port', '17374'], {
       cwd: repoRoot,
-      env: { ...process.env, BAK_DATA_DIR: dataDir },
+      env: { ...process.env, BAK_DATA_DIR: dataDir, BAK_HEARTBEAT_MS: '1000' },
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -156,12 +156,34 @@ test.describe('bak e2e', () => {
     await expect
       .poll(
         async () => {
-          const info = (await rpcCall('session.info', {})) as { extensionConnected: boolean };
-          return info.extensionConnected;
+          const info = (await rpcCall('session.info', {})) as {
+            extensionConnected: boolean;
+            connectionState: string;
+            lastSeenTs: number | null;
+            lastHeartbeatTs: number | null;
+          };
+          return (
+            info.extensionConnected &&
+            info.connectionState === 'connected' &&
+            typeof info.lastSeenTs === 'number' &&
+            typeof info.lastHeartbeatTs === 'number'
+          );
         },
         { timeout: 20_000 }
       )
       .toBe(true);
+
+    const firstSeen = (await rpcCall('session.info', {})) as { lastSeenTs: number | null };
+
+    await expect
+      .poll(
+        async () => {
+          const info = (await rpcCall('session.info', {})) as { lastSeenTs: number | null };
+          return typeof info.lastSeenTs === 'number' ? info.lastSeenTs : 0;
+        },
+        { timeout: 8_000 }
+      )
+      .toBeGreaterThan(typeof firstSeen.lastSeenTs === 'number' ? firstSeen.lastSeenTs : 0);
 
     const page = await context.newPage();
     await page.goto('http://127.0.0.1:4173/form.html');

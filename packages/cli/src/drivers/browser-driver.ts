@@ -1,4 +1,5 @@
 import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
+import type { BridgeConnectionState } from './extension-bridge.js';
 
 export interface BrowserTab {
   id: number;
@@ -14,8 +15,23 @@ export interface SnapshotResult {
   url: string;
 }
 
+export interface DriverConnectionStatus {
+  state: BridgeConnectionState;
+  reason: string | null;
+  lastSeenTs: number | null;
+  lastRequestTs: number | null;
+  lastResponseTs: number | null;
+  lastHeartbeatTs: number | null;
+  lastError: string | null;
+  connectedAtTs: number | null;
+  disconnectedAtTs: number | null;
+  pendingRequests: number;
+}
+
 export interface BrowserDriver {
   isConnected(): boolean;
+  connectionStatus(): DriverConnectionStatus;
+  sessionPing(timeoutMs?: number): Promise<{ ok: boolean; ts: number }>;
   tabsList(): Promise<{ tabs: BrowserTab[] }>;
   tabsFocus(tabId: number): Promise<{ ok: true }>;
   tabsNew(url?: string): Promise<{ tabId: number }>;

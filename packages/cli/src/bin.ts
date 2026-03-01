@@ -71,7 +71,7 @@ program
     setInterval(() => {
       const status = daemon.service.status();
       process.stderr.write(
-        `[bak] paired=${status.paired} extensionConnected=${status.extensionConnected} recording=${status.recording}\n`
+        `[bak] paired=${status.paired} state=${status.connectionState} extensionConnected=${status.extensionConnected} recording=${status.recording} lastSeen=${status.lastSeenTs ?? 'n/a'}\n`
       );
     }, 15_000);
   });

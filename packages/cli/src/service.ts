@@ -37,6 +37,10 @@ interface RecordingState {
   anchors: string[];
 }
 
+export interface ServiceHeartbeatConfig {
+  intervalMs?: number;
+}
+
 function asRecord(input: unknown): Record<string, unknown> {
   return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
 }
@@ -75,13 +79,53 @@ export class BakService {
   private sessionId: string | null = null;
   private currentTraceId: string = '';
   private recording: RecordingState | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private readonly heartbeatIntervalMs: number;
 
-  constructor(driver: BrowserDriver, pairingStore: PairingStore, traceStore: TraceStore, memoryStore: MemoryStore) {
+  constructor(
+    driver: BrowserDriver,
+    pairingStore: PairingStore,
+    traceStore: TraceStore,
+    memoryStore: MemoryStore,
+    heartbeatConfig: ServiceHeartbeatConfig = {}
+  ) {
     this.driver = driver;
     this.pairingStore = pairingStore;
     this.traceStore = traceStore;
     this.memoryStore = memoryStore;
     this.dataDir = resolveDataDir();
+    const configured = heartbeatConfig.intervalMs ?? 10_000;
+    this.heartbeatIntervalMs = Math.max(500, configured);
+  }
+
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      return;
+    }
+
+    this.heartbeatTimer = setInterval(() => {
+      void this.tickHeartbeat();
+    }, this.heartbeatIntervalMs);
+  }
+
+  stopHeartbeat(): void {
+    if (!this.heartbeatTimer) {
+      return;
+    }
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
+  private async tickHeartbeat(): Promise<void> {
+    if (!this.driver.isConnected()) {
+      return;
+    }
+
+    try {
+      await this.driver.sessionPing(Math.max(1_000, Math.floor(this.heartbeatIntervalMs / 2)));
+    } catch {
+      // Ignore heartbeat errors; bridge stats capture state transitions and failures.
+    }
   }
 
   private ensurePairing(): void {
@@ -289,11 +333,18 @@ export class BakService {
         return { closed: true } as MethodResult<TMethod>;
       }
       case 'session.info': {
+        const connection = this.driver.connectionStatus();
         return {
           sessionId: this.sessionId,
           paired: Boolean(this.pairingStore.getToken()),
           extensionConnected: this.driver.isConnected(),
-          recording: Boolean(this.recording)
+          connectionState: connection.state,
+          connectionReason: connection.reason,
+          recording: Boolean(this.recording),
+          lastSeenTs: connection.lastSeenTs,
+          lastHeartbeatTs: connection.lastHeartbeatTs,
+          bridgePendingRequests: connection.pendingRequests,
+          bridgeLastError: connection.lastError
         } as MethodResult<TMethod>;
       }
       case 'tabs.list': {
@@ -604,14 +655,27 @@ export class BakService {
     sessionId: string | null;
     paired: boolean;
     extensionConnected: boolean;
+    connectionState: 'connecting' | 'connected' | 'disconnected';
+    connectionReason: string | null;
     recording: boolean;
+    lastSeenTs: number | null;
+    lastHeartbeatTs: number | null;
+    bridgePendingRequests: number;
+    bridgeLastError: string | null;
     domain?: string;
   } {
+    const connection = this.driver.connectionStatus();
     return {
       sessionId: this.sessionId,
       paired: Boolean(this.pairingStore.getToken()),
       extensionConnected: this.driver.isConnected(),
+      connectionState: connection.state,
+      connectionReason: connection.reason,
       recording: Boolean(this.recording),
+      lastSeenTs: connection.lastSeenTs,
+      lastHeartbeatTs: connection.lastHeartbeatTs,
+      bridgePendingRequests: connection.pendingRequests,
+      bridgeLastError: connection.lastError,
       domain: this.recording?.domain
     };
   }

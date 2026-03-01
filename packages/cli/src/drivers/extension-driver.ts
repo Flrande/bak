@@ -1,5 +1,5 @@
 import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
-import type { BrowserDriver, BrowserTab, SnapshotResult } from './browser-driver.js';
+import type { BrowserDriver, BrowserTab, DriverConnectionStatus, SnapshotResult } from './browser-driver.js';
 import type { ExtensionBridge } from './extension-bridge.js';
 
 export class ExtensionDriver implements BrowserDriver {
@@ -11,6 +11,28 @@ export class ExtensionDriver implements BrowserDriver {
 
   isConnected(): boolean {
     return this.bridge.isConnected();
+  }
+
+  connectionStatus(): DriverConnectionStatus {
+    const stats = this.bridge.getStats();
+    return {
+      state: stats.state,
+      reason: stats.reason,
+      lastSeenTs: stats.lastSeenTs,
+      lastRequestTs: stats.lastRequestTs,
+      lastResponseTs: stats.lastResponseTs,
+      lastHeartbeatTs: stats.lastHeartbeatTs,
+      lastError: stats.lastError,
+      connectedAtTs: stats.connectedAtTs,
+      disconnectedAtTs: stats.disconnectedAtTs,
+      pendingRequests: stats.pendingRequests
+    };
+  }
+
+  async sessionPing(timeoutMs = 2_000): Promise<{ ok: boolean; ts: number }> {
+    const result = await this.bridge.request<{ ok: boolean; ts: number }>('session.ping', {}, timeoutMs);
+    this.bridge.markHeartbeat(typeof result.ts === 'number' ? result.ts : Date.now());
+    return result;
   }
 
   tabsList(): Promise<{ tabs: BrowserTab[] }> {

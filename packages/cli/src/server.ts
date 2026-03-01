@@ -5,6 +5,7 @@ import { ExtensionDriver } from './drivers/extension-driver.js';
 import { RpcServer } from './rpc/server.js';
 import { BakService } from './service.js';
 import { TraceStore } from './trace-store.js';
+import { readEnvInt } from './utils.js';
 
 export interface BakDaemon {
   service: BakService;
@@ -20,13 +21,18 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
   await bridge.start();
 
   const driver = new ExtensionDriver(bridge);
-  const service = new BakService(driver, pairingStore, traceStore, memoryStore);
+  const heartbeatIntervalMs = readEnvInt('BAK_HEARTBEAT_MS', 10_000);
+  const service = new BakService(driver, pairingStore, traceStore, memoryStore, {
+    intervalMs: heartbeatIntervalMs
+  });
   service.seedSessionIfNeeded();
+  service.startHeartbeat();
 
   const rpcServer = new RpcServer(service, rpcWsPort);
   await rpcServer.start();
 
   const stop = async (): Promise<void> => {
+    service.stopHeartbeat();
     await rpcServer.stop();
     await bridge.stop();
   };

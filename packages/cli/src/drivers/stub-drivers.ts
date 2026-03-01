@@ -9,6 +9,25 @@ export abstract class StubDriver implements BrowserDriver {
     return false;
   }
 
+  connectionStatus() {
+    return {
+      state: 'disconnected' as const,
+      reason: 'stub-driver',
+      lastSeenTs: null,
+      lastRequestTs: null,
+      lastResponseTs: null,
+      lastHeartbeatTs: null,
+      lastError: 'stub-driver',
+      connectedAtTs: null,
+      disconnectedAtTs: Date.now(),
+      pendingRequests: 0
+    };
+  }
+
+  sessionPing() {
+    return this.unavailable('sessionPing');
+  }
+
   tabsList() {
     return this.unavailable('tabsList');
   }
