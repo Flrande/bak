@@ -1,6 +1,7 @@
 import { createServer } from 'node:net';
-import { unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { callRpc } from './rpc/client.js';
 import { PairingStore } from './pairing-store.js';
 import { ensureDir, resolveDataDir } from './utils.js';
@@ -21,6 +22,7 @@ export interface DoctorResult {
   ok: boolean;
   timestamp: string;
   nodeVersion: string;
+  cliVersion: string;
   dataDir: string;
   checks: {
     dataDirWritable: DoctorCheck;
@@ -29,7 +31,14 @@ export interface DoctorResult {
     rpcPort: DoctorCheck;
     rpcSessionInfo: DoctorCheck;
     rpcConnectionHealth: DoctorCheck;
+    versionCompatibility: DoctorCheck;
   };
+}
+
+interface SessionInfoProbe {
+  ok: boolean;
+  info?: Record<string, unknown>;
+  detail?: string;
 }
 
 async function probePortAvailable(port: number): Promise<DoctorCheck> {
@@ -107,23 +116,59 @@ function checkPairing(dataDir: string): DoctorCheck {
   }
 }
 
-async function checkRpcSessionInfo(rpcWsPort: number): Promise<DoctorCheck> {
+function readCliVersion(): string {
+  try {
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    const packagePath = resolve(currentDir, '../package.json');
+    const parsed = JSON.parse(readFileSync(packagePath, 'utf8')) as { version?: string };
+    return parsed.version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function parseSemver(version: string): { major: number; minor: number; patch: number } | null {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10)
+  };
+}
+
+async function probeRpcSessionInfo(rpcWsPort: number): Promise<SessionInfoProbe> {
   try {
     const info = (await callRpc('session.info', {}, rpcWsPort)) as Record<string, unknown>;
     return {
       ok: true,
-      message: 'rpc session.info reachable',
-      details: info
+      info
     };
   } catch (error) {
     return {
       ok: false,
+      detail: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe): DoctorCheck {
+  if (!probe.ok || !probe.info) {
+    return {
+      ok: false,
       message: 'rpc session.info unavailable',
       details: {
-        detail: error instanceof Error ? error.message : String(error)
+        detail: probe.detail ?? 'unknown'
       }
     };
   }
+  return {
+    ok: true,
+    message: 'rpc session.info reachable',
+    details: probe.info
+  };
 }
 
 export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCheck {
@@ -178,38 +223,113 @@ export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCh
   };
 }
 
-async function checkRpcConnectionHealth(rpcWsPort: number): Promise<DoctorCheck> {
-  try {
-    const info = (await callRpc('session.info', {}, rpcWsPort)) as Record<string, unknown>;
-    return assessSessionInfoHealth(info);
-  } catch (error) {
+export function assessVersionCompatibility(info: Record<string, unknown>, cliVersion: string): DoctorCheck {
+  const extensionVersion = typeof info.extensionVersion === 'string' ? info.extensionVersion : null;
+  const cliSemver = parseSemver(cliVersion);
+  const extSemver = extensionVersion ? parseSemver(extensionVersion) : null;
+
+  if (!extensionVersion) {
     return {
       ok: false,
-      message: 'rpc connection health unavailable',
+      message: 'extension version missing from bridge handshake',
       details: {
-        detail: error instanceof Error ? error.message : String(error)
+        cliVersion
       }
     };
   }
+
+  if (extensionVersion === cliVersion) {
+    return {
+      ok: true,
+      message: 'cli and extension versions are aligned',
+      details: {
+        cliVersion,
+        extensionVersion
+      }
+    };
+  }
+
+  if (!cliSemver || !extSemver) {
+    return {
+      ok: false,
+      message: 'unable to compare cli/extension versions',
+      details: {
+        cliVersion,
+        extensionVersion
+      }
+    };
+  }
+
+  if (cliSemver.major !== extSemver.major) {
+    return {
+      ok: false,
+      message: 'cli/extension major versions mismatch',
+      details: {
+        cliVersion,
+        extensionVersion
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'cli/extension version drift detected (same major)',
+    details: {
+      cliVersion,
+      extensionVersion
+    }
+  };
+}
+
+function checkVersionCompatibilityFromProbe(probe: SessionInfoProbe, cliVersion: string): DoctorCheck {
+  if (!probe.ok || !probe.info) {
+    return {
+      ok: false,
+      message: 'version compatibility unknown (session.info unavailable)',
+      details: {
+        cliVersion,
+        detail: probe.detail ?? 'unknown'
+      }
+    };
+  }
+  return assessVersionCompatibility(probe.info, cliVersion);
 }
 
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const dataDir = options.dataDir ? resolve(options.dataDir) : resolveDataDir();
+  const cliVersion = readCliVersion();
+  const sessionInfo = await probeRpcSessionInfo(options.rpcWsPort);
 
   const checks = {
     dataDirWritable: checkDataDirWritable(dataDir),
     pairing: checkPairing(dataDir),
     extensionBridgePort: await probePortAvailable(options.port),
     rpcPort: await probePortAvailable(options.rpcWsPort),
-    rpcSessionInfo: await checkRpcSessionInfo(options.rpcWsPort),
-    rpcConnectionHealth: await checkRpcConnectionHealth(options.rpcWsPort)
+    rpcSessionInfo: checkRpcSessionInfoFromProbe(sessionInfo),
+    rpcConnectionHealth: sessionInfo.ok && sessionInfo.info
+      ? assessSessionInfoHealth(sessionInfo.info)
+      : {
+          ok: false,
+          message: 'rpc connection health unavailable',
+          details: {
+            detail: sessionInfo.detail ?? 'unknown'
+          }
+        },
+    versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion)
   };
 
-  const ok = Object.values(checks).every((check) => check.ok);
+  const ok =
+    checks.dataDirWritable.ok &&
+    checks.pairing.ok &&
+    checks.extensionBridgePort.ok &&
+    checks.rpcPort.ok &&
+    checks.rpcSessionInfo.ok &&
+    checks.rpcConnectionHealth.ok;
   return {
     ok,
     timestamp: new Date().toISOString(),
     nodeVersion: process.version,
+    cliVersion,
     dataDir,
     checks
   };

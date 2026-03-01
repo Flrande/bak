@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessSessionInfoHealth } from '../../packages/cli/src/doctor.js';
+import { assessSessionInfoHealth, assessVersionCompatibility } from '../../packages/cli/src/doctor.js';
 
 describe('doctor session.info health assessment', () => {
   it('passes when connected and heartbeat is healthy', () => {
@@ -40,5 +40,29 @@ describe('doctor session.info health assessment', () => {
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('not connected');
+  });
+
+  it('detects aligned cli/extension versions', () => {
+    const check = assessVersionCompatibility(
+      {
+        extensionVersion: '0.1.0'
+      },
+      '0.1.0'
+    );
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('aligned');
+  });
+
+  it('flags version drift', () => {
+    const check = assessVersionCompatibility(
+      {
+        extensionVersion: '0.2.0'
+      },
+      '0.1.0'
+    );
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('drift');
   });
 });

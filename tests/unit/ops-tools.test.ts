@@ -43,6 +43,8 @@ describe('ops tools', () => {
     expect(report.checks.pairing.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
+    expect(report.checks.versionCompatibility.ok).toBe(false);
+    expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(report.ok).toBe(false);
 
     rmSync(dataDir, { recursive: true, force: true });
