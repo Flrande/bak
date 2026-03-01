@@ -18,6 +18,7 @@ export class ExtensionDriver implements BrowserDriver {
     return {
       state: stats.state,
       reason: stats.reason,
+      extensionVersion: stats.extensionVersion,
       lastSeenTs: stats.lastSeenTs,
       lastRequestTs: stats.lastRequestTs,
       lastResponseTs: stats.lastResponseTs,

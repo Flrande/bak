@@ -173,6 +173,7 @@ export interface MethodMap {
       extensionConnected: boolean;
       connectionState: 'connecting' | 'connected' | 'disconnected';
       connectionReason: string | null;
+      extensionVersion: string | null;
       recording: boolean;
       heartbeatStale: boolean;
       heartbeatAgeMs: number | null;

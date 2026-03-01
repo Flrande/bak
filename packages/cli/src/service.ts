@@ -462,6 +462,7 @@ export class BakService {
           extensionConnected: connection.extensionConnected,
           connectionState: connection.connectionState,
           connectionReason: connection.connectionReason,
+          extensionVersion: connection.raw.extensionVersion,
           recording: Boolean(this.recording),
           heartbeatStale: connection.heartbeatStale,
           heartbeatAgeMs: connection.heartbeatAgeMs,
@@ -786,6 +787,7 @@ export class BakService {
     extensionConnected: boolean;
     connectionState: 'connecting' | 'connected' | 'disconnected';
     connectionReason: string | null;
+    extensionVersion: string | null;
     recording: boolean;
     heartbeatStale: boolean;
     heartbeatAgeMs: number | null;
@@ -803,6 +805,7 @@ export class BakService {
       extensionConnected: connection.extensionConnected,
       connectionState: connection.connectionState,
       connectionReason: connection.connectionReason,
+      extensionVersion: connection.raw.extensionVersion,
       recording: Boolean(this.recording),
       heartbeatStale: connection.heartbeatStale,
       heartbeatAgeMs: connection.heartbeatAgeMs,

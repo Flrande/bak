@@ -18,6 +18,7 @@ export interface SnapshotResult {
 export interface DriverConnectionStatus {
   state: BridgeConnectionState;
   reason: string | null;
+  extensionVersion: string | null;
   lastSeenTs: number | null;
   lastRequestTs: number | null;
   lastResponseTs: number | null;

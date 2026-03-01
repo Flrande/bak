@@ -189,12 +189,14 @@ test.describe('bak e2e', () => {
           const info = (await rpcCall('session.info', {})) as {
             extensionConnected: boolean;
             connectionState: string;
+            extensionVersion: string | null;
             lastSeenTs: number | null;
             lastHeartbeatTs: number | null;
           };
           return (
             info.extensionConnected &&
             info.connectionState === 'connected' &&
+            typeof info.extensionVersion === 'string' &&
             typeof info.lastSeenTs === 'number' &&
             typeof info.lastHeartbeatTs === 'number'
           );

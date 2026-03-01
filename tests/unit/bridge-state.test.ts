@@ -78,4 +78,44 @@ describe('ExtensionBridge reliability', () => {
     await bridge.stop();
     rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it('captures extension version from hello handshake message', async () => {
+    const port = await getFreePort();
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-bridge-hello-'));
+    const store = new PairingStore(dataDir);
+    const created = store.createToken();
+    const token = created.token;
+    const bridge = new ExtensionBridge(port, store);
+    await bridge.start();
+
+    const client = new WebSocket(`ws://127.0.0.1:${port}/extension?token=${token}`);
+    await new Promise<void>((resolve, reject) => {
+      client.once('open', () => resolve());
+      client.once('error', reject);
+    });
+
+    client.send(
+      JSON.stringify({
+        type: 'hello',
+        role: 'extension',
+        version: '9.9.9',
+        ts: Date.now()
+      })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const stats = bridge.getStats();
+    expect(stats.extensionVersion).toBe('9.9.9');
+
+    client.close();
+    await new Promise<void>((resolve) => {
+      if (client.readyState === WebSocket.CLOSED) {
+        resolve();
+        return;
+      }
+      client.once('close', () => resolve());
+    });
+    await bridge.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
 });

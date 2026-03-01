@@ -66,6 +66,7 @@ Response failure:
 - `extensionConnected`
 - `connectionState` (`connecting|connected|disconnected`)
 - `connectionReason`
+- `extensionVersion`
 - `recording`
 - `heartbeatStale`
 - `heartbeatAgeMs`

@@ -12,6 +12,7 @@ Checks:
 - bridge/rpc port availability
 - `session.info` reachability
 - extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
+- extension runtime version reported by bridge handshake (`extensionVersion`)
 
 ## Pair token lifecycle
 

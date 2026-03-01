@@ -25,6 +25,7 @@ export type BridgeConnectionState = 'connecting' | 'connected' | 'disconnected';
 export interface BridgeStats {
   state: BridgeConnectionState;
   reason: string | null;
+  extensionVersion: string | null;
   lastSeenTs: number | null;
   lastRequestTs: number | null;
   lastResponseTs: number | null;
@@ -59,6 +60,7 @@ export class ExtensionBridge {
   private readonly pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   private state: BridgeConnectionState = 'disconnected';
   private reason: string | null = 'awaiting-extension';
+  private extensionVersion: string | null = null;
   private lastSeenTs: number | null = null;
   private lastRequestTs: number | null = null;
   private lastResponseTs: number | null = null;
@@ -112,6 +114,7 @@ export class ExtensionBridge {
       this.socket = socket;
       this.state = 'connected';
       this.reason = null;
+      this.extensionVersion = null;
       this.connectedAtTs = now;
       this.lastSeenTs = now;
       this.lastError = null;
@@ -177,6 +180,7 @@ export class ExtensionBridge {
     return {
       state: this.state,
       reason: this.reason,
+      extensionVersion: this.extensionVersion,
       lastSeenTs: this.lastSeenTs,
       lastRequestTs: this.lastRequestTs,
       lastResponseTs: this.lastResponseTs,
@@ -216,15 +220,28 @@ export class ExtensionBridge {
   }
 
   private handleMessage(raw: string): void {
-    let message: BridgeResponse;
+    let parsed: unknown;
     try {
-      message = JSON.parse(raw) as BridgeResponse;
+      parsed = JSON.parse(raw) as unknown;
     } catch {
       return;
     }
 
     const now = Date.now();
     this.lastSeenTs = now;
+
+    if (typeof parsed === 'object' && parsed !== null && 'type' in parsed) {
+      const maybeHello = parsed as {
+        type?: unknown;
+        version?: unknown;
+      };
+      if (maybeHello.type === 'hello') {
+        this.extensionVersion = typeof maybeHello.version === 'string' ? maybeHello.version : null;
+        return;
+      }
+    }
+
+    const message = parsed as BridgeResponse;
     this.lastResponseTs = now;
 
     if (!message.id || !this.pending.has(message.id)) {

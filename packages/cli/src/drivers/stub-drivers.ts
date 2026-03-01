@@ -13,6 +13,7 @@ export abstract class StubDriver implements BrowserDriver {
     return {
       state: 'disconnected' as const,
       reason: 'stub-driver',
+      extensionVersion: null,
       lastSeenTs: null,
       lastRequestTs: null,
       lastResponseTs: null,
