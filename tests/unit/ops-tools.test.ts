@@ -79,6 +79,11 @@ describe('ops tools', () => {
       doctorReport: {
         ok: false,
         checks: {
+          protocolCompatibility: {
+            ok: false,
+            message: 'protocol version mismatch',
+            severity: 'warn'
+          },
           versionCompatibility: {
             ok: false,
             message: 'cli/extension version drift detected (same major)',
@@ -102,6 +107,7 @@ describe('ops tools', () => {
     expect(result.includesHealingSummary).toBe(false);
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
+    expect(result.warnings).toContain('protocol compatibility warning: protocol version mismatch');
     expect(result.warnings).toContain('version compatibility warning: cli/extension version drift detected (same major)');
     expect(result.warnings).toContain('memory backend warning: memory backend fallback detected');
     expect(existsSync(outPath)).toBe(true);

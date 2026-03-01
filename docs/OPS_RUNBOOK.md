@@ -15,6 +15,7 @@ Checks:
 - `session.info` reachability
 - extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
 - active tab telemetry availability (`activeTabTelemetry`, non-blocking warning)
+- protocol compatibility between daemon and rpc payload (`protocolCompatibility`, non-blocking warning)
 - extension runtime version reported by bridge handshake (`extensionVersion`)
 - cli/extension version compatibility drift check (`versionCompatibility`, `severity=warn` and non-blocking)
 
@@ -68,7 +69,7 @@ pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
 - `memory.json` (optional, redacted, only when `--include-memory`)
 - runtime version metadata
 
-The command result and `index.json` both include `warnings` for non-blocking issues (for example version drift or memory export fallback).
+The command result and `index.json` both include `warnings` for non-blocking issues (for example protocol/version drift or memory export fallback).
 
 ## CI / nightly e2e notes
 

@@ -72,6 +72,19 @@ function extractVersionCompatibilityWarning(doctorReport: unknown): string | nul
   return message;
 }
 
+function extractProtocolCompatibilityWarning(doctorReport: unknown): string | null {
+  const report = asRecord(doctorReport);
+  const checks = asRecord(report.checks);
+  const protocolCheck = asRecord(checks.protocolCompatibility);
+  const ok = protocolCheck.ok === true;
+  const severity = protocolCheck.severity;
+  const message = typeof protocolCheck.message === 'string' ? protocolCheck.message : null;
+  if (ok || severity !== 'warn' || !message) {
+    return null;
+  }
+  return message;
+}
+
 function extractMemoryBackendWarning(doctorReport: unknown): string | null {
   const report = asRecord(doctorReport);
   const checks = asRecord(report.checks);
@@ -361,6 +374,11 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
     const versionWarning = extractVersionCompatibilityWarning(options.doctorReport);
     if (versionWarning) {
       warnings.push(`version compatibility warning: ${versionWarning}`);
+    }
+
+    const protocolWarning = extractProtocolCompatibilityWarning(options.doctorReport);
+    if (protocolWarning) {
+      warnings.push(`protocol compatibility warning: ${protocolWarning}`);
     }
 
     const memoryBackendWarning = extractMemoryBackendWarning(options.doctorReport);
