@@ -59,6 +59,7 @@ pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
 
 `bak export` produces a redacted zip package containing:
 - `index.json` (content manifest and export timestamp)
+- `healing-summary.json` (optional aggregate of `memory.healing` trace events)
 - trace jsonl files (redacted)
 - snapshot folders
 - policy file (if present)

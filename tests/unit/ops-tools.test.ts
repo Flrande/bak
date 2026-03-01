@@ -26,6 +26,9 @@ describe('ops tools', () => {
     expect(result.snapshotCount).toBe(1);
     expect(result.includesDoctorReport).toBe(false);
     expect(result.includesIndex).toBe(true);
+    expect(result.includesHealingSummary).toBe(false);
+    expect(result.healingEventCount).toBe(0);
+    expect(result.healingFailureCount).toBe(0);
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toEqual([]);
@@ -92,6 +95,7 @@ describe('ops tools', () => {
 
     expect(result.includesDoctorReport).toBe(true);
     expect(result.includesIndex).toBe(true);
+    expect(result.includesHealingSummary).toBe(false);
     expect(result.includesMemory).toBe(false);
     expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toContain('version compatibility warning: cli/extension version drift detected (same major)');
@@ -133,6 +137,7 @@ describe('ops tools', () => {
     });
 
     expect(result.includesMemory).toBe(true);
+    expect(result.includesHealingSummary).toBe(false);
     expect(result.memoryBackend).toBe('json');
     expect(result.memoryExportError).toBeUndefined();
     expect(result.warnings).toEqual([]);
@@ -154,9 +159,46 @@ describe('ops tools', () => {
     });
 
     expect(result.includesMemory).toBe(false);
+    expect(result.includesHealingSummary).toBe(false);
     expect(result.memoryBackend).toBe('json');
     expect(result.memoryExportError).toBeTruthy();
     expect(result.warnings.some((message) => message.startsWith('memory export skipped:'))).toBe(true);
+    expect(existsSync(outPath)).toBe(true);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('aggregates healing trace events into diagnostic summary', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-healing-test-'));
+    const tracesDir = join(dataDir, 'traces');
+    mkdirSync(tracesDir, { recursive: true });
+    const traceId = 'trace_heal_demo';
+    writeFileSync(
+      join(tracesDir, `${traceId}.jsonl`),
+      `${JSON.stringify({
+        traceId,
+        ts: new Date().toISOString(),
+        method: 'memory.healing',
+        params: {
+          skillId: 'skill_demo',
+          attempts: 2,
+          successes: 1,
+          failed: true
+        }
+      })}\n`,
+      'utf8'
+    );
+
+    const outPath = join(dataDir, 'diag-healing.zip');
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      traceId
+    });
+
+    expect(result.includesHealingSummary).toBe(true);
+    expect(result.healingEventCount).toBe(1);
+    expect(result.healingFailureCount).toBe(1);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });

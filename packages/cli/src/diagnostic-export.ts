@@ -24,11 +24,36 @@ export interface DiagnosticExportResult {
   snapshotCount: number;
   includesDoctorReport: boolean;
   includesIndex: boolean;
+  includesHealingSummary: boolean;
+  healingEventCount: number;
+  healingFailureCount: number;
   includesMemory: boolean;
   memoryBackend: string | null;
   memoryExportError?: string;
   warnings: string[];
   fileCount: number;
+}
+
+interface HealingTraceEvent {
+  skillId: string;
+  attempts: number;
+  successes: number;
+  failed: boolean;
+}
+
+interface HealingSummary {
+  eventCount: number;
+  totalAttempts: number;
+  totalSuccesses: number;
+  totalFailures: number;
+  skills: Array<{
+    skillId: string;
+    events: number;
+    attempts: number;
+    successes: number;
+    failures: number;
+    successRate: number;
+  }>;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -84,19 +109,103 @@ function redactUnknown(value: unknown): unknown {
   return value;
 }
 
-function copyAndRedactTrace(sourcePath: string, targetPath: string): void {
+function asNonNegativeNumber(input: unknown): number {
+  if (typeof input !== 'number' || !Number.isFinite(input)) {
+    return 0;
+  }
+  return Math.max(0, input);
+}
+
+function parseHealingTraceEvent(parsed: unknown): HealingTraceEvent | null {
+  const entry = asRecord(parsed);
+  if (entry.method !== 'memory.healing') {
+    return null;
+  }
+
+  const params = asRecord(entry.params);
+  const skillIdRaw = params.skillId;
+  const skillId = typeof skillIdRaw === 'string' && skillIdRaw.trim() ? skillIdRaw : 'unknown-skill';
+  const attempts = asNonNegativeNumber(params.attempts);
+  const successes = Math.min(attempts, asNonNegativeNumber(params.successes));
+  const failed = params.failed === true;
+
+  return {
+    skillId,
+    attempts,
+    successes,
+    failed
+  };
+}
+
+function summarizeHealingEvents(events: HealingTraceEvent[]): HealingSummary {
+  const bySkill = new Map<string, { events: number; attempts: number; successes: number; failures: number }>();
+
+  for (const event of events) {
+    const current = bySkill.get(event.skillId) ?? {
+      events: 0,
+      attempts: 0,
+      successes: 0,
+      failures: 0
+    };
+    current.events += 1;
+    current.attempts += event.attempts;
+    current.successes += event.successes;
+    current.failures += event.failed ? 1 : 0;
+    bySkill.set(event.skillId, current);
+  }
+
+  const skills = [...bySkill.entries()]
+    .map(([skillId, item]) => ({
+      skillId,
+      events: item.events,
+      attempts: item.attempts,
+      successes: item.successes,
+      failures: item.failures,
+      successRate: item.attempts > 0 ? item.successes / item.attempts : 0
+    }))
+    .sort((a, b) => {
+      if (b.events !== a.events) {
+        return b.events - a.events;
+      }
+      if (b.attempts !== a.attempts) {
+        return b.attempts - a.attempts;
+      }
+      return a.skillId.localeCompare(b.skillId);
+    });
+
+  const eventCount = events.length;
+  const totalAttempts = skills.reduce((sum, item) => sum + item.attempts, 0);
+  const totalSuccesses = skills.reduce((sum, item) => sum + item.successes, 0);
+  const totalFailures = skills.reduce((sum, item) => sum + item.failures, 0);
+
+  return {
+    eventCount,
+    totalAttempts,
+    totalSuccesses,
+    totalFailures,
+    skills
+  };
+}
+
+function copyAndRedactTrace(sourcePath: string, targetPath: string): HealingTraceEvent[] {
+  const healingEvents: HealingTraceEvent[] = [];
   const lines = readFileSync(sourcePath, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => {
       try {
         const parsed = JSON.parse(line) as unknown;
+        const healingEvent = parseHealingTraceEvent(parsed);
+        if (healingEvent) {
+          healingEvents.push(healingEvent);
+        }
         return JSON.stringify(redactUnknown(parsed));
       } catch {
         return redactText(line);
       }
     });
   writeFileSync(targetPath, `${lines.join('\n')}\n`, 'utf8');
+  return healingEvents;
 }
 
 function escapePwshLiteral(value: string): string {
@@ -169,10 +278,12 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
 
   try {
     let includesDoctorReport = false;
+    let includesHealingSummary = false;
     let includesMemory = false;
     let memoryBackend: string | null = null;
     let memoryExportError: string | undefined;
     const warnings: string[] = [];
+    const healingEvents: HealingTraceEvent[] = [];
     const tracesSource = join(dataDir, 'traces');
     const tracesTarget = join(stageDir, 'traces');
     mkdirSync(tracesTarget, { recursive: true });
@@ -191,7 +302,12 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
     for (const fileName of selectedTraceFiles) {
       const sourcePath = join(tracesSource, fileName);
       assertWithinDataDir(dataDir, sourcePath);
-      copyAndRedactTrace(sourcePath, join(tracesTarget, fileName));
+      healingEvents.push(...copyAndRedactTrace(sourcePath, join(tracesTarget, fileName)));
+    }
+    const healingSummary = summarizeHealingEvents(healingEvents);
+    if (healingSummary.eventCount > 0) {
+      writeFileSync(join(stageDir, 'healing-summary.json'), `${JSON.stringify(healingSummary, null, 2)}\n`, 'utf8');
+      includesHealingSummary = true;
     }
 
     const snapshotDirs = existsSync(snapshotSource)
@@ -260,6 +376,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
           exportedAt: new Date().toISOString(),
           redacted: true,
           includesDoctorReport,
+          includesHealingSummary,
+          healingEventCount: healingSummary.eventCount,
+          healingFailureCount: healingSummary.totalFailures,
           includesMemory,
           memoryBackend,
           memoryExportError: memoryExportError ?? null,
@@ -302,6 +421,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       snapshotCount: selectedSnapshotDirs.length,
       includesDoctorReport,
       includesIndex: true,
+      includesHealingSummary,
+      healingEventCount: healingSummary.eventCount,
+      healingFailureCount: healingSummary.totalFailures,
       includesMemory,
       memoryBackend,
       memoryExportError,
