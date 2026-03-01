@@ -65,7 +65,7 @@ Common data shape:
 - episodes[]
   - domain, startUrl, intent, steps, anchors, outcome
 - skills[]
-  - domain, intent, description, plan, paramsSchema, healing, stats
+  - domain, intent, description, plan, paramsSchema, healing (`retries`, optional `attempts/successes`), stats
 
 Migration / export:
 - `bak memory migrate` imports JSON records into SQLite (`INSERT OR IGNORE`, idempotent)

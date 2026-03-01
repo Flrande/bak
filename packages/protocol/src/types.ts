@@ -116,6 +116,8 @@ export interface Skill {
   };
   healing: {
     retries: number;
+    attempts?: number;
+    successes?: number;
   };
   stats: {
     runs: number;
