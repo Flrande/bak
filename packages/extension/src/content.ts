@@ -1,6 +1,6 @@
 import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
-import { unsupportedLocatorHint } from './limitations.js';
+import { unsupportedLocator, unsupportedLocatorHint } from './limitations.js';
 
 type ActionName = 'click' | 'type' | 'scroll';
 
@@ -678,6 +678,13 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
     if (message.action === 'scroll') {
       if (message.locator) {
+        const unsupported = unsupportedLocator(message.locator);
+        if (unsupported) {
+          return failAction('E_NOT_FOUND', unsupported.hint, {
+            reason: 'unsupported_locator',
+            limitation: unsupported.reason
+          });
+        }
         const target = resolveLocator(message.locator);
         if (!target) {
           return failAction('E_NOT_FOUND', 'scroll target not found');
@@ -687,6 +694,14 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
       }
       window.scrollBy({ left: Number(message.dx ?? 0), top: Number(message.dy ?? 320), behavior: 'smooth' });
       return { ok: true };
+    }
+
+    const unsupported = unsupportedLocator(message.locator);
+    if (unsupported) {
+      return failAction('E_NOT_FOUND', unsupported.hint, {
+        reason: 'unsupported_locator',
+        limitation: unsupported.reason
+      });
     }
 
     const target = resolveLocator(message.locator);
