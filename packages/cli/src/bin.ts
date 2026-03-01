@@ -286,6 +286,8 @@ program
   .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
   .option('--port <port>', 'extension websocket port for doctor snapshot', `${DEFAULT_PORT}`)
   .option('--rpc-ws-port <port>', 'rpc websocket port for doctor snapshot', `${DEFAULT_RPC_PORT}`)
+  .option('--include-memory', 'include redacted memory export in package', false)
+  .option('--memory-backend <backend>', 'memory backend for export (json|sqlite)', process.env.BAK_MEMORY_BACKEND ?? 'json')
   .option('--data-dir <path>', 'override data dir')
   .option('--out <path>', 'output zip path')
   .action(async (options) => {
@@ -300,7 +302,9 @@ program
       traceId: options.traceId ? String(options.traceId) : undefined,
       dataDir,
       outPath: options.out ? resolve(String(options.out)) : undefined,
-      doctorReport
+      doctorReport,
+      includeMemory: options.includeMemory === true,
+      memoryBackend: String(options.memoryBackend)
     });
     printResult({
       ...result,

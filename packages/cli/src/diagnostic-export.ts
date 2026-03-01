@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createMemoryStore, exportMemory, resolveMemoryBackend } from './memory/factory.js';
 import { redactText } from './privacy.js';
 import { ensureDir, resolveDataDir } from './utils.js';
 
@@ -11,6 +12,8 @@ export interface DiagnosticExportOptions {
   outPath?: string;
   traceId?: string;
   doctorReport?: unknown;
+  includeMemory?: boolean;
+  memoryBackend?: string;
 }
 
 export interface DiagnosticExportResult {
@@ -21,6 +24,9 @@ export interface DiagnosticExportResult {
   snapshotCount: number;
   includesDoctorReport: boolean;
   includesIndex: boolean;
+  includesMemory: boolean;
+  memoryBackend: string | null;
+  memoryExportError?: string;
   fileCount: number;
 }
 
@@ -133,6 +139,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
 
   try {
     let includesDoctorReport = false;
+    let includesMemory = false;
+    let memoryBackend: string | null = null;
+    let memoryExportError: string | undefined;
     const tracesSource = join(dataDir, 'traces');
     const tracesTarget = join(stageDir, 'traces');
     mkdirSync(tracesTarget, { recursive: true });
@@ -179,6 +188,22 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       includesDoctorReport = true;
     }
 
+    if (options.includeMemory === true) {
+      const resolvedBackend = resolveMemoryBackend(options.memoryBackend);
+      memoryBackend = resolvedBackend;
+      try {
+        const store = createMemoryStore({
+          dataDir,
+          backend: resolvedBackend
+        });
+        const payload = exportMemory(store, resolvedBackend);
+        writeFileSync(join(stageDir, 'memory.json'), `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, 'utf8');
+        includesMemory = true;
+      } catch (error) {
+        memoryExportError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
     const indexPath = join(stageDir, 'index.json');
     writeFileSync(
       indexPath,
@@ -187,6 +212,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
           exportedAt: new Date().toISOString(),
           redacted: true,
           includesDoctorReport,
+          includesMemory,
+          memoryBackend,
+          memoryExportError: memoryExportError ?? null,
           traceFiles: selectedTraceFiles,
           snapshotDirs: selectedSnapshotDirs.map((entry) => entry.name),
           hasPolicyFile: existsSync(policyPath)
@@ -225,6 +253,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       snapshotCount: selectedSnapshotDirs.length,
       includesDoctorReport,
       includesIndex: true,
+      includesMemory,
+      memoryBackend,
+      memoryExportError,
       fileCount
     };
   } finally {

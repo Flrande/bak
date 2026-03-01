@@ -41,6 +41,9 @@ pnpm --filter @bak/cli exec bak export
 
 # single trace package
 pnpm --filter @bak/cli exec bak export --trace-id <traceId> --out ./.bak-data/diag.zip
+
+# include redacted memory payload (opt-in)
+pnpm --filter @bak/cli exec bak export --include-memory --memory-backend json
 ```
 
 `bak export` produces a redacted zip package containing:
@@ -49,6 +52,7 @@ pnpm --filter @bak/cli exec bak export --trace-id <traceId> --out ./.bak-data/di
 - snapshot folders
 - policy file (if present)
 - `doctor.json` (runtime diagnostics snapshot)
+- `memory.json` (optional, redacted, only when `--include-memory`)
 - runtime version metadata
 
 ## Memory backend operations

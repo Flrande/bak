@@ -26,6 +26,8 @@ describe('ops tools', () => {
     expect(result.snapshotCount).toBe(1);
     expect(result.includesDoctorReport).toBe(false);
     expect(result.includesIndex).toBe(true);
+    expect(result.includesMemory).toBe(false);
+    expect(result.memoryBackend).toBeNull();
     expect(result.redacted).toBe(true);
     expect(existsSync(outPath)).toBe(true);
 
@@ -72,6 +74,47 @@ describe('ops tools', () => {
 
     expect(result.includesDoctorReport).toBe(true);
     expect(result.includesIndex).toBe(true);
+    expect(result.includesMemory).toBe(false);
+    expect(result.memoryBackend).toBeNull();
+    expect(existsSync(outPath)).toBe(true);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('includes memory snapshot when includeMemory is enabled', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-test-'));
+    const outPath = join(dataDir, 'diag-memory.zip');
+    writeFileSync(
+      join(dataDir, 'memory.json'),
+      JSON.stringify({
+        episodes: [],
+        skills: [
+          {
+            id: 'skill_demo',
+            domain: 'example.com',
+            intent: 'send report to alice@example.com',
+            description: 'send report',
+            plan: [],
+            paramsSchema: { fields: {} },
+            healing: { retries: 1 },
+            stats: { runs: 0, success: 0, failure: 0 },
+            createdAt: new Date().toISOString()
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const result = exportDiagnosticZip({
+      dataDir,
+      outPath,
+      includeMemory: true,
+      memoryBackend: 'json'
+    });
+
+    expect(result.includesMemory).toBe(true);
+    expect(result.memoryBackend).toBe('json');
+    expect(result.memoryExportError).toBeUndefined();
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
