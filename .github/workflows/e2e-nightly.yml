@@ -27,7 +27,13 @@ jobs:
       - name: Install Playwright browser
         run: pnpm exec playwright install chromium
       - name: E2E
-        run: pnpm -w test:e2e -- --reporter=list --output=test-results
+        run: pnpm -w test:e2e:full
+      - name: Generate Matrix
+        env:
+          BAK_ENFORCE_E2E_COVERAGE: "1"
+        run: pnpm -w e2e:matrix
+      - name: Generate Release Capability Report
+        run: pnpm -w release:report
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,3 +43,6 @@ jobs:
           path: |
             playwright-report
             test-results
+            docs/E2E_MATRIX.md
+            docs/CAPABILITY_MATRIX.md
+            docs/RELEASE_CAPABILITY_REPORT.md

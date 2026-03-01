@@ -27,3 +27,24 @@ jobs:
         run: pnpm -w lint
       - name: Unit tests
         run: pnpm -w test:unit
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+      - name: Critical E2E
+        run: pnpm -w test:e2e:critical
+      - name: Generate E2E Matrix
+        env:
+          BAK_ENFORCE_E2E_COVERAGE: "1"
+        run: pnpm -w e2e:matrix
+      - name: Generate Release Capability Report
+        run: pnpm -w release:report
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-e2e-artifacts-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            test-results
+            docs/E2E_MATRIX.md
+            docs/CAPABILITY_MATRIX.md
+            docs/RELEASE_CAPABILITY_REPORT.md
