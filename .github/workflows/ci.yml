@@ -29,8 +29,8 @@ jobs:
         run: pnpm -w test:unit
       - name: Install Playwright browser
         run: pnpm exec playwright install chromium
-      - name: Critical E2E
-        run: pnpm -w test:e2e:critical
+      - name: Full E2E
+        run: pnpm -w test:e2e:full
       - name: Generate E2E Matrix
         env:
           BAK_ENFORCE_E2E_COVERAGE: "1"
