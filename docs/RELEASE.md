@@ -1,5 +1,7 @@
 # RELEASE GUIDE (v2)
 
+This legacy page is kept for compatibility. Prefer [docs/developer/ops-release.md](./developer/ops-release.md).
+
 ## Versioning policy
 
 - SemVer for `@bak/*` packages.

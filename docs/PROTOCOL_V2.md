@@ -1,5 +1,7 @@
 # PROTOCOL V2
 
+For onboarding and transport/runtime context, start with [docs/developer/protocol-rpc.md](./developer/protocol-rpc.md). This file remains the canonical v2 method matrix.
+
 - Transport: JSON-RPC 2.0
 - Compatibility: v1 and v2 clients can run concurrently (additive v2 methods).
 - Canonical type source: `packages/protocol/src/types.ts` (`MethodMap`).

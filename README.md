@@ -31,15 +31,25 @@ repo/
     unit/
     e2e/
   docs/
-    TECH_SPEC.md
+    README.md
+    user/
+    developer/
+    reference/
+    PROTOCOL_V2.md
     PROTOCOL.md
-    SECURITY.md
-    PRIVACY.md
-    OPS_RUNBOOK.md
-    RELEASE.md
+    CAPABILITY_MATRIX.md
+    E2E_MATRIX.md
+    RELEASE_CAPABILITY_REPORT.md
   scripts/
     demo-rpc.ps1
 ```
+
+## Documentation
+
+- Start here: `docs/README.md`
+- User path: `docs/user/README.md`
+- Developer path: `docs/developer/README.md`
+- Reference path: `docs/reference/README.md`
 
 ## Install
 

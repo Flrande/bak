@@ -1,5 +1,7 @@
 # PRIVACY (v1)
 
+This legacy page is kept for compatibility. Prefer [docs/developer/security-privacy.md](./developer/security-privacy.md).
+
 ## Default collection behavior
 
 1. Snapshot element maps do not read `input.value` for naming or text extraction.

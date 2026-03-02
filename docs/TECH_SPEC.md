@@ -1,5 +1,7 @@
 # TECH_SPEC (v1)
 
+This legacy page is kept for compatibility. Prefer [docs/developer/architecture.md](./developer/architecture.md).
+
 ## Architecture
 
 - Agent <-> CLI: JSON-RPC 2.0

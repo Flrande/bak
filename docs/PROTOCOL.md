@@ -1,5 +1,7 @@
 # PROTOCOL (JSON-RPC v1 - Legacy)
 
+This page is legacy compatibility guidance. Start from [docs/developer/protocol-rpc.md](./developer/protocol-rpc.md) and use [docs/PROTOCOL_V2.md](./PROTOCOL_V2.md) for current method coverage.
+
 `v2` is now the active protocol baseline. See `docs/PROTOCOL_V2.md`.
 
 Schema artifact:
