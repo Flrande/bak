@@ -17,6 +17,41 @@ interface RpcResponse {
   };
 }
 
+const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'page.reload']);
+const SLOW_MEMORY_METHODS = new Set(['memory.recordStop', 'memory.skills.retrieve', 'memory.skills.run', 'memory.replay.explain']);
+const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
+const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
+const SLOW_MEMORY_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_MEMORY_RPC_TIMEOUT_MS', 60_000);
+
+function parseTimeoutEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+function resolveRpcTimeoutMs(method: string, params: Record<string, unknown>): number {
+  let timeoutMs = DEFAULT_RPC_TIMEOUT_MS;
+  if (NAVIGATION_METHODS.has(method)) {
+    timeoutMs = Math.max(timeoutMs, NAVIGATION_RPC_TIMEOUT_MS);
+  }
+  if (SLOW_MEMORY_METHODS.has(method)) {
+    timeoutMs = Math.max(timeoutMs, SLOW_MEMORY_RPC_TIMEOUT_MS);
+  }
+
+  const requested = params.timeoutMs;
+  if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+    timeoutMs = Math.max(timeoutMs, Math.floor(requested) + 10_000);
+  }
+
+  return timeoutMs;
+}
+
 async function getFreePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = createServer();
@@ -67,25 +102,50 @@ async function rpcCallInternal(port: number, method: string, params: Record<stri
 
   const id = `e2e_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params });
-  const response = await new Promise<RpcResponse>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`RPC timeout: ${method}`)), 25_000);
-    socket.on('message', (raw) => {
-      try {
-        const parsed = JSON.parse(String(raw)) as RpcResponse;
-        if (parsed.id !== id) {
-          return;
-        }
-        clearTimeout(timer);
-        resolve(parsed);
-      } catch (error) {
-        clearTimeout(timer);
-        reject(error);
-      }
-    });
-    socket.send(payload);
-  });
+  const timeoutMs = resolveRpcTimeoutMs(method, params);
+  let response: RpcResponse;
+  try {
+    response = await new Promise<RpcResponse>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`RPC timeout: ${method} (${timeoutMs}ms)`));
+      }, timeoutMs);
 
-  socket.close();
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        socket.off('message', onMessage);
+        socket.off('error', onError);
+      };
+
+      const onMessage = (raw: WebSocket.RawData): void => {
+        try {
+          const parsed = JSON.parse(String(raw)) as RpcResponse;
+          if (parsed.id !== id) {
+            return;
+          }
+          cleanup();
+          resolve(parsed);
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
+      };
+
+      const onError = (error: Error): void => {
+        cleanup();
+        reject(error);
+      };
+
+      socket.on('message', onMessage);
+      socket.on('error', onError);
+      socket.send(payload);
+    });
+  } finally {
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+  }
+
   if (response.error) {
     const err = new Error(`${response.error.data?.bakCode ?? response.error.code}: ${response.error.message}`) as BakErrorResponse;
     err.bakCode = typeof response.error.data?.bakCode === 'string' ? response.error.data.bakCode : undefined;
