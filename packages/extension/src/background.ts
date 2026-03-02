@@ -35,6 +35,7 @@ const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
 const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
+const DEFAULT_TAB_LOAD_TIMEOUT_MS = 40_000;
 
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
@@ -115,7 +116,7 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   return toError('E_INTERNAL', message);
 }
 
-async function waitForTabComplete(tabId: number, timeoutMs = 25_000): Promise<void> {
+async function waitForTabComplete(tabId: number, timeoutMs = DEFAULT_TAB_LOAD_TIMEOUT_MS): Promise<void> {
   try {
     const current = await chrome.tabs.get(tabId);
     if (current.status === 'complete') {
@@ -127,12 +128,26 @@ async function waitForTabComplete(tabId: number, timeoutMs = 25_000): Promise<vo
 
   await new Promise<void>((resolve, reject) => {
     let done = false;
+    const probeStatus = (): void => {
+      void chrome.tabs
+        .get(tabId)
+        .then((tab) => {
+          if (tab.status === 'complete') {
+            finish();
+          }
+        })
+        .catch(() => {
+          finish(new Error(`tab removed before load complete: ${tabId}`));
+        });
+    };
+
     const finish = (error?: Error): void => {
       if (done) {
         return;
       }
       done = true;
-      clearTimeout(timer);
+      clearTimeout(timeoutTimer);
+      clearInterval(pollTimer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onRemoved.removeListener(onRemoved);
       if (error) {
@@ -157,12 +172,14 @@ async function waitForTabComplete(tabId: number, timeoutMs = 25_000): Promise<vo
       }
     };
 
-    const timer = setTimeout(() => {
+    const pollTimer = setInterval(probeStatus, 250);
+    const timeoutTimer = setTimeout(() => {
       finish(new Error(`tab load timeout: ${tabId}`));
     }, timeoutMs);
 
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
+    probeStatus();
   });
 }
 
