@@ -13,7 +13,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/architecture.
 
 ## Main components
 
-### `@bak/protocol`
+### `@flrande/bak-protocol`
 
 - Shared method map types
 - Shared RPC error codes
@@ -22,7 +22,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/architecture.
   - element map item
   - episode / skill
 
-### `@bak/extension`
+### `@flrande/bak-extension`
 
 - `background.ts`
   - websocket client with reconnect
@@ -38,7 +38,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/architecture.
   - pairing token + port input
   - runtime status rendering
 
-### `@bak/cli`
+### `@flrande/bak-cli`
 
 - `ExtensionBridge`
   - local ws server for extension connection
@@ -120,3 +120,5 @@ Override with env:
 - reserved stubs:
   - `CDPDriver`
   - `PlaywrightDriver`
+
+

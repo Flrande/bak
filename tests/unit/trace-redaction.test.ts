@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ElementMapItem, Locator } from '@bak/protocol';
+import type { ElementMapItem, Locator } from '@flrande/bak-protocol';
 import { BakService } from '../../packages/cli/src/service.js';
 import type { BrowserDriver, DriverConnectionStatus, SnapshotResult } from '../../packages/cli/src/drivers/browser-driver.js';
 import { MemoryStore } from '../../packages/cli/src/memory/store.js';
@@ -135,3 +135,5 @@ describe('trace redaction', () => {
     });
   });
 });
+
+

@@ -13,19 +13,19 @@ Content script <-> DOM / events / page signals
 
 ## Main Packages
 
-### `@bak/protocol`
+### `@flrande/bak-protocol`
 
 - Source of truth for `MethodMap`, shared types, and error contracts.
 - JSON schema lives in `packages/protocol/schemas/protocol.schema.json`.
 
-### `@bak/cli`
+### `@flrande/bak-cli`
 
 - `packages/cli/src/server.ts`: daemon bootstrap (`ExtensionBridge`, `BakService`, `RpcServer`).
 - `packages/cli/src/bin.ts`: command surface and user entrypoints.
 - `packages/cli/src/service.ts`: RPC method handlers, tracing, memory orchestration.
 - `packages/cli/src/drivers/*`: extension bridge + browser driver abstraction.
 
-### `@bak/extension`
+### `@flrande/bak-extension`
 
 - `background.ts`: connection lifecycle, handshake, browser dispatch.
 - `content.ts`: DOM interactions, waits, snapshots, user confirmation overlay, debug buffers.
@@ -51,3 +51,5 @@ Default root: `.bak-data` (override with `BAK_DATA_DIR`).
 
 - Current implementation: `ExtensionDriver`
 - Interface designed for additional backends (for example CDP/Playwright in future)
+
+

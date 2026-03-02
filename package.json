@@ -7,7 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "concurrently -n protocol,cli,ext,site \"pnpm --filter @bak/protocol dev\" \"pnpm --filter @bak/cli dev\" \"pnpm --filter @bak/extension dev\" \"pnpm --filter @bak/test-sites dev\"",
+    "dev": "concurrently -n protocol,cli,ext,site \"pnpm --filter @flrande/bak-protocol dev\" \"pnpm --filter @flrande/bak-cli dev\" \"pnpm --filter @flrande/bak-extension dev\" \"pnpm --filter @flrande/bak-test-sites dev\"",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
@@ -34,3 +34,5 @@
     "ws": "^8.19.0"
   }
 }
+
+

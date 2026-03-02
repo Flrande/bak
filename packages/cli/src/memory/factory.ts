@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { Episode, Skill } from '@bak/protocol';
+import type { Episode, Skill } from '@flrande/bak-protocol';
 import { resolveDataDir } from '../utils.js';
 import { SqliteMemoryStore } from './sqlite-store.js';
 import { MemoryStore, type MemoryStoreBackend } from './store.js';
@@ -144,3 +144,5 @@ export function exportMemory(store: MemoryStoreBackend, backend: MemoryBackend):
   store.close?.();
   return payload;
 }
+
+

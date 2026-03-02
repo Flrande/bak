@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import * as readline from 'node:readline';
-import { BakErrorCode, fail, ok, type JsonRpcId, parseJsonRpcLine, RpcError } from '@bak/protocol';
+import { BakErrorCode, fail, ok, type JsonRpcId, parseJsonRpcLine, RpcError } from '@flrande/bak-protocol';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { BakService } from '../service.js';
 
@@ -102,3 +102,5 @@ export class RpcServer {
     this.wsServer = null;
   }
 }
+
+

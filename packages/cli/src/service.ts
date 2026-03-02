@@ -14,7 +14,7 @@ import {
   type Skill,
   type SkillPlanStep,
   RpcError
-} from '@bak/protocol';
+} from '@flrande/bak-protocol';
 import type { BrowserDriver } from './drivers/browser-driver.js';
 import { BridgeError } from './drivers/extension-bridge.js';
 import { evaluateConnectionHealth } from './connection-health.js';
@@ -1916,3 +1916,5 @@ export class BakService {
     return buildTargetCandidates(locator);
   }
 }
+
+

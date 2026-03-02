@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Episode, Skill } from '@bak/protocol';
+import type { Episode, Skill } from '@flrande/bak-protocol';
 import { ensureDir, id, nowIso, resolveDataDir } from '../utils.js';
 
 interface MemoryState {
@@ -126,3 +126,5 @@ export class MemoryStore implements MemoryStoreBackend {
     // No-op for JSON file backend.
   }
 }
+
+

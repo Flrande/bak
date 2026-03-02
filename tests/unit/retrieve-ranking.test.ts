@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Skill, SkillPlanStep } from '@bak/protocol';
+import type { Skill, SkillPlanStep } from '@flrande/bak-protocol';
 import { retrieveSkills } from '../../packages/cli/src/memory/extract.js';
 
 function createSkill(input: {
@@ -194,3 +194,5 @@ describe('retrieveSkills ranking', () => {
     expect(ranked).toEqual([]);
   });
 });
+
+

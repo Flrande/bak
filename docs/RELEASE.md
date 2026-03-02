@@ -4,7 +4,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/ops-release.m
 
 ## Versioning policy
 
-- SemVer for `@bak/*` packages.
+- SemVer for `@flrande/bak-*` packages.
 - Protocol compatibility rule:
   - additive fields/methods: minor
   - incompatible request/response changes: major
@@ -45,3 +45,4 @@ pnpm -w test:e2e:full
    - `docs/CAPABILITY_MATRIX.md`
    - `docs/E2E_MATRIX.md`
    - `docs/RELEASE_CAPABILITY_REPORT.md`
+

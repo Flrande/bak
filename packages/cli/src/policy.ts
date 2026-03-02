@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { Locator } from '@bak/protocol';
+import type { Locator } from '@flrande/bak-protocol';
 
 const POLICY_ACTION_VALUES = [
   'element.click',
@@ -294,3 +294,5 @@ export class PolicyEngine {
     };
   }
 }
+
+

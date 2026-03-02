@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { JSON_RPC_VERSION, type JsonRpcResponse } from '@bak/protocol';
+import { JSON_RPC_VERSION, type JsonRpcResponse } from '@flrande/bak-protocol';
 
 function closeSocket(socket: WebSocket): void {
   if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
@@ -89,3 +89,5 @@ export async function callRpc(method: string, params: Record<string, unknown>, p
     closeSocket(socket);
   }
 }
+
+

@@ -1,5 +1,5 @@
 {
-  "name": "@bak/extension",
+  "name": "@flrande/bak-extension",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -9,10 +9,12 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@bak/protocol": "workspace:*"
+    "@flrande/bak-protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.14",
     "tsup": "^8.5.0"
   }
 }
+
+

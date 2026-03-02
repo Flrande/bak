@@ -1,4 +1,4 @@
-import type { ConsoleEntry, Locator } from '@bak/protocol';
+import type { ConsoleEntry, Locator } from '@flrande/bak-protocol';
 import { isSupportedAutomationUrl } from './url-policy.js';
 import { computeReconnectDelayMs } from './reconnect.js';
 
@@ -701,3 +701,5 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+

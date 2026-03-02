@@ -1,5 +1,5 @@
 {
-  "name": "@bak/cli",
+  "name": "@flrande/bak-cli",
   "version": "0.1.0",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@bak/protocol": "workspace:*",
+    "@flrande/bak-protocol": "workspace:*",
     "commander": "^14.0.0",
     "ws": "^8.18.3",
     "zod": "^3.25.76"
@@ -24,3 +24,5 @@
     "tsup": "^8.5.0"
   }
 }
+
+

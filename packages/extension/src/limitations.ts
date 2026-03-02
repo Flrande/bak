@@ -1,4 +1,4 @@
-import type { Locator } from '@bak/protocol';
+import type { Locator } from '@flrande/bak-protocol';
 
 export interface UnsupportedLocator {
   reason: 'shadow-dom' | 'iframe';
@@ -34,3 +34,5 @@ export function unsupportedLocator(locator?: Locator): UnsupportedLocator | null
 export function unsupportedLocatorHint(locator?: Locator): string | null {
   return unsupportedLocator(locator)?.hint ?? null;
 }
+
+

@@ -7,7 +7,7 @@ import type {
   PageDomSummary,
   PageMetrics,
   PageTextChunk
-} from '@bak/protocol';
+} from '@flrande/bak-protocol';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
 import { unsupportedLocatorHint } from './limitations.js';
 
@@ -2263,3 +2263,5 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 });
 
 ensureOverlayRoot();
+
+

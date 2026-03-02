@@ -1,5 +1,5 @@
 {
-  "name": "@bak/test-sites",
+  "name": "@flrande/bak-test-sites",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,3 +14,5 @@
     "vite": "^7.1.3"
   }
 }
+
+

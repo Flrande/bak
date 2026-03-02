@@ -13,7 +13,9 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@bak/protocol": ["packages/protocol/src/index.ts"]
+      "@flrande/bak-protocol": ["packages/protocol/src/index.ts"]
     }
   }
 }
+
+

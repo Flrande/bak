@@ -1,4 +1,4 @@
-import type { ElementMapItem } from '@bak/protocol';
+import type { ElementMapItem } from '@flrande/bak-protocol';
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const LONG_DIGIT_PATTERN = /(?:\d[ -]?){13,19}/g;
@@ -74,3 +74,5 @@ export function redactUnknown(value: unknown): unknown {
 
   return value;
 }
+
+

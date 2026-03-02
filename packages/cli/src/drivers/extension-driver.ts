@@ -1,4 +1,4 @@
-import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
+import type { ConsoleEntry, ElementMapItem, Locator } from '@flrande/bak-protocol';
 import type { BrowserDriver, BrowserTab, DriverConnectionStatus, SnapshotResult } from './browser-driver.js';
 import type { ExtensionBridge } from './extension-bridge.js';
 
@@ -131,3 +131,5 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request<TResult>(method, params, resolveBridgeTimeoutMs(params, timeoutMs));
   }
 }
+
+

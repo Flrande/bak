@@ -94,7 +94,7 @@ node packages/cli/dist/bin.js serve --port 17373
 1) Start test site:
 
 ```powershell
-pnpm --filter @bak/test-sites dev
+pnpm --filter @flrande/bak-test-sites dev
 ```
 
 2) Generate pair token:
@@ -201,3 +201,5 @@ The CLI checks a local policy file before `element.click` / `element.type`:
 - No cookie/password exfiltration features
 
 See `docs/SECURITY.md` and `docs/PRIVACY.md` for defaults and operational guidance.
+
+

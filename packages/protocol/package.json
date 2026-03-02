@@ -1,5 +1,5 @@
 {
-  "name": "@bak/protocol",
+  "name": "@flrande/bak-protocol",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -23,3 +23,5 @@
     "tsup": "^8.5.0"
   }
 }
+
+

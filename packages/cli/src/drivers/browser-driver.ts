@@ -7,7 +7,7 @@ import type {
   PageDomSummary,
   PageMetrics,
   PageTextChunk
-} from '@bak/protocol';
+} from '@flrande/bak-protocol';
 import type { BridgeConnectionState } from './extension-bridge.js';
 
 export interface BrowserTab {
@@ -82,3 +82,5 @@ export interface DriverExtendedApis {
   pageMetrics(tabId?: number): Promise<PageMetrics>;
   debugDumpState(tabId?: number, options?: { consoleLimit?: number; networkLimit?: number; includeAccessibility?: boolean }): Promise<PageDumpState>;
 }
+
+

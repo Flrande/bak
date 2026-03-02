@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ElementMapItem, Locator } from '@bak/protocol';
+import type { ElementMapItem, Locator } from '@flrande/bak-protocol';
 import { rankCandidates } from '../../packages/cli/src/memory/extract.js';
 
 const elements: ElementMapItem[] = [
@@ -40,3 +40,5 @@ describe('rankCandidates', () => {
     expect(ranked[0]?.eid).toBe('eid_cancel');
   });
 });
+
+

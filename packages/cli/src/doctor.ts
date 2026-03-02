@@ -2,7 +2,7 @@ import { createServer } from 'node:net';
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PROTOCOL_VERSION } from '@bak/protocol';
+import { PROTOCOL_VERSION } from '@flrande/bak-protocol';
 import { createMemoryStoreResolved, type MemoryStoreResolution } from './memory/factory.js';
 import { callRpc } from './rpc/client.js';
 import { PairingStore } from './pairing-store.js';
@@ -723,3 +723,5 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     checks
   };
 }
+
+

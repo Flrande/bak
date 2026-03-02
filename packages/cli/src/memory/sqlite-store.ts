@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import type { Episode, Skill } from '@bak/protocol';
+import type { Episode, Skill } from '@flrande/bak-protocol';
 import type { DatabaseSync as DatabaseSyncType, SQLInputValue } from 'node:sqlite';
 import { ensureDir, id, nowIso, resolveDataDir } from '../utils.js';
 import type { MemoryStoreBackend } from './store.js';
@@ -404,3 +404,5 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
     this.db.close();
   }
 }
+
+

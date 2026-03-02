@@ -8,9 +8,11 @@ export default defineConfig({
   },
   workers: 1,
   webServer: {
-    command: 'pnpm --filter @bak/test-sites dev',
+    command: 'pnpm --filter @flrande/bak-test-sites dev',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: true,
     timeout: 60_000
   }
 });
+
+

@@ -1,4 +1,4 @@
-import type { ElementMapItem, Episode, Locator, Skill, SkillPlanStep } from '@bak/protocol';
+import type { ElementMapItem, Episode, Locator, Skill, SkillPlanStep } from '@flrande/bak-protocol';
 import { getDomain } from '../utils.js';
 
 export function buildTargetCandidates(locator?: Locator): Locator[] {
@@ -410,3 +410,5 @@ export function rankCandidates(
 export function inferDomainFromStartUrl(url: string): string {
   return getDomain(url);
 }
+
+

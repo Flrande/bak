@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ElementMapItem, Locator } from '@bak/protocol';
+import type { ElementMapItem, Locator } from '@flrande/bak-protocol';
 import { BakService } from '../../packages/cli/src/service.js';
 import { BridgeError } from '../../packages/cli/src/drivers/extension-bridge.js';
 import type { BrowserDriver, DriverConnectionStatus, SnapshotResult } from '../../packages/cli/src/drivers/browser-driver.js';
@@ -182,3 +182,5 @@ describe('memory healing telemetry', () => {
     });
   });
 });
+
+
