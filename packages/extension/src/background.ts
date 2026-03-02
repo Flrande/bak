@@ -93,6 +93,27 @@ function toError(code: string, message: string, data?: Record<string, unknown>):
   return { code, message, data };
 }
 
+function normalizeUnhandledError(error: unknown): CliResponse['error'] {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return error as CliResponse['error'];
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+
+  if (lower.includes('no tab with id') || lower.includes('no window with id')) {
+    return toError('E_NOT_FOUND', message);
+  }
+  if (lower.includes('invalid url') || lower.includes('url is invalid')) {
+    return toError('E_INVALID_PARAMS', message);
+  }
+  if (lower.includes('cannot access contents of url') || lower.includes('permission denied')) {
+    return toError('E_PERMISSION', message);
+  }
+
+  return toError('E_INTERNAL', message);
+}
+
 async function waitForTabComplete(tabId: number, timeoutMs = 12_000): Promise<void> {
   try {
     const current = await chrome.tabs.get(tabId);
@@ -178,13 +199,19 @@ async function sendToContent<TResponse>(tabId: number, message: Record<string, u
   const maxAttempts = 6;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return (await chrome.tabs.sendMessage(tabId, message)) as TResponse;
+      const response = await chrome.tabs.sendMessage(tabId, message);
+      if (typeof response === 'undefined') {
+        throw new Error('Content script returned undefined response');
+      }
+      return response as TResponse;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const retriable =
         detail.includes('Receiving end does not exist') ||
         detail.includes('Could not establish connection') ||
-        detail.includes('No tab with id');
+        detail.includes('No tab with id') ||
+        detail.includes('message port closed before a response was received') ||
+        detail.includes('Content script returned undefined response');
       if (!retriable || attempt >= maxAttempts) {
         throw toError('E_NOT_READY', 'Content script unavailable', { detail });
       }
@@ -195,16 +222,27 @@ async function sendToContent<TResponse>(tabId: number, message: Record<string, u
   throw toError('E_NOT_READY', 'Content script unavailable');
 }
 
+function requireRpcEnvelope(
+  method: string,
+  value: unknown
+): { ok: boolean; result?: unknown; error?: CliResponse['error'] } {
+  if (typeof value !== 'object' || value === null || typeof (value as { ok?: unknown }).ok !== 'boolean') {
+    throw toError('E_NOT_READY', `Content script returned malformed response for ${method}`);
+  }
+  return value as { ok: boolean; result?: unknown; error?: CliResponse['error'] };
+}
+
 async function forwardContentRpc(
   tabId: number,
   method: string,
   params: Record<string, unknown>
 ): Promise<unknown> {
-  const response = await sendToContent<{ ok: boolean; result?: unknown; error?: CliResponse['error'] }>(tabId, {
+  const raw = await sendToContent<unknown>(tabId, {
     type: 'bak.rpc',
     method,
     params
   });
+  const response = requireRpcEnvelope(method, raw);
 
   if (!response.ok) {
     throw response.error ?? toError('E_INTERNAL', `${method} failed`);
@@ -532,10 +570,7 @@ async function connectWebSocket(): Promise<void> {
           sendResponse({ id: request.id, ok: true, result });
         })
         .catch((error: unknown) => {
-          const normalized =
-            typeof error === 'object' && error !== null && 'code' in error
-              ? (error as CliResponse['error'])
-              : toError('E_INTERNAL', error instanceof Error ? error.message : String(error));
+          const normalized = normalizeUnhandledError(error);
           sendResponse({ id: request.id, ok: false, error: normalized });
         });
     } catch (error) {
