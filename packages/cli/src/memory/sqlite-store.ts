@@ -32,9 +32,18 @@ interface SqlSkillRow {
   plan_json: string;
   params_schema_json: string;
   healing_json: string;
+  url_patterns_json: string | null;
+  preconditions_json: string | null;
+  stability: Skill['stability'] | null;
+  meta_json: string | null;
   stats_runs: number;
   stats_success: number;
   stats_failure: number;
+  stats_heal_attempts: number | null;
+  stats_heal_success: number | null;
+  stats_retries_total: number | null;
+  stats_manual_interventions: number | null;
+  stats_last_run_at: string | null;
 }
 
 export class SqliteMemoryStore implements MemoryStoreBackend {
@@ -78,9 +87,18 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
         plan_json TEXT NOT NULL,
         params_schema_json TEXT NOT NULL,
         healing_json TEXT NOT NULL,
+        url_patterns_json TEXT,
+        preconditions_json TEXT,
+        stability TEXT,
+        meta_json TEXT,
         stats_runs INTEGER NOT NULL,
         stats_success INTEGER NOT NULL,
-        stats_failure INTEGER NOT NULL
+        stats_failure INTEGER NOT NULL,
+        stats_heal_attempts INTEGER,
+        stats_heal_success INTEGER,
+        stats_retries_total INTEGER,
+        stats_manual_interventions INTEGER,
+        stats_last_run_at TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_skills_domain_intent ON skills(domain, intent);
@@ -90,6 +108,61 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
     this.db
       .prepare('INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)')
       .run('schema_version', '1');
+    this.ensureSkillColumns();
+    this.db.prepare(`UPDATE meta SET value = '2' WHERE key = 'schema_version'`).run();
+  }
+
+  private ensureSkillColumns(): void {
+    const columns = this.db.prepare('PRAGMA table_info(skills)').all() as Array<{ name: string }>;
+    const existing = new Set(columns.map((column) => column.name));
+    const ensureColumn = (name: string, ddl: string): void => {
+      if (!existing.has(name)) {
+        this.db.exec(`ALTER TABLE skills ADD COLUMN ${ddl}`);
+      }
+    };
+
+    ensureColumn('url_patterns_json', 'url_patterns_json TEXT');
+    ensureColumn('preconditions_json', 'preconditions_json TEXT');
+    ensureColumn('stability', 'stability TEXT');
+    ensureColumn('meta_json', 'meta_json TEXT');
+    ensureColumn('stats_heal_attempts', 'stats_heal_attempts INTEGER');
+    ensureColumn('stats_heal_success', 'stats_heal_success INTEGER');
+    ensureColumn('stats_retries_total', 'stats_retries_total INTEGER');
+    ensureColumn('stats_manual_interventions', 'stats_manual_interventions INTEGER');
+    ensureColumn('stats_last_run_at', 'stats_last_run_at TEXT');
+  }
+
+  private toSkill(row: SqlSkillRow): Skill {
+    const urlPatterns = row.url_patterns_json ? (JSON.parse(row.url_patterns_json) as Skill['urlPatterns']) : undefined;
+    const preconditions = row.preconditions_json
+      ? (JSON.parse(row.preconditions_json) as Skill['preconditions'])
+      : undefined;
+    const meta = row.meta_json ? (JSON.parse(row.meta_json) as Skill['meta']) : undefined;
+
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      domain: row.domain,
+      intent: row.intent,
+      description: row.description,
+      urlPatterns,
+      plan: JSON.parse(row.plan_json) as Skill['plan'],
+      paramsSchema: JSON.parse(row.params_schema_json) as Skill['paramsSchema'],
+      preconditions,
+      healing: JSON.parse(row.healing_json) as Skill['healing'],
+      stats: {
+        runs: row.stats_runs,
+        success: row.stats_success,
+        failure: row.stats_failure,
+        healAttempts: row.stats_heal_attempts ?? undefined,
+        healSuccess: row.stats_heal_success ?? undefined,
+        retriesTotal: row.stats_retries_total ?? undefined,
+        manualInterventions: row.stats_manual_interventions ?? undefined,
+        lastRunAt: row.stats_last_run_at ?? undefined
+      },
+      stability: row.stability ?? undefined,
+      meta
+    };
   }
 
   getPath(): string {
@@ -154,8 +227,10 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
       .prepare(
         `INSERT INTO skills (
           id, created_at, domain, intent, description, plan_json, params_schema_json, healing_json,
-          stats_runs, stats_success, stats_failure
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          url_patterns_json, preconditions_json, stability, meta_json,
+          stats_runs, stats_success, stats_failure, stats_heal_attempts, stats_heal_success,
+          stats_retries_total, stats_manual_interventions, stats_last_run_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         skill.id,
@@ -166,9 +241,18 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
         JSON.stringify(skill.plan),
         JSON.stringify(skill.paramsSchema),
         JSON.stringify(skill.healing),
+        skill.urlPatterns ? JSON.stringify(skill.urlPatterns) : null,
+        skill.preconditions ? JSON.stringify(skill.preconditions) : null,
+        skill.stability ?? null,
+        skill.meta ? JSON.stringify(skill.meta) : null,
         skill.stats.runs,
         skill.stats.success,
-        skill.stats.failure
+        skill.stats.failure,
+        skill.stats.healAttempts ?? null,
+        skill.stats.healSuccess ?? null,
+        skill.stats.retriesTotal ?? null,
+        skill.stats.manualInterventions ?? null,
+        skill.stats.lastRunAt ?? null
       );
     return skill;
   }
@@ -183,9 +267,18 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
           plan_json = ?,
           params_schema_json = ?,
           healing_json = ?,
+          url_patterns_json = ?,
+          preconditions_json = ?,
+          stability = ?,
+          meta_json = ?,
           stats_runs = ?,
           stats_success = ?,
-          stats_failure = ?
+          stats_failure = ?,
+          stats_heal_attempts = ?,
+          stats_heal_success = ?,
+          stats_retries_total = ?,
+          stats_manual_interventions = ?,
+          stats_last_run_at = ?
         WHERE id = ?`
       )
       .run(
@@ -195,9 +288,18 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
         JSON.stringify(skill.plan),
         JSON.stringify(skill.paramsSchema),
         JSON.stringify(skill.healing),
+        skill.urlPatterns ? JSON.stringify(skill.urlPatterns) : null,
+        skill.preconditions ? JSON.stringify(skill.preconditions) : null,
+        skill.stability ?? null,
+        skill.meta ? JSON.stringify(skill.meta) : null,
         skill.stats.runs,
         skill.stats.success,
         skill.stats.failure,
+        skill.stats.healAttempts ?? null,
+        skill.stats.healSuccess ?? null,
+        skill.stats.retriesTotal ?? null,
+        skill.stats.manualInterventions ?? null,
+        skill.stats.lastRunAt ?? null,
         skill.id
       );
 
@@ -227,21 +329,7 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
     `;
 
     const rows = this.db.prepare(query).all(...args) as unknown as SqlSkillRow[];
-    return rows.map((row) => ({
-      id: row.id,
-      createdAt: row.created_at,
-      domain: row.domain,
-      intent: row.intent,
-      description: row.description,
-      plan: JSON.parse(row.plan_json) as Skill['plan'],
-      paramsSchema: JSON.parse(row.params_schema_json) as Skill['paramsSchema'],
-      healing: JSON.parse(row.healing_json) as Skill['healing'],
-      stats: {
-        runs: row.stats_runs,
-        success: row.stats_success,
-        failure: row.stats_failure
-      }
-    }));
+    return rows.map((row) => this.toSkill(row));
   }
 
   getSkill(idValue: string): Skill | null {
@@ -249,21 +337,7 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
     if (!row) {
       return null;
     }
-    return {
-      id: row.id,
-      createdAt: row.created_at,
-      domain: row.domain,
-      intent: row.intent,
-      description: row.description,
-      plan: JSON.parse(row.plan_json) as Skill['plan'],
-      paramsSchema: JSON.parse(row.params_schema_json) as Skill['paramsSchema'],
-      healing: JSON.parse(row.healing_json) as Skill['healing'],
-      stats: {
-        runs: row.stats_runs,
-        success: row.stats_success,
-        failure: row.stats_failure
-      }
-    };
+    return this.toSkill(row);
   }
 
   deleteSkill(idValue: string): boolean {
@@ -296,8 +370,10 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
       .prepare(
         `INSERT OR IGNORE INTO skills (
           id, created_at, domain, intent, description, plan_json, params_schema_json, healing_json,
-          stats_runs, stats_success, stats_failure
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          url_patterns_json, preconditions_json, stability, meta_json,
+          stats_runs, stats_success, stats_failure, stats_heal_attempts, stats_heal_success,
+          stats_retries_total, stats_manual_interventions, stats_last_run_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         skill.id,
@@ -308,10 +384,19 @@ export class SqliteMemoryStore implements MemoryStoreBackend {
         JSON.stringify(skill.plan),
         JSON.stringify(skill.paramsSchema),
         JSON.stringify(skill.healing),
+        skill.urlPatterns ? JSON.stringify(skill.urlPatterns) : null,
+        skill.preconditions ? JSON.stringify(skill.preconditions) : null,
+        skill.stability ?? null,
+        skill.meta ? JSON.stringify(skill.meta) : null,
         skill.stats.runs,
         skill.stats.success,
-        skill.stats.failure
-    );
+        skill.stats.failure,
+        skill.stats.healAttempts ?? null,
+        skill.stats.healSuccess ?? null,
+        skill.stats.retriesTotal ?? null,
+        skill.stats.manualInterventions ?? null,
+        skill.stats.lastRunAt ?? null
+      );
     return result.changes > 0;
   }
 

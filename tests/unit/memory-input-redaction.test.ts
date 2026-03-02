@@ -106,11 +106,16 @@ describe('memory input text redaction defaults', () => {
         text: 'alice@example.com',
         clear: true
       });
-      await service.invoke('memory.recordStop', { outcome: 'success' });
+      const stop = (await service.invoke('memory.recordStop', { outcome: 'success' })) as { skillId?: string };
 
       const episode = memoryStore.listEpisodes()[0];
       const typeStep = episode?.steps.find((step) => step.kind === 'type');
       expect(typeStep?.text).toBe('[REDACTED:input]');
+
+      const skill = stop.skillId ? memoryStore.getSkill(stop.skillId) : undefined;
+      const skillTypeStep = skill?.plan.find((step) => step.kind === 'type');
+      expect(skillTypeStep?.text).toBe('{{param_1}}');
+      expect(skill?.paramsSchema.required).toContain('param_1');
     });
   });
 
@@ -122,11 +127,16 @@ describe('memory input text redaction defaults', () => {
         text: 'alice@example.com',
         clear: true
       });
-      await service.invoke('memory.recordStop', { outcome: 'success' });
+      const stop = (await service.invoke('memory.recordStop', { outcome: 'success' })) as { skillId?: string };
 
       const episode = memoryStore.listEpisodes()[0];
       const typeStep = episode?.steps.find((step) => step.kind === 'type');
       expect(typeStep?.text).toBe('[REDACTED:email]');
+
+      const skill = stop.skillId ? memoryStore.getSkill(stop.skillId) : undefined;
+      const skillTypeStep = skill?.plan.find((step) => step.kind === 'type');
+      expect(skillTypeStep?.text).toBe('{{param_1}}');
+      expect(skill?.paramsSchema.required).toContain('param_1');
     });
   });
 });

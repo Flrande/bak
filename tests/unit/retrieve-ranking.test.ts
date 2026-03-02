@@ -172,4 +172,25 @@ describe('retrieveSkills ranking', () => {
 
     expect(ranked[0]?.id).toBe('skill_high_reliability');
   });
+
+  it('filters unrelated skills on the same domain when semantic overlap is weak', () => {
+    const ranked = retrieveSkills(
+      [
+        createSkill({
+          id: 'skill_delete_account',
+          domain: 'portal.local',
+          intent: 'delete account permanently',
+          description: 'danger zone cleanup',
+          plan: [{ kind: 'click', locator: { role: 'button', name: 'Delete Account' } }]
+        })
+      ],
+      {
+        domain: 'portal.local',
+        intent: 'configure two factor authentication',
+        anchors: ['security settings', '2fa']
+      }
+    );
+
+    expect(ranked).toEqual([]);
+  });
 });

@@ -22,6 +22,7 @@ import {
   buildTargetCandidates,
   extractSkillFromEpisode,
   inferDomainFromStartUrl,
+  matchesUrlPattern,
   rankCandidates,
   retrieveSkills
 } from './memory/extract.js';
@@ -33,7 +34,7 @@ import type { PairingStore } from './pairing-store.js';
 import type { TraceStore } from './trace-store.js';
 import { ensureDir, getDomain, getPathname, id, resolveDataDir } from './utils.js';
 
-const DYNAMIC_FORWARD_METHODS = new Set<string>([
+const DYNAMIC_FORWARD_METHODS = new Set<MethodName>([
   'tabs.getActive',
   'tabs.get',
   'page.title',
@@ -74,6 +75,50 @@ const DYNAMIC_FORWARD_METHODS = new Set<string>([
   'debug.dumpState'
 ]);
 
+const STATIC_METHODS = new Set<MethodName>([
+  'session.create',
+  'session.close',
+  'session.info',
+  'tabs.list',
+  'tabs.focus',
+  'tabs.new',
+  'tabs.close',
+  'page.goto',
+  'page.back',
+  'page.forward',
+  'page.reload',
+  'page.wait',
+  'page.snapshot',
+  'element.click',
+  'element.type',
+  'element.scroll',
+  'debug.getConsole',
+  'memory.recordStart',
+  'memory.recordStop',
+  'memory.skills.list',
+  'memory.skills.show',
+  'memory.skills.retrieve',
+  'memory.skills.run',
+  'memory.skills.delete',
+  'memory.skills.stats',
+  'memory.episodes.list',
+  'memory.replay.explain'
+]);
+
+const SUPPORTED_METHODS = new Set<MethodName>([...STATIC_METHODS, ...DYNAMIC_FORWARD_METHODS]);
+
+const POLICY_ACTION_BY_METHOD: Partial<Record<MethodName, PolicyAction>> = {
+  'element.click': 'element.click',
+  'element.type': 'element.type',
+  'element.doubleClick': 'element.doubleClick',
+  'element.rightClick': 'element.rightClick',
+  'element.dragDrop': 'element.dragDrop',
+  'element.select': 'element.select',
+  'element.check': 'element.check',
+  'element.uncheck': 'element.uncheck',
+  'file.upload': 'file.upload'
+};
+
 interface RecordingState {
   recordingId: string;
   intent: string;
@@ -108,13 +153,25 @@ function asRecord(input: unknown): Record<string, unknown> {
   return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
 }
 
-function maybeParamValue(text: string, params?: Record<string, string>): string {
+function templateParamKey(text: string): string | undefined {
   const match = text.match(/^\{\{([a-zA-Z0-9_]+)\}\}$/);
   if (!match) {
+    return undefined;
+  }
+  return match[1];
+}
+
+function maybeParamValue(text: string, params?: Record<string, string>): string {
+  const key = templateParamKey(text);
+  if (!key) {
     return text;
   }
-  const key = match[1];
-  return params?.[key] ?? text;
+  if (!params || !(key in params)) {
+    throw new RpcError(`Missing required skill param: ${key}`, -32602, BakErrorCode.E_INVALID_PARAMS, {
+      missingParam: key
+    });
+  }
+  return params[key] ?? '';
 }
 
 function sanitizeInputText(locator: Locator, text: string): string {
@@ -396,8 +453,10 @@ export class BakService {
       return;
     }
 
+    const stepUrl = typeof step.url === 'string' && step.url.trim() ? step.url : undefined;
+
     if (!this.autoRecording) {
-      const defaultUrl = typeof step.url === 'string' ? step.url : 'about:blank';
+      const defaultUrl = stepUrl ?? 'about:blank';
       this.autoRecording = {
         recordingId: id('auto-recording'),
         intent: this.deriveAutoIntent(step),
@@ -406,6 +465,12 @@ export class BakService {
         steps: [],
         anchors: []
       };
+    } else if (stepUrl) {
+      const currentDomain = inferDomainFromStartUrl(this.autoRecording.startUrl);
+      if (this.autoRecording.startUrl === 'about:blank' || currentDomain === 'unknown' || this.autoRecording.domain === 'unknown') {
+        this.autoRecording.startUrl = stepUrl;
+        this.autoRecording.domain = inferDomainFromStartUrl(stepUrl);
+      }
     }
 
     captureInto(this.autoRecording);
@@ -436,6 +501,33 @@ export class BakService {
     );
   }
 
+  private resolveRecordingStart(recording: RecordingState, preferFirstGoto = false): { startUrl: string; domain: string } {
+    const knownStartUrl = recording.startUrl.trim();
+    const knownDomain = inferDomainFromStartUrl(knownStartUrl);
+    const gotoStep = recording.steps.find((step) => step.kind === 'goto' && typeof step.url === 'string' && step.url.trim().length > 0);
+    const gotoUrl = gotoStep?.url?.trim();
+
+    if (preferFirstGoto && gotoUrl) {
+      return {
+        startUrl: gotoUrl,
+        domain: inferDomainFromStartUrl(gotoUrl)
+      };
+    }
+
+    if (knownStartUrl && knownStartUrl !== 'about:blank' && knownDomain !== 'unknown') {
+      return {
+        startUrl: knownStartUrl,
+        domain: knownDomain
+      };
+    }
+
+    const startUrl = gotoUrl ?? (knownStartUrl || 'about:blank');
+    return {
+      startUrl,
+      domain: inferDomainFromStartUrl(startUrl)
+    };
+  }
+
   private maybeAutoPromoteSkill(): void {
     if (!this.autoRecording) {
       return;
@@ -445,9 +537,13 @@ export class BakService {
       return;
     }
 
+    const resolvedStart = this.resolveRecordingStart(this.autoRecording, true);
+    this.autoRecording.domain = resolvedStart.domain;
+    this.autoRecording.startUrl = resolvedStart.startUrl;
+
     const candidateEpisode = {
-      domain: this.autoRecording.domain || 'unknown',
-      startUrl: this.autoRecording.startUrl || 'about:blank',
+      domain: resolvedStart.domain || 'unknown',
+      startUrl: resolvedStart.startUrl || 'about:blank',
       intent: this.autoRecording.intent || 'auto-flow',
       steps: this.autoRecording.steps.slice(),
       anchors: [...new Set(this.autoRecording.anchors)].slice(0, 20),
@@ -607,6 +703,101 @@ export class BakService {
     return { requiresConfirm: decision.decision === 'requireConfirm' };
   }
 
+  private async withPolicyOnDynamicRequest(
+    methodName: MethodName,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const action = POLICY_ACTION_BY_METHOD[methodName];
+    if (!action) {
+      return params;
+    }
+
+    const requiresConfirm = params.requiresConfirm === true;
+    if (methodName === 'element.dragDrop') {
+      const from = params.from as Locator | undefined;
+      const to = params.to as Locator | undefined;
+      if (!from || !to) {
+        throw new RpcError(`${methodName} requires both from and to locators`, -32602, BakErrorCode.E_INVALID_PARAMS);
+      }
+      const fromDecision = await this.evaluatePolicy(action, from);
+      const toDecision = await this.evaluatePolicy(action, to);
+      return {
+        ...params,
+        requiresConfirm: requiresConfirm || fromDecision.requiresConfirm || toDecision.requiresConfirm
+      };
+    }
+
+    const locator = params.locator as Locator | undefined;
+    if (!locator) {
+      throw new RpcError(`${methodName} requires locator`, -32602, BakErrorCode.E_INVALID_PARAMS);
+    }
+
+    const decision = await this.evaluatePolicy(action, locator);
+    return {
+      ...params,
+      requiresConfirm: requiresConfirm || decision.requiresConfirm
+    };
+  }
+
+  private normalizeRunParams(skill: Skill, rawParams: unknown): Record<string, string> {
+    const paramsInput = asRecord(rawParams);
+    const normalized: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(paramsInput)) {
+      if (typeof value !== 'string') {
+        throw new RpcError(`skill params.${key} must be a string`, -32602, BakErrorCode.E_INVALID_PARAMS, {
+          param: key
+        });
+      }
+      normalized[key] = value;
+    }
+
+    const required = (skill.paramsSchema.required ?? []).filter((key): key is string => typeof key === 'string' && key.trim().length > 0);
+    const missing = required.filter((key) => !(key in normalized));
+    if (missing.length > 0) {
+      throw new RpcError(`Missing required skill params: ${missing.join(', ')}`, -32602, BakErrorCode.E_INVALID_PARAMS, {
+        missingParams: missing
+      });
+    }
+
+    return normalized;
+  }
+
+  private async verifySkillPreconditions(skill: Skill, tabId?: number): Promise<void> {
+    if (!skill.preconditions) {
+      return;
+    }
+
+    if (skill.preconditions.urlPattern) {
+      const current = await this.driver.rawRequest<{ url: string }>('page.url', { tabId });
+      const currentUrl = String(current.url ?? '');
+      if (!matchesUrlPattern(skill.preconditions.urlPattern, currentUrl)) {
+        throw new RpcError('Skill precondition failed: URL does not match', 4004, BakErrorCode.E_NOT_FOUND, {
+          expectedUrlPattern: skill.preconditions.urlPattern,
+          currentUrl
+        });
+      }
+    }
+
+    const requiredText = (skill.preconditions.requiredText ?? []).filter((item) => typeof item === 'string' && item.trim().length > 0);
+    if (requiredText.length === 0) {
+      return;
+    }
+
+    const textResult = await this.driver.rawRequest<{ chunks: Array<{ text: string }> }>('page.text', {
+      tabId,
+      maxChunks: 48,
+      chunkSize: 400
+    });
+    const haystack = textResult.chunks.map((chunk) => chunk.text).join('\n');
+    const missing = requiredText.filter((needle) => !haystack.includes(needle));
+    if (missing.length > 0) {
+      throw new RpcError('Skill precondition failed: required text not found', 4004, BakErrorCode.E_NOT_FOUND, {
+        missingRequiredText: missing
+      });
+    }
+  }
+
   private async clickWithPolicy(locator: Locator, tabId?: number, requiresConfirm = false): Promise<{ ok: true }> {
     const policy = await this.evaluatePolicy('element.click', locator);
     return this.driver.elementClick(locator, tabId, requiresConfirm || policy.requiresConfirm);
@@ -665,7 +856,11 @@ export class BakService {
             bakCode: normalized.bakCode
           }
         });
-        if (normalized.bakCode === BakErrorCode.E_PERMISSION) {
+        if (
+          normalized.bakCode === BakErrorCode.E_PERMISSION ||
+          normalized.bakCode === BakErrorCode.E_NEED_USER_CONFIRM ||
+          normalized.bakCode === BakErrorCode.E_INVALID_PARAMS
+        ) {
           throw normalized;
         }
         continue;
@@ -774,6 +969,9 @@ export class BakService {
     let updated = false;
     let healingAttempts = 0;
     let healingSuccesses = 0;
+    const maxRetriesPerAction = Math.max(1, Math.floor(skill.healing.retries || 1));
+
+    await this.verifySkillPreconditions(skill, options.tabId);
 
     for (const step of skill.plan) {
       if (step.kind === 'goto' && step.url) {
@@ -797,49 +995,76 @@ export class BakService {
       }
 
       if (step.kind === 'doubleClick' && step.locator) {
-        await this.driver.rawRequest('element.doubleClick', { tabId: options.tabId, locator: step.locator });
+        await this.driver.rawRequest(
+          'element.doubleClick',
+          await this.withPolicyOnDynamicRequest('element.doubleClick', {
+            tabId: options.tabId,
+            locator: step.locator
+          })
+        );
         continue;
       }
 
       if (step.kind === 'rightClick' && step.locator) {
-        await this.driver.rawRequest('element.rightClick', { tabId: options.tabId, locator: step.locator });
+        await this.driver.rawRequest(
+          'element.rightClick',
+          await this.withPolicyOnDynamicRequest('element.rightClick', {
+            tabId: options.tabId,
+            locator: step.locator
+          })
+        );
         continue;
       }
 
       if (step.kind === 'dragDrop' && step.fromLocator && step.toLocator) {
-        await this.driver.rawRequest('element.dragDrop', {
-          tabId: options.tabId,
-          from: step.fromLocator,
-          to: step.toLocator
-        });
+        await this.driver.rawRequest(
+          'element.dragDrop',
+          await this.withPolicyOnDynamicRequest('element.dragDrop', {
+            tabId: options.tabId,
+            from: step.fromLocator,
+            to: step.toLocator
+          })
+        );
         continue;
       }
 
       if (step.kind === 'select' && step.locator) {
-        await this.driver.rawRequest('element.select', {
-          tabId: options.tabId,
-          locator: step.locator,
-          values: step.values ?? []
-        });
+        await this.driver.rawRequest(
+          'element.select',
+          await this.withPolicyOnDynamicRequest('element.select', {
+            tabId: options.tabId,
+            locator: step.locator,
+            values: step.values ?? []
+          })
+        );
         continue;
       }
 
       if (step.kind === 'check' && step.locator) {
-        await this.driver.rawRequest('element.check', { tabId: options.tabId, locator: step.locator });
+        await this.driver.rawRequest(
+          'element.check',
+          await this.withPolicyOnDynamicRequest('element.check', { tabId: options.tabId, locator: step.locator })
+        );
         continue;
       }
 
       if (step.kind === 'uncheck' && step.locator) {
-        await this.driver.rawRequest('element.uncheck', { tabId: options.tabId, locator: step.locator });
+        await this.driver.rawRequest(
+          'element.uncheck',
+          await this.withPolicyOnDynamicRequest('element.uncheck', { tabId: options.tabId, locator: step.locator })
+        );
         continue;
       }
 
       if (step.kind === 'upload' && step.locator) {
-        await this.driver.rawRequest('file.upload', {
-          tabId: options.tabId,
-          locator: step.locator,
-          files: step.files ?? []
-        });
+        await this.driver.rawRequest(
+          'file.upload',
+          await this.withPolicyOnDynamicRequest('file.upload', {
+            tabId: options.tabId,
+            locator: step.locator,
+            files: step.files ?? []
+          })
+        );
         continue;
       }
 
@@ -859,12 +1084,38 @@ export class BakService {
         continue;
       }
 
+      if (step.kind === 'keyboardType') {
+        if (typeof step.text !== 'string') {
+          throw new RpcError('keyboardType step requires text', -32602, BakErrorCode.E_INVALID_PARAMS, {
+            stepKind: step.kind
+          });
+        }
+
+        await this.driver.rawRequest('keyboard.type', {
+          tabId: options.tabId,
+          text: maybeParamValue(step.text, options.params),
+          delayMs: typeof step.delayMs === 'number' ? step.delayMs : undefined
+        });
+        continue;
+      }
+
       if (step.kind === 'scrollTo') {
         await this.driver.rawRequest('page.scrollTo', {
           tabId: options.tabId,
-          x: undefined,
-          y: undefined
+          x: typeof step.x === 'number' ? step.x : undefined,
+          y: typeof step.y === 'number' ? step.y : undefined,
+          behavior: step.behavior === 'smooth' || step.behavior === 'auto' ? step.behavior : undefined
         });
+        continue;
+      }
+
+      if (step.kind === 'elementScroll') {
+        await this.driver.elementScroll(
+          maybeLocatorFromStep(step),
+          typeof step.dx === 'number' ? step.dx : 0,
+          typeof step.dy === 'number' ? step.dy : 320,
+          options.tabId
+        );
         continue;
       }
 
@@ -877,30 +1128,57 @@ export class BakService {
       }
 
       if (step.kind === 'click' || step.kind === 'type') {
-        try {
-          const result = await this.pickRunCandidate(step, options);
-          updated = updated || Boolean(result.updated);
-          if (result.healingAttempted) {
-            healingAttempts += 1;
+        for (let attempt = 1; attempt <= maxRetriesPerAction; attempt += 1) {
+          try {
+            const result = await this.pickRunCandidate(step, options);
+            updated = updated || Boolean(result.updated);
+            if (result.healingAttempted) {
+              healingAttempts += 1;
+            }
+            if (result.healingSucceeded) {
+              healingSuccesses += 1;
+            }
+            break;
+          } catch (error) {
+            const normalized = this.normalizeError(error);
+            if (hasHealingAttemptFlag(normalized)) {
+              healingAttempts += 1;
+            }
+
+            const unretriable =
+              normalized.bakCode === BakErrorCode.E_PERMISSION ||
+              normalized.bakCode === BakErrorCode.E_NEED_USER_CONFIRM ||
+              normalized.bakCode === BakErrorCode.E_INVALID_PARAMS;
+            if (unretriable || attempt >= maxRetriesPerAction) {
+              this.applyHealingStats(skill, healingAttempts, healingSuccesses);
+              throw new RpcError(normalized.message, normalized.code, normalized.bakCode, {
+                ...rpcErrorMetadata(normalized),
+                healingAttempts,
+                healingSuccesses,
+                healingAttempted: healingAttempts > 0,
+                retriesUsed: attempt - 1
+              });
+            }
+
+            const traceId = this.currentTraceId || this.traceStore.newTraceId();
+            this.currentTraceId = traceId;
+            this.traceStore.append(traceId, {
+              method: 'memory.heal.retry',
+              params: {
+                stepKind: step.kind,
+                retryAttempt: attempt,
+                maxRetries: maxRetriesPerAction,
+                bakCode: normalized.bakCode
+              }
+            });
           }
-          if (result.healingSucceeded) {
-            healingSuccesses += 1;
-          }
-        } catch (error) {
-          const normalized = this.normalizeError(error);
-          if (hasHealingAttemptFlag(normalized)) {
-            healingAttempts += 1;
-          }
-          this.applyHealingStats(skill, healingAttempts, healingSuccesses);
-          throw new RpcError(normalized.message, normalized.code, normalized.bakCode, {
-            ...rpcErrorMetadata(normalized),
-            healingAttempts,
-            healingSuccesses,
-            healingAttempted: healingAttempts > 0
-          });
         }
         continue;
       }
+
+      throw new RpcError(`Unsupported skill step kind: ${step.kind}`, -32602, BakErrorCode.E_INVALID_PARAMS, {
+        stepKind: step.kind
+      });
     }
 
     this.updateRunStats(skill, true, healingAttempts, false);
@@ -1001,7 +1279,7 @@ export class BakService {
             bridgeTotalFailures: connection.raw.totalFailures,
             bridgeTotalTimeouts: connection.raw.totalTimeouts,
             bridgeTotalNotReady: connection.raw.totalNotReady,
-            capabilityCount: DYNAMIC_FORWARD_METHODS.size + 24
+            capabilityCount: SUPPORTED_METHODS.size
           } as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
       }
@@ -1114,7 +1392,7 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
           const includeBase64 = Boolean(args.includeBase64);
-          const snapshot = await this.driver.pageSnapshot(tabId);
+          const snapshot = await this.driver.pageSnapshot(tabId, true);
           const redactedElements = redactElements(snapshot.elements);
 
           const traceId = this.currentTraceId || this.traceStore.newTraceId();
@@ -1181,7 +1459,15 @@ export class BakService {
           const dx = Number(args.dx ?? 0);
           const dy = Number(args.dy ?? 320);
           const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
-          return this.driver.elementScroll(locator, dx, dy, tabId);
+          const result = await this.driver.elementScroll(locator, dx, dy, tabId);
+          this.captureStep({
+            kind: 'elementScroll',
+            locator,
+            dx,
+            dy,
+            targetCandidates: buildTargetCandidates(locator)
+          });
+          return result;
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'debug.getConsole': {
@@ -1231,10 +1517,11 @@ export class BakService {
 
           const recording = this.recording;
           this.recording = null;
+          const resolvedStart = this.resolveRecordingStart(recording, true);
 
           const episode = this.memoryStore.createEpisode({
-            domain: recording.domain,
-            startUrl: recording.startUrl,
+            domain: resolvedStart.domain,
+            startUrl: resolvedStart.startUrl,
             intent: recording.intent,
             steps: recording.steps,
             anchors: [...new Set(recording.anchors)].slice(0, 20),
@@ -1284,16 +1571,21 @@ export class BakService {
           }
 
           const anchors = Array.isArray(args.anchors) ? (args.anchors as string[]) : [];
-          const url = (args.url as string | undefined) ?? '';
+          let url = (args.url as string | undefined) ?? '';
           let domain = (args.domain as string | undefined) ?? '';
 
           if (!domain && url) {
             domain = getDomain(url);
           }
-          if (!domain && this.driver.isConnected()) {
+          if ((!domain || !url) && this.driver.isConnected()) {
             const tabs = await this.driver.tabsList();
-            const activeUrl = tabs.tabs.find((tab) => tab.active)?.url;
-            domain = activeUrl ? getDomain(activeUrl) : '';
+            const activeUrl = tabs.tabs.find((tab) => tab.active)?.url ?? tabs.tabs[0]?.url;
+            if (!url && activeUrl) {
+              url = activeUrl;
+            }
+            if (!domain && activeUrl) {
+              domain = getDomain(activeUrl);
+            }
           }
 
           const minScore =
@@ -1404,7 +1696,7 @@ export class BakService {
             throw new RpcError('Skill not found', 4004, BakErrorCode.E_NOT_FOUND);
           }
 
-          const paramsInput = (args.params as Record<string, string> | undefined) ?? {};
+          const paramsInput = this.normalizeRunParams(skill, args.params);
 
           try {
             const runOutcome = await this.runSkill(skill, {
@@ -1433,12 +1725,13 @@ export class BakService {
         }) as Promise<MethodResult<TMethod>>;
       }
       default: {
-        const methodName = String(method);
+        const methodName = String(method) as MethodName;
         if (DYNAMIC_FORWARD_METHODS.has(methodName)) {
           this.ensurePairing();
           this.ensureConnected();
           return this.withTrace(methodName, params, async () => {
-            const result = await this.driver.rawRequest(methodName, args);
+            const forwardArgs = await this.withPolicyOnDynamicRequest(methodName, args);
+            const result = await this.driver.rawRequest(methodName, forwardArgs);
             if (methodName === 'context.enterFrame' || methodName === 'context.exitFrame' || methodName === 'context.reset') {
               const payload = asRecord(result);
               this.contextFrameDepth = typeof payload.frameDepth === 'number' ? payload.frameDepth : 0;
@@ -1455,7 +1748,7 @@ export class BakService {
             }
 
             if (methodName.startsWith('element.')) {
-              const locator = (args.locator as Locator | undefined) ?? undefined;
+              const locator = (forwardArgs.locator as Locator | undefined) ?? undefined;
               if (methodName === 'element.hover' && locator) {
                 this.captureStep({ kind: 'hover', locator, targetCandidates: buildTargetCandidates(locator) });
               }
@@ -1469,7 +1762,7 @@ export class BakService {
                 this.captureStep({
                   kind: 'select',
                   locator,
-                  values: Array.isArray(args.values) ? (args.values as string[]) : [],
+                  values: Array.isArray(forwardArgs.values) ? (forwardArgs.values as string[]) : [],
                   targetCandidates: buildTargetCandidates(locator)
                 });
               }
@@ -1483,23 +1776,34 @@ export class BakService {
 
             if (methodName === 'page.scrollTo') {
               this.captureStep({
-                kind: 'scrollTo'
+                kind: 'scrollTo',
+                x: typeof forwardArgs.x === 'number' ? forwardArgs.x : undefined,
+                y: typeof forwardArgs.y === 'number' ? forwardArgs.y : undefined,
+                behavior:
+                  forwardArgs.behavior === 'smooth' || forwardArgs.behavior === 'auto' ? forwardArgs.behavior : undefined
               });
             }
             if (methodName === 'keyboard.press') {
               this.captureStep({
                 kind: 'press',
-                key: typeof args.key === 'string' ? args.key : undefined
+                key: typeof forwardArgs.key === 'string' ? forwardArgs.key : undefined
+              });
+            }
+            if (methodName === 'keyboard.type') {
+              this.captureStep({
+                kind: 'keyboardType',
+                text: typeof forwardArgs.text === 'string' ? forwardArgs.text : '',
+                delayMs: typeof forwardArgs.delayMs === 'number' ? forwardArgs.delayMs : undefined
               });
             }
             if (methodName === 'keyboard.hotkey') {
               this.captureStep({
                 kind: 'hotkey',
-                keys: Array.isArray(args.keys) ? (args.keys as string[]) : []
+                keys: Array.isArray(forwardArgs.keys) ? (forwardArgs.keys as string[]) : []
               });
             }
             if (methodName === 'file.upload') {
-              const locator = args.locator as Locator | undefined;
+              const locator = forwardArgs.locator as Locator | undefined;
               if (locator) {
                 this.captureStep({
                   kind: 'upload',

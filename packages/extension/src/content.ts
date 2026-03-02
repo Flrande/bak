@@ -9,6 +9,7 @@ import type {
   PageTextChunk
 } from '@bak/protocol';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
+import { unsupportedLocatorHint } from './limitations.js';
 
 type ActionName =
   | 'click'
@@ -155,9 +156,63 @@ function patchConsoleCapture(): void {
           }
         })
         .join(' ');
-      pushConsole(entry.level, message);
+      pushConsole(entry.level, message, 'isolated');
       original.apply(console, args);
     };
+  }
+
+  window.addEventListener('bak:console', (event: Event) => {
+    const detail = (event as CustomEvent<{ level?: ConsoleEntry['level']; message?: string; source?: string; ts?: number }>).detail;
+    if (!detail || typeof detail !== 'object') {
+      return;
+    }
+    const level: ConsoleEntry['level'] =
+      detail.level === 'debug' || detail.level === 'info' || detail.level === 'warn' || detail.level === 'error' ? detail.level : 'log';
+    const message = typeof detail.message === 'string' ? detail.message : '';
+    if (!message) {
+      return;
+    }
+    pushConsole(level, message, detail.source ?? 'page');
+  });
+
+  try {
+    const injector = document.createElement('script');
+    injector.textContent = `
+(() => {
+  const g = window;
+  if (g.__bakPageConsolePatched) return;
+  g.__bakPageConsolePatched = true;
+  const emit = (level, message, source) =>
+    window.dispatchEvent(new CustomEvent('bak:console', { detail: { level, message, source, ts: Date.now() } }));
+  const serialize = (value) => {
+    if (value instanceof Error) return value.message;
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+  ['log', 'debug', 'info', 'warn', 'error'].forEach((method) => {
+    const original = console[method];
+    console[method] = (...args) => {
+      emit(method, args.map(serialize).join(' '), 'page');
+      return original.apply(console, args);
+    };
+  });
+  window.addEventListener('error', (event) => {
+    emit('error', event.message || 'error event', event.filename || 'page');
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+    emit('error', 'unhandledrejection: ' + reason, 'page');
+  });
+})();
+`;
+    (document.documentElement ?? document.head ?? document.body).appendChild(injector);
+    injector.remove();
+  } catch {
+    // Keep isolated-world capture if page-world injection is blocked.
   }
 
   window.addEventListener('error', (event) => {
@@ -615,6 +670,48 @@ function querySelectorAcrossOpenShadow(root: ParentNode, selector: string): HTML
   return null;
 }
 
+function querySelectorAllAcrossOpenShadow(root: ParentNode, selector: string): HTMLElement[] {
+  const collected: HTMLElement[] = [];
+  const seen = new Set<HTMLElement>();
+
+  const push = (element: HTMLElement): void => {
+    if (seen.has(element)) {
+      return;
+    }
+    seen.add(element);
+    collected.push(element);
+  };
+
+  try {
+    for (const found of Array.from(root.querySelectorAll<HTMLElement>(selector))) {
+      push(found);
+    }
+  } catch {
+    return [];
+  }
+
+  const stack: ParentNode[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const hosts = Array.from(current.querySelectorAll<HTMLElement>('*')).filter((item) => item.shadowRoot);
+    for (const host of hosts) {
+      if (!host.shadowRoot) {
+        continue;
+      }
+      try {
+        for (const found of Array.from(host.shadowRoot.querySelectorAll<HTMLElement>(selector))) {
+          push(found);
+        }
+      } catch {
+        continue;
+      }
+      stack.push(host.shadowRoot);
+    }
+  }
+
+  return collected;
+}
+
 function resolveFrameDocument(framePath: string[]): { ok: true; document: Document } | { ok: false; error: ActionError } {
   let currentDocument = document;
   for (const selector of framePath) {
@@ -777,11 +874,12 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
   if (locator.role || locator.name) {
     const role = locator.role?.toLowerCase();
     const name = locator.name?.toLowerCase();
-    const found = interactive.find((element) => {
+    const matches = interactive.filter((element) => {
       const roleMatch = role ? inferRole(element).toLowerCase() === role : true;
       const nameMatch = name ? inferName(element).toLowerCase().includes(name) : true;
       return roleMatch && nameMatch;
     });
+    const found = indexedCandidate(matches, locator);
     if (found) {
       return found;
     }
@@ -789,10 +887,11 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
 
   if (locator.text) {
     const needle = locator.text.toLowerCase();
-    const found = interactive.find((element) => {
+    const matches = interactive.filter((element) => {
       const text = (element.innerText || element.textContent || '').toLowerCase();
       return text.includes(needle);
     });
+    const found = indexedCandidate(matches, locator);
     if (found) {
       return found;
     }
@@ -811,7 +910,18 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
         return null;
       }
       if (index === parts.length - 1) {
-        return found && isElementVisible(found) ? found : null;
+        let matches: HTMLElement[] = [];
+        if (locator.shadow === 'none') {
+          try {
+            matches = Array.from(currentRoot.querySelectorAll<HTMLElement>(selector));
+          } catch {
+            matches = [];
+          }
+        } else {
+          matches = querySelectorAllAcrossOpenShadow(currentRoot, selector);
+        }
+        const visibleMatches = matches.filter((item) => isElementVisible(item));
+        return indexedCandidate(visibleMatches, locator) ?? null;
       }
       if (!found.shadowRoot) {
         return null;
@@ -821,7 +931,10 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
   }
 
   if (locator.name) {
-    const fallback = interactive.find((element) => inferName(element).toLowerCase().includes(locator.name!.toLowerCase()));
+    const fallback = indexedCandidate(
+      interactive.filter((element) => inferName(element).toLowerCase().includes(locator.name!.toLowerCase())),
+      locator
+    );
     if (fallback) {
       return fallback;
     }
@@ -1010,6 +1123,23 @@ function failAction(code: string, message: string, data?: Record<string, unknown
 
 function failAssessment(code: string, message: string, data?: Record<string, unknown>): ActionAssessment {
   return { ok: false, error: { code, message, data } };
+}
+
+function indexedCandidate<T>(candidates: T[], locator?: Locator): T | undefined {
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const index = typeof locator?.index === 'number' ? Math.max(0, Math.floor(locator.index)) : 0;
+  return candidates[index];
+}
+
+function notFoundForLocator(locator: Locator | undefined, message: string): ActionError {
+  const hint = unsupportedLocatorHint(locator);
+  return {
+    code: 'E_NOT_FOUND',
+    message,
+    data: hint ? { hint } : undefined
+  };
 }
 
 function describeNode(node: Element | null): string {
@@ -1346,10 +1476,14 @@ function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
   const urlIncludes = typeof params.urlIncludes === 'string' ? params.urlIncludes : '';
   const method = typeof params.method === 'string' ? params.method.toUpperCase() : '';
   const status = typeof params.status === 'number' ? params.status : undefined;
+  const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : undefined;
   const limit = typeof params.limit === 'number' ? Math.max(1, Math.min(500, Math.floor(params.limit))) : 50;
 
   return networkSnapshotEntries()
     .filter((entry) => {
+      if (typeof sinceTs === 'number' && entry.ts < sinceTs) {
+        return false;
+      }
       if (urlIncludes && !entry.url.includes(urlIncludes)) {
         return false;
       }
@@ -1367,9 +1501,10 @@ function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
 
 async function waitForNetwork(params: Record<string, unknown>): Promise<NetworkEntry> {
   const timeoutMs = typeof params.timeoutMs === 'number' ? Math.max(1, params.timeoutMs) : 5000;
+  const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : Date.now();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const matched = filterNetworkEntries({ ...params, limit: 1 })[0];
+    const matched = filterNetworkEntries({ ...params, sinceTs, limit: 1 })[0];
     if (matched) {
       return matched;
     }
@@ -1440,7 +1575,7 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
 
     const target = resolveLocator(message.locator);
     if (!target) {
-      return failAction('E_NOT_FOUND', 'Target not found');
+      return { ok: false, error: notFoundForLocator(message.locator, 'Target not found') };
     }
 
     const name = inferName(target);
@@ -1452,7 +1587,7 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
     if (isHighRisk) {
       const approved = await askConfirm(`Action: ${message.action} on "${name || text || target.tagName}"`);
       if (!approved) {
-        return failAction('E_PERMISSION', 'User rejected high-risk action');
+        return failAction('E_NEED_USER_CONFIRM', 'User rejected high-risk action');
       }
     }
 
@@ -1575,14 +1710,18 @@ async function handleAction(message: ActionMessage): Promise<ActionResult> {
   }
 }
 
-function waitConditionMet(message: WaitMessage): boolean {
+function waitConditionMet(message: WaitMessage, root: ParentNode): boolean {
   if (message.mode === 'selector') {
-    return Boolean(querySelectorAcrossOpenShadow(document, message.value));
+    return Boolean(querySelectorAcrossOpenShadow(root, message.value));
   }
 
   if (message.mode === 'text') {
-    const bodyText = document.body?.innerText ?? '';
-    return bodyText.includes(message.value);
+    if (root instanceof Document) {
+      const bodyText = root.body?.innerText ?? root.documentElement?.textContent ?? '';
+      return bodyText.includes(message.value);
+    }
+    const text = root.textContent ?? '';
+    return text.includes(message.value);
   }
 
   return window.location.href.includes(message.value);
@@ -1590,7 +1729,13 @@ function waitConditionMet(message: WaitMessage): boolean {
 
 async function waitFor(message: WaitMessage): Promise<ActionResult> {
   const timeoutMs = message.timeoutMs ?? 5000;
-  if (waitConditionMet(message)) {
+  const rootResult = resolveRootForLocator();
+  if (!rootResult.ok) {
+    return { ok: false, error: rootResult.error };
+  }
+
+  const root = rootResult.root;
+  if (waitConditionMet(message, root)) {
     return { ok: true };
   }
 
@@ -1608,7 +1753,11 @@ async function waitFor(message: WaitMessage): Promise<ActionResult> {
     };
 
     const check = (): void => {
-      if (waitConditionMet(message)) {
+      const latestRoot = resolveRootForLocator();
+      if (!latestRoot.ok) {
+        return;
+      }
+      if (waitConditionMet(message, latestRoot.root)) {
         finish({ ok: true });
       }
     };
@@ -1616,9 +1765,9 @@ async function waitFor(message: WaitMessage): Promise<ActionResult> {
     const observer = new MutationObserver(() => {
       check();
     });
-    const root = document.documentElement;
-    if (root) {
-      observer.observe(root, {
+    const observationRoot = root instanceof Document ? root.documentElement : (root as Node);
+    if (observationRoot) {
+      observer.observe(observationRoot, {
         childList: true,
         subtree: true,
         attributes: true,
@@ -1789,7 +1938,7 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
     case 'element.get': {
       const target = resolveLocator(params.locator as Locator);
       if (!target) {
-        throw { code: 'E_NOT_FOUND', message: 'element.get target not found' } satisfies ActionError;
+        throw notFoundForLocator(params.locator as Locator | undefined, 'element.get target not found');
       }
 
       const elements = collectElements({}, params.locator as Locator);
@@ -1917,7 +2066,15 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
     case 'file.upload': {
       const target = resolveLocator(params.locator as Locator);
       if (!target || !isInputElement(target) || target.type !== 'file') {
-        throw { code: 'E_NOT_FOUND', message: 'file.upload target must be <input type=file>' } satisfies ActionError;
+        throw notFoundForLocator(params.locator as Locator | undefined, 'file.upload target must be <input type=file>');
+      }
+
+      if (params.requiresConfirm === true) {
+        const targetName = inferName(target) || target.getAttribute('name') || target.id || '<input type=file>';
+        const approved = await askConfirm(`Action: file.upload on "${targetName}"`);
+        if (!approved) {
+          throw { code: 'E_NEED_USER_CONFIRM', message: 'User rejected high-risk action' } satisfies ActionError;
+        }
       }
 
       const files = Array.isArray(params.files) ? params.files : [];
@@ -2024,6 +2181,7 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
     case 'debug.dumpState': {
       const consoleLimit = typeof params.consoleLimit === 'number' ? Math.max(1, Math.floor(params.consoleLimit)) : 80;
       const networkLimit = typeof params.networkLimit === 'number' ? Math.max(1, Math.floor(params.networkLimit)) : 80;
+      const includeAccessibility = params.includeAccessibility === true;
       return {
         url: window.location.href,
         title: document.title,
@@ -2034,7 +2192,8 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
         dom: domSummary(),
         text: pageTextChunks(12, 260),
         console: consoleEntries.slice(-consoleLimit),
-        network: filterNetworkEntries({ limit: networkLimit })
+        network: filterNetworkEntries({ limit: networkLimit }),
+        accessibility: includeAccessibility ? pageAccessibility(200) : undefined
       };
     }
     default:
@@ -2074,7 +2233,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   if (typed.type === 'bak.selectCandidate') {
     void pickCandidate((message as CandidateMessage).candidates).then((selectedEid) => {
       if (!selectedEid) {
-        sendResponse({ ok: false, error: { code: 'E_PERMISSION', message: 'No candidate selected' } });
+        sendResponse({ ok: false, error: { code: 'E_NEED_USER_CONFIRM', message: 'No candidate selected' } });
         return;
       }
       sendResponse({ ok: true, selectedEid });

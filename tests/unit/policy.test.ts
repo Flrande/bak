@@ -19,6 +19,20 @@ describe('policy matcher', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it('denies file.upload action by default', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-upload-default-'));
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'file.upload',
+      domain: 'example.com',
+      path: '/upload',
+      locator: { css: 'input[type="file"]', name: 'Upload receipt' }
+    });
+
+    expect(decision.decision).toBe('deny');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
   it('requires confirm for destructive submit actions by default', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-highrisk-'));
     const engine = new PolicyEngine(dataDir);
@@ -62,6 +76,37 @@ describe('policy matcher', () => {
 
     expect(decision.decision).toBe('allow');
     expect(decision.ruleId).toBe('allow-example-upload');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('keeps backward compatibility for file.upload with element.click upload rules', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-upload-compat-'));
+    writeFileSync(
+      join(dataDir, '.bak-policy.json'),
+      JSON.stringify({
+        rules: [
+          {
+            id: 'allow-upload-compat',
+            action: 'element.click',
+            domain: 'example.com',
+            tag: 'fileUpload',
+            decision: 'allow'
+          }
+        ]
+      }),
+      'utf8'
+    );
+
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'file.upload',
+      domain: 'example.com',
+      path: '/upload',
+      locator: { css: 'input[type="file"]', name: 'Upload invoice' }
+    });
+
+    expect(decision.decision).toBe('allow');
+    expect(decision.ruleId).toBe('allow-upload-compat');
     rmSync(dataDir, { recursive: true, force: true });
   });
 

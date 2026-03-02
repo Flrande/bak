@@ -2,7 +2,19 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Locator } from '@bak/protocol';
 
-export type PolicyAction = 'element.click' | 'element.type';
+const POLICY_ACTION_VALUES = [
+  'element.click',
+  'element.type',
+  'element.doubleClick',
+  'element.rightClick',
+  'element.dragDrop',
+  'element.select',
+  'element.check',
+  'element.uncheck',
+  'file.upload'
+] as const;
+
+export type PolicyAction = (typeof POLICY_ACTION_VALUES)[number];
 export type PolicyDecisionType = 'allow' | 'deny' | 'requireConfirm';
 export type PolicyTag = 'fileUpload' | 'payment' | 'destructive' | 'submit' | 'highRisk';
 
@@ -120,7 +132,9 @@ export function detectPolicyTags(locator: Locator): PolicyTag[] {
 }
 
 function ruleMatches(rule: PolicyRule, context: EvaluatedPolicyContext): boolean {
-  if (rule.action !== '*' && rule.action !== context.action) {
+  const compatibleAction =
+    rule.action === context.action || (context.action === 'file.upload' && rule.action === 'element.click');
+  if (rule.action !== '*' && !compatibleAction) {
     return false;
   }
   if (!domainMatches(rule.domain, context.domain)) {
@@ -183,7 +197,11 @@ function loadRules(policyPath: string): PolicyRule[] {
     .filter((rule) => rule && typeof rule === 'object')
     .map((rule) => ({
       id: typeof rule.id === 'string' ? rule.id : undefined,
-      action: rule.action === 'element.click' || rule.action === 'element.type' || rule.action === '*' ? rule.action : '*',
+      action:
+        (typeof rule.action === 'string' && (POLICY_ACTION_VALUES as readonly string[]).includes(rule.action)) ||
+        rule.action === '*'
+          ? rule.action
+          : '*',
       decision:
         rule.decision === 'allow' || rule.decision === 'deny' || rule.decision === 'requireConfirm'
           ? rule.decision

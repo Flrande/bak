@@ -144,7 +144,19 @@
         "role": { "type": "string" },
         "name": { "type": "string" },
         "text": { "type": "string" },
-        "css": { "type": "string" }
+        "css": { "type": "string" },
+        "framePath": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shadow": {
+          "type": "string",
+          "enum": ["auto", "pierce", "none"]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
@@ -191,10 +203,13 @@
         "connectionState",
         "connectionReason",
         "protocolVersion",
+        "compatibleProtocolVersions",
         "extensionVersion",
         "memoryBackend",
         "activeTab",
+        "context",
         "recording",
+        "autoLearning",
         "heartbeatStale",
         "heartbeatAgeMs",
         "staleAfterMs",
@@ -205,7 +220,8 @@
         "bridgeTotalRequests",
         "bridgeTotalFailures",
         "bridgeTotalTimeouts",
-        "bridgeTotalNotReady"
+        "bridgeTotalNotReady",
+        "capabilityCount"
       ],
       "properties": {
         "sessionId": { "type": ["string", "null"] },
@@ -214,6 +230,10 @@
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
         "protocolVersion": { "type": "string", "const": "v2" },
+        "compatibleProtocolVersions": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["v1", "v2"] }
+        },
         "extensionVersion": { "type": ["string", "null"] },
         "memoryBackend": {
           "type": "object",
@@ -235,7 +255,17 @@
           },
           "additionalProperties": false
         },
+        "context": {
+          "type": "object",
+          "required": ["frameDepth", "shadowDepth"],
+          "properties": {
+            "frameDepth": { "type": "number" },
+            "shadowDepth": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
         "recording": { "type": "boolean" },
+        "autoLearning": { "type": "boolean" },
         "heartbeatStale": { "type": "boolean" },
         "heartbeatAgeMs": { "type": ["number", "null"] },
         "staleAfterMs": { "type": "number" },
@@ -246,7 +276,8 @@
         "bridgeTotalRequests": { "type": "number" },
         "bridgeTotalFailures": { "type": "number" },
         "bridgeTotalTimeouts": { "type": "number" },
-        "bridgeTotalNotReady": { "type": "number" }
+        "bridgeTotalNotReady": { "type": "number" },
+        "capabilityCount": { "type": "number" }
       },
       "additionalProperties": false
     }

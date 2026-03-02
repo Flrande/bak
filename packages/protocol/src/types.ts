@@ -171,13 +171,21 @@ export interface SkillPlanStep {
     | 'press'
     | 'hotkey'
     | 'scrollTo'
-    | 'scrollIntoView';
+    | 'scrollIntoView'
+    | 'elementScroll'
+    | 'keyboardType';
   locator?: Locator;
   targetCandidates?: Locator[];
   text?: string;
   clear?: boolean;
   key?: string;
   keys?: string[];
+  x?: number;
+  y?: number;
+  behavior?: 'auto' | 'smooth';
+  dx?: number;
+  dy?: number;
+  delayMs?: number;
   fromLocator?: Locator;
   toLocator?: Locator;
   values?: string[];
@@ -259,7 +267,16 @@ export interface PolicyDecision {
 }
 
 export interface PolicyAuditEntry extends PolicyDecision {
-  action: 'element.click' | 'element.type';
+  action:
+    | 'element.click'
+    | 'element.type'
+    | 'element.doubleClick'
+    | 'element.rightClick'
+    | 'element.dragDrop'
+    | 'element.select'
+    | 'element.check'
+    | 'element.uncheck'
+    | 'file.upload';
   domain: string;
   path: string;
   locatorSummary: {
@@ -509,6 +526,7 @@ export interface MethodMap {
       text: PageTextChunk[];
       console: ConsoleEntry[];
       network: NetworkEntry[];
+      accessibility?: AccessibilityNode[];
     };
   };
 
