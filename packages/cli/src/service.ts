@@ -780,7 +780,10 @@ export class BakService {
             await this.driver.pageGoto(expectedUrlPattern, tabId);
             return;
           }
-          return;
+          throw new RpcError('Skill precondition failed: URL does not match', 4004, BakErrorCode.E_NOT_FOUND, {
+            expectedUrlPattern,
+            currentUrl
+          });
         }
         throw new RpcError('Skill precondition failed: URL does not match', 4004, BakErrorCode.E_NOT_FOUND, {
           expectedUrlPattern,
