@@ -1501,7 +1501,7 @@ function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
 
 async function waitForNetwork(params: Record<string, unknown>): Promise<NetworkEntry> {
   const timeoutMs = typeof params.timeoutMs === 'number' ? Math.max(1, params.timeoutMs) : 5000;
-  const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : Date.now();
+  const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : Date.now() - timeoutMs;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const matched = filterNetworkEntries({ ...params, sinceTs, limit: 1 })[0];

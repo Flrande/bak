@@ -4,6 +4,7 @@ import type { ExtensionBridge } from './extension-bridge.js';
 
 const BRIDGE_TIMEOUT_GRACE_MS = 1_500;
 const BRIDGE_TIMEOUT_MIN_MS = 1_000;
+const NAVIGATION_BRIDGE_TIMEOUT_MS = 30_000;
 
 function normalizeTimeoutMs(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
@@ -77,19 +78,19 @@ export class ExtensionDriver implements BrowserDriver {
   }
 
   pageGoto(url: string, tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('page.goto', { url, tabId });
+    return this.bridge.request('page.goto', { url, tabId }, NAVIGATION_BRIDGE_TIMEOUT_MS);
   }
 
   pageBack(tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('page.back', { tabId });
+    return this.bridge.request('page.back', { tabId }, NAVIGATION_BRIDGE_TIMEOUT_MS);
   }
 
   pageForward(tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('page.forward', { tabId });
+    return this.bridge.request('page.forward', { tabId }, NAVIGATION_BRIDGE_TIMEOUT_MS);
   }
 
   pageReload(tabId?: number): Promise<{ ok: true }> {
-    return this.bridge.request('page.reload', { tabId });
+    return this.bridge.request('page.reload', { tabId }, NAVIGATION_BRIDGE_TIMEOUT_MS);
   }
 
   pageWait(

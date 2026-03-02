@@ -161,6 +161,14 @@ export async function createHarness(): Promise<E2EHarness> {
             locatorPattern: 'cancel-btn',
             decision: 'deny',
             reason: 'test policy deny path'
+          },
+          {
+            id: 'allow-upload-on-upload-page',
+            action: 'file.upload',
+            domain: '127.0.0.1',
+            pathPrefix: '/upload.html',
+            decision: 'allow',
+            reason: 'allow e2e upload coverage paths'
           }
         ]
       }),
