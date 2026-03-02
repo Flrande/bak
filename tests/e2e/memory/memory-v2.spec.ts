@@ -75,8 +75,8 @@ test.describe('memory v2 e2e', () => {
       const stop = (await harness.rpcCall('memory.recordStop', { outcome: 'success' })) as { skillId?: string };
       const skillId = stop.skillId!;
 
-      const failed = await harness.rpcError('memory.skills.run', { id: skillId, tabId: ctx.tabId, __forceError: true });
-      expect(failed.bakCode).toBe('E_INVALID_PARAMS');
+      const failed = await harness.rpcError('memory.skills.run', { id: `${skillId}_missing`, tabId: ctx.tabId });
+      expect(failed.bakCode).toBe('E_NOT_FOUND');
       harness.assertTraceHas('memory.skills.run:error');
     } finally {
       await ctx.page.close();

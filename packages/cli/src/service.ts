@@ -359,6 +359,8 @@ export class BakService {
           ? BakErrorCode.E_TIMEOUT
           : error.code === 'E_NOT_FOUND'
             ? BakErrorCode.E_NOT_FOUND
+            : error.code === 'E_INVALID_PARAMS'
+              ? BakErrorCode.E_INVALID_PARAMS
             : error.code === 'E_PERMISSION'
               ? BakErrorCode.E_PERMISSION
               : error.code === 'E_NEED_USER_CONFIRM'
@@ -925,14 +927,6 @@ export class BakService {
     params: MethodParams<TMethod>
   ): Promise<MethodResult<TMethod>> {
     const args = asRecord(params);
-    if (args.__forceError === true) {
-      return this.withTrace(String(method), params, async () => {
-        throw new RpcError('Forced failure branch', -32602, BakErrorCode.E_INVALID_PARAMS, {
-          forced: true,
-          method: String(method)
-        });
-      }) as Promise<MethodResult<TMethod>>;
-    }
 
     switch (method) {
       case 'session.create': {
@@ -1012,9 +1006,11 @@ export class BakService {
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'tabs.list': {
-        this.ensurePairing();
-        this.ensureConnected();
-        return this.withTrace(method, params, () => this.driver.tabsList()) as Promise<MethodResult<TMethod>>;
+        return this.withTrace(method, params, async () => {
+          this.ensurePairing();
+          this.ensureConnected();
+          return this.driver.tabsList();
+        }) as Promise<MethodResult<TMethod>>;
       }
       case 'tabs.focus': {
         this.ensurePairing();
@@ -1026,9 +1022,9 @@ export class BakService {
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'tabs.new': {
-        this.ensurePairing();
-        this.ensureConnected();
         return this.withTrace(method, params, async () => {
+          this.ensurePairing();
+          this.ensureConnected();
           const result = await this.driver.tabsNew(args.url as string | undefined);
           return result;
         }) as Promise<MethodResult<TMethod>>;
@@ -1042,9 +1038,9 @@ export class BakService {
         }) as Promise<MethodResult<TMethod>>;
       }
       case 'tabs.getActive': {
-        this.ensurePairing();
-        this.ensureConnected();
         return this.withTrace(method, params, async () => {
+          this.ensurePairing();
+          this.ensureConnected();
           const result = await this.driver.rawRequest<{ tab: { id: number; title: string; url: string; active: boolean } | null }>(
             method,
             args
@@ -1201,6 +1197,10 @@ export class BakService {
         this.ensurePairing();
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
+          const providedIntent = typeof args.intent === 'string' ? args.intent : undefined;
+          if (providedIntent !== undefined && !providedIntent.trim()) {
+            throw new RpcError('intent must not be empty', -32602, BakErrorCode.E_INVALID_PARAMS);
+          }
           const intent = String(args.intent ?? 'unspecified');
           const tabs = await this.driver.tabsList();
           const active = tabs.tabs.find((tab) => tab.active) ?? tabs.tabs[0];
@@ -1259,7 +1259,10 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           const domain = (args.domain as string | undefined) ?? undefined;
           const intent = (args.intent as string | undefined) ?? undefined;
-          const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined;
+          if (typeof args.limit === 'number' && (!Number.isFinite(args.limit) || args.limit < 1)) {
+            throw new RpcError('limit must be >= 1', -32602, BakErrorCode.E_INVALID_PARAMS);
+          }
+          const limit = typeof args.limit === 'number' ? Math.floor(args.limit) : undefined;
           const skills = this.memoryStore.listSkills({ domain, intent });
           return { skills: typeof limit === 'number' ? skills.slice(0, limit) : skills };
         }) as Promise<MethodResult<TMethod>>;
@@ -1320,6 +1323,9 @@ export class BakService {
       case 'memory.skills.stats': {
         return this.withTrace(method, params, async () => {
           const requestedId = typeof args.id === 'string' ? args.id : undefined;
+          if (requestedId !== undefined && !requestedId.trim()) {
+            throw new RpcError('id must not be empty', -32602, BakErrorCode.E_INVALID_PARAMS);
+          }
           const domain = typeof args.domain === 'string' ? args.domain : undefined;
           const skills = this.memoryStore.listSkills({ domain });
           const filtered = requestedId ? skills.filter((skill) => skill.id === requestedId) : skills;
@@ -1341,7 +1347,10 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           const domain = typeof args.domain === 'string' ? args.domain : undefined;
           const intent = typeof args.intent === 'string' ? args.intent.toLowerCase() : undefined;
-          const limit = typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined;
+          if (typeof args.limit === 'number' && (!Number.isFinite(args.limit) || args.limit < 1)) {
+            throw new RpcError('limit must be >= 1', -32602, BakErrorCode.E_INVALID_PARAMS);
+          }
+          const limit = typeof args.limit === 'number' ? Math.floor(args.limit) : undefined;
           const episodes = this.memoryStore
             .listEpisodes()
             .filter((episode) => {

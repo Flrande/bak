@@ -53,6 +53,8 @@ export interface E2EHarness {
   findTabIdByUrl(urlPart: string): Promise<number>;
   openPage(path: string): Promise<{ page: Page; tabId: number }>;
   assertTraceHas(method: string): void;
+  disconnectBridge(): Promise<void>;
+  reconnectBridge(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -137,10 +139,12 @@ export async function createHarness(): Promise<E2EHarness> {
 
   const dataDir = mkdtempSync(join(tmpdir(), 'bak-e2e-data-'));
   const userDataDir = mkdtempSync(join(tmpdir(), 'bak-e2e-chrome-'));
+  const headless = process.env.BAK_E2E_HEADLESS !== '0';
   const rpcPort = await getFreePort();
   const bridgePort = await getFreePort();
   let daemon: ChildProcess | undefined;
   let context: BrowserContext | undefined;
+  let extensionId = '';
   const daemonStdout: string[] = [];
   const daemonStderr: string[] = [];
 
@@ -186,12 +190,12 @@ export async function createHarness(): Promise<E2EHarness> {
 
     context = await chromium.launchPersistentContext(userDataDir, {
       channel: 'chromium',
-      headless: false,
+      headless,
       args: [`--disable-extensions-except=${extensionDist}`, `--load-extension=${extensionDist}`]
     });
 
     const sw = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-    const extensionId = new URL(sw.url()).host;
+    extensionId = new URL(sw.url()).host;
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
     await popup.fill('#token', token);
@@ -232,18 +236,36 @@ export async function createHarness(): Promise<E2EHarness> {
       await waitForTabContentReady(rpcPort, initialActive.tab.id);
     }
 
-    const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> =>
-      (await rpcCallInternal(rpcPort, method, params)) as T;
+    const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
+      const deadline = Date.now() + 8_000;
+      let lastError: unknown;
+      while (Date.now() < deadline) {
+        try {
+          return (await rpcCallInternal(rpcPort, method, params)) as T;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = error;
+          if (!message.includes('E_NOT_READY')) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'rpc call failed'));
+    };
 
     const rpcError = async (method: string, params: Record<string, unknown> = {}): Promise<{ bakCode: string; message: string }> => {
       try {
         await rpcCallInternal(rpcPort, method, params);
         throw new Error(`Expected error for method: ${method}`);
       } catch (error) {
-        const bakCode = (error as BakErrorResponse).bakCode ?? 'UNKNOWN';
+        const fromError = (error as BakErrorResponse).bakCode;
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const inferred = rawMessage.match(/\bE_[A-Z_]+\b/)?.[0];
+        const bakCode = fromError ?? inferred ?? 'UNKNOWN';
         return {
           bakCode,
-          message: error instanceof Error ? error.message : String(error)
+          message: rawMessage
         };
       }
     };
@@ -267,6 +289,57 @@ export async function createHarness(): Promise<E2EHarness> {
       const tabId = await findTabIdByUrl(marker);
       await waitForTabContentReady(rpcPort, tabId);
       return { page: target, tabId };
+    };
+
+    const withPopup = async (action: (popup: Page) => Promise<void>): Promise<void> => {
+      if (!extensionId) {
+        throw new Error('extension id unavailable');
+      }
+      const popup = await context.newPage();
+      try {
+        await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+        await action(popup);
+      } finally {
+        await popup.close();
+      }
+    };
+
+    const disconnectBridge = async (): Promise<void> => {
+      await withPopup(async (popup) => {
+        await popup.click('#disconnect');
+      });
+      await expect
+        .poll(
+          async () => {
+            const info = (await rpcCallInternal(rpcPort, 'session.info', {})) as {
+              extensionConnected: boolean;
+              connectionState: string;
+            };
+            return info.extensionConnected === false && info.connectionState !== 'connected';
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
+    };
+
+    const reconnectBridge = async (): Promise<void> => {
+      await withPopup(async (popup) => {
+        await popup.fill('#token', token);
+        await popup.fill('#port', `${bridgePort}`);
+        await popup.click('#save');
+      });
+      await expect
+        .poll(
+          async () => {
+            const info = (await rpcCallInternal(rpcPort, 'session.info', {})) as {
+              extensionConnected: boolean;
+              connectionState: string;
+            };
+            return info.extensionConnected && info.connectionState === 'connected';
+          },
+          { timeout: 15_000 }
+        )
+        .toBe(true);
     };
 
     const assertTraceHas = (method: string): void => {
@@ -315,6 +388,8 @@ export async function createHarness(): Promise<E2EHarness> {
       findTabIdByUrl,
       openPage,
       assertTraceHas,
+      disconnectBridge,
+      reconnectBridge,
       dispose
     };
   } catch (error) {
