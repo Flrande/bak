@@ -1,0 +1,27 @@
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'scripts/docs/**'
+      - '.github/workflows/docs.yml'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'scripts/docs/**'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  validate-docs:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate markdown links in docs
+        shell: pwsh
+        run: ./scripts/docs/validate-links.ps1
