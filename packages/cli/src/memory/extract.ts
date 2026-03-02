@@ -40,12 +40,31 @@ function maybeParameterize(text: string, fieldName: string): { value: string; fi
   return { value: text };
 }
 
+function canonicalSkillUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed === 'about:blank') {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return trimmed.split(/[?#]/, 1)[0] ?? trimmed;
+  }
+}
+
 export function extractSkillFromEpisode(episode: Episode): Omit<Skill, 'id' | 'createdAt' | 'stats'> {
   const paramsSchema: Skill['paramsSchema'] = {
     required: [],
     fields: {}
   };
-  const startUrlPattern = episode.startUrl.trim();
+  const startUrlPattern = canonicalSkillUrl(episode.startUrl);
 
   let paramIndex = 1;
 
@@ -79,7 +98,7 @@ export function extractSkillFromEpisode(episode: Episode): Omit<Skill, 'id' | 'c
     domain: episode.domain,
     intent: episode.intent,
     description: `Skill extracted from episode ${episode.id}`,
-    urlPatterns: [episode.startUrl],
+    urlPatterns: startUrlPattern ? [startUrlPattern] : [],
     preconditions:
       startUrlPattern && startUrlPattern !== 'about:blank'
         ? {

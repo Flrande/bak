@@ -115,7 +115,7 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   return toError('E_INTERNAL', message);
 }
 
-async function waitForTabComplete(tabId: number, timeoutMs = 12_000): Promise<void> {
+async function waitForTabComplete(tabId: number, timeoutMs = 25_000): Promise<void> {
   try {
     const current = await chrome.tabs.get(tabId);
     if (current.status === 'complete') {

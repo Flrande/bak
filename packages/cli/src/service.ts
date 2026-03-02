@@ -768,12 +768,22 @@ export class BakService {
       return;
     }
 
+    const hasExplicitGoto = skill.plan.some((step) => step.kind === 'goto' && typeof step.url === 'string' && step.url.trim().length > 0);
+
     if (skill.preconditions.urlPattern) {
+      const expectedUrlPattern = skill.preconditions.urlPattern.trim();
       const current = await this.driver.rawRequest<{ url: string }>('page.url', { tabId });
       const currentUrl = String(current.url ?? '');
-      if (!matchesUrlPattern(skill.preconditions.urlPattern, currentUrl)) {
+      if (!matchesUrlPattern(expectedUrlPattern, currentUrl)) {
+        if (!hasExplicitGoto) {
+          if (/^https?:\/\//i.test(expectedUrlPattern)) {
+            await this.driver.pageGoto(expectedUrlPattern, tabId);
+            return;
+          }
+          return;
+        }
         throw new RpcError('Skill precondition failed: URL does not match', 4004, BakErrorCode.E_NOT_FOUND, {
-          expectedUrlPattern: skill.preconditions.urlPattern,
+          expectedUrlPattern,
           currentUrl
         });
       }
