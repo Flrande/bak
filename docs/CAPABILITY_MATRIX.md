@@ -1,6 +1,6 @@
 # Capability Matrix
 
-| Domain | Method | Stability | Request/Response Schema | E2E Case IDs | Covered |
+| Domain | Method | Stability | Request/Response Schema | E2E Case IDs | CaseMapped |
 | --- | --- | --- | --- | --- | --- |
 | context | context.enterFrame | beta | `MethodMap['context.enterFrame']` | M045-S, M045-F | true |
 | context | context.enterShadow | experimental | `MethodMap['context.enterShadow']` | M047-S, M047-F | true |

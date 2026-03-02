@@ -21,9 +21,12 @@ $e2eRows = $e2eLines | Where-Object { $_ -match '^\| [^ ]' -and $_ -notmatch '^\
 $stableCount = ($capabilityRows | Where-Object { $_ -match '\| stable \|' }).Count
 $betaCount = ($capabilityRows | Where-Object { $_ -match '\| beta \|' }).Count
 $experimentalCount = ($capabilityRows | Where-Object { $_ -match '\| experimental \|' }).Count
-$coveredCount = ($e2eRows | Where-Object { $_ -match '\| true \|' }).Count
+$mappedCount = ($e2eRows | Where-Object { $_ -match '\| true \|' }).Count
 $notRunCount = ($e2eRows | Where-Object { $_ -match '\| NotRun \|' }).Count
 $passCount = ($e2eRows | Where-Object { $_ -match '\| Pass(ed)? \|' }).Count
+$runCount = $e2eRows.Count - $notRunCount
+$failedCount = [Math]::Max(0, $runCount - $passCount)
+$releaseReady = ($passCount -eq $e2eRows.Count) -and ($notRunCount -eq 0)
 
 $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 $lines = @()
@@ -32,8 +35,9 @@ $lines += ''
 $lines += "- GeneratedAt: $now"
 $lines += "- TotalCapabilities: $($capabilityRows.Count)"
 $lines += "- StabilityBreakdown: stable=$stableCount beta=$betaCount experimental=$experimentalCount"
-$lines += "- E2ECovered: $coveredCount / $($e2eRows.Count)"
-$lines += "- E2EStatus: passed=$passCount notRun=$notRunCount"
+$lines += "- E2ECaseMapped: $mappedCount / $($e2eRows.Count)"
+$lines += "- E2EExecutionStatus: passed=$passCount failed=$failedCount notRun=$notRunCount"
+$lines += "- ReleaseGate: $(if ($releaseReady) { 'pass' } else { 'fail (real e2e not complete)' })"
 $lines += ''
 $lines += '## Sources'
 $lines += ''
@@ -43,6 +47,6 @@ $lines += ''
 $lines += '## Gate Summary'
 $lines += ''
 $lines += '- New methods must have matrix mapping and method-level e2e case IDs.'
-$lines += '- Release requires regenerated capability/e2e matrices and this report.'
+$lines += '- Release requires regenerated capability/e2e matrices, this report, and all mapped e2e cases executed with `CI Status=Passed`.'
 
 Set-Content -LiteralPath $outputPath -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine) -Encoding UTF8

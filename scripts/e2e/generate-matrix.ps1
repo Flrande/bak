@@ -32,8 +32,10 @@ $lines += ''
 $lines += "- GeneratedAt: $now"
 $lines += '- ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`'
 $lines += ''
-$lines += '| Method | Success Case | Failure Case | Covered | CI Status |'
+$lines += '| Method | Success Case | Failure Case | CaseMapped | CI Status |'
 $lines += '| --- | --- | --- | --- | --- |'
+$lines += ''
+$lines += '`CaseMapped=true` only means success/failure case IDs are mapped; it does not mean CI has executed and passed the case.'
 
 $missing = @()
 foreach ($method in ($enumMethods | Sort-Object)) {
@@ -46,9 +48,9 @@ foreach ($method in ($enumMethods | Sort-Object)) {
   $item = $index[$method]
   $successCase = [string]$item.successCaseId
   $failureCase = [string]$item.failureCaseId
-  $covered = ([string][bool]($successCase -and $failureCase)).ToLowerInvariant()
+  $caseMapped = ([string][bool]($successCase -and $failureCase)).ToLowerInvariant()
   $status = if ($statusByMethod.ContainsKey($method)) { $statusByMethod[$method] } else { 'NotRun' }
-  $lines += "| $method | $successCase | $failureCase | $covered | $status |"
+  $lines += "| $method | $successCase | $failureCase | $caseMapped | $status |"
 }
 
 $lines += ''

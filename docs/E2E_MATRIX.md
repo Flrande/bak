@@ -1,10 +1,12 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-02 04:24:23 +08:00
+- GeneratedAt: 2026-03-03 00:23:06 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
-| Method | Success Case | Failure Case | Covered | CI Status |
+| Method | Success Case | Failure Case | CaseMapped | CI Status |
 | --- | --- | --- | --- | --- |
+
+`CaseMapped=true` only means success/failure case IDs are mapped; it does not mean CI has executed and passed the case.
 | context.enterFrame | M045-S | M045-F | true | NotRun |
 | context.enterShadow | M047-S | M047-F | true | NotRun |
 | context.exitFrame | M046-S | M046-F | true | NotRun |

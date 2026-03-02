@@ -89,6 +89,7 @@
 
 - `tabs/page/element/input/file/frame/network/debug/memory` 全部域都要求：请求/响应 schema 完整、至少 1 成功 + 1 失败真实 e2e、trace 可追踪。
 - `context.*` / `network.*` / `debug.*` 强制要求失败可解释（错误码 + trace 事件）。
+- 若 `docs/RELEASE_CAPABILITY_REPORT.md` 中 `ReleaseGate` 为 `fail`，表示该 DoD 仍未满足，禁止按“已通过真实 e2e”对外声明。
 
 ## Backward Compatibility
 

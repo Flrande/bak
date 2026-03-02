@@ -145,6 +145,188 @@ program
     printResult(result);
   });
 
+const tabs = program.command('tabs').description('Tab operations');
+tabs
+  .command('list')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const result = await callRpc('tabs.list', {}, Number.parseInt(String(options.rpcWsPort), 10));
+    printResult(result);
+  });
+
+tabs
+  .command('new')
+  .option('--url <url>', 'initial url')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const result = await callRpc(
+      'tabs.new',
+      { url: options.url ? String(options.url) : undefined },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+tabs
+  .command('focus <tabId>')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (tabId, options) => {
+    const parsedTabId = Number.parseInt(String(tabId), 10);
+    if (!Number.isInteger(parsedTabId) || parsedTabId < 0) {
+      throw new Error('tabId must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'tabs.focus',
+      { tabId: parsedTabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+tabs
+  .command('close <tabId>')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (tabId, options) => {
+    const parsedTabId = Number.parseInt(String(tabId), 10);
+    if (!Number.isInteger(parsedTabId) || parsedTabId < 0) {
+      throw new Error('tabId must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'tabs.close',
+      { tabId: parsedTabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+tabs
+  .command('get <tabId>')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (tabId, options) => {
+    const parsedTabId = Number.parseInt(String(tabId), 10);
+    if (!Number.isInteger(parsedTabId) || parsedTabId < 0) {
+      throw new Error('tabId must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'tabs.get',
+      { tabId: parsedTabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+tabs
+  .command('active')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const result = await callRpc('tabs.getActive', {}, Number.parseInt(String(options.rpcWsPort), 10));
+    printResult(result);
+  });
+
+const page = program.command('page').description('Page operations');
+page
+  .command('goto <url>')
+  .option('--tab-id <tabId>', 'tab id')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (url, options) => {
+    const tabId = options.tabId ? Number.parseInt(String(options.tabId), 10) : undefined;
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId < 0)) {
+      throw new Error('tab-id must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'page.goto',
+      { url: String(url), tabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+page
+  .command('wait')
+  .requiredOption('--mode <mode>', 'selector | text | url')
+  .requiredOption('--value <value>', 'selector/text/url matcher')
+  .option('--tab-id <tabId>', 'tab id')
+  .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const tabId = options.tabId ? Number.parseInt(String(options.tabId), 10) : undefined;
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId < 0)) {
+      throw new Error('tab-id must be an integer >= 0');
+    }
+    const timeoutMs = options.timeoutMs ? Number.parseInt(String(options.timeoutMs), 10) : undefined;
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1)) {
+      throw new Error('timeout-ms must be an integer >= 1');
+    }
+    const result = await callRpc(
+      'page.wait',
+      {
+        mode: String(options.mode),
+        value: String(options.value),
+        tabId,
+        timeoutMs
+      },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+page
+  .command('url')
+  .option('--tab-id <tabId>', 'tab id')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const tabId = options.tabId ? Number.parseInt(String(options.tabId), 10) : undefined;
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId < 0)) {
+      throw new Error('tab-id must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'page.url',
+      { tabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+page
+  .command('title')
+  .option('--tab-id <tabId>', 'tab id')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const tabId = options.tabId ? Number.parseInt(String(options.tabId), 10) : undefined;
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId < 0)) {
+      throw new Error('tab-id must be an integer >= 0');
+    }
+    const result = await callRpc(
+      'page.title',
+      { tabId },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
+const debug = program.command('debug').description('Debug utilities');
+debug
+  .command('console')
+  .option('--tab-id <tabId>', 'tab id')
+  .option('--limit <limit>', 'max number of entries', '50')
+  .option('--rpc-ws-port <port>', 'rpc websocket port', `${DEFAULT_RPC_PORT}`)
+  .action(async (options) => {
+    const tabId = options.tabId ? Number.parseInt(String(options.tabId), 10) : undefined;
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId < 0)) {
+      throw new Error('tab-id must be an integer >= 0');
+    }
+    const limit = Number.parseInt(String(options.limit), 10);
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error('limit must be an integer >= 1');
+    }
+    const result = await callRpc(
+      'debug.getConsole',
+      { tabId, limit },
+      Number.parseInt(String(options.rpcWsPort), 10)
+    );
+    printResult(result);
+  });
+
 const record = program.command('record').description('Recording helpers');
 record
   .command('start')
