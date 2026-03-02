@@ -3,7 +3,7 @@
 ## First Check: `doctor`
 
 ```powershell
-node packages/cli/dist/bin.js doctor
+npx bak doctor
 ```
 
 `doctor` separates:
@@ -20,8 +20,8 @@ Symptoms:
 - `E_NOT_READY` / `E_NOT_PAIRED`
 
 Actions:
-1. Run `bak pair status`.
-2. Re-generate token with `bak pair`.
+1. Run `npx bak pair status`.
+2. Re-generate token with `npx bak pair`.
 3. Reconnect from extension popup with matching port.
 4. Confirm daemon is running on that port.
 
@@ -51,17 +51,17 @@ Symptoms:
 
 Actions:
 1. Check Node runtime is 22.x.
-2. Run `bak memory export --backend sqlite` and inspect fallback reason.
+2. Run `npx bak memory export --backend sqlite` and inspect fallback reason.
 3. Continue with JSON backend until SQLite prerequisites are fixed.
 
 ### Need Shareable Diagnostics
 
 ```powershell
-node packages/cli/dist/bin.js export --out ./.bak-data/diag.zip
+npx bak export --out ./.bak-data/diag.zip
 ```
 
 Optional snapshot images:
 
 ```powershell
-node packages/cli/dist/bin.js export --include-snapshots --out ./.bak-data/diag-with-images.zip
+npx bak export --include-snapshots --out ./.bak-data/diag-with-images.zip
 ```

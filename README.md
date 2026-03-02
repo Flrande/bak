@@ -51,6 +51,16 @@ repo/
 - Developer path: `docs/developer/README.md`
 - Reference path: `docs/reference/README.md`
 
+Published npm packages:
+
+- `@flrande/bak-cli`
+- `@flrande/bak-extension`
+- `@flrande/bak-protocol`
+
+If you are integrating with a coding agent as an end user, use:
+- `docs/user/quickstart.md`
+- `docs/user/cli-guide.md`
+
 ## Install
 
 ```powershell
@@ -66,8 +76,7 @@ pnpm test
 ```
 
 CI strategy:
-- PR/push: typecheck + lint + unit tests (`.github/workflows/ci.yml`)
-- e2e: nightly/manual workflow (`.github/workflows/e2e-nightly.yml`)
+- PR/push on `main`/`master`: typecheck + lint + unit + full e2e (`.github/workflows/ci.yml`)
 
 `pnpm dev` starts:
 - protocol watcher
@@ -76,6 +85,8 @@ CI strategy:
 - test-site dev server on `http://127.0.0.1:4173`
 
 ## Run `bak` commands
+
+The commands below are for running from this source repo. For released package usage (`npx bak ...`), see `docs/user/quickstart.md`.
 
 Build once before invoking the CLI binary:
 

@@ -2,6 +2,11 @@
 
 These docs are for operators and coding-agent users who want to control a real browser through BAK.
 
+Published npm packages:
+
+- `@flrande/bak-cli`
+- `@flrande/bak-extension`
+
 ## Read In Order
 
 1. [Quickstart](./quickstart.md): first successful connection and command.

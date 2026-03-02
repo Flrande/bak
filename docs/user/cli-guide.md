@@ -1,61 +1,76 @@
 # CLI Guide
 
-`bak` exposes common workflows as subcommands and keeps full method coverage via `call`.
+`bak` is the runtime bridge between your coding agent and a real browser extension.
 
-In this repo, invoke `bak` as:
+Install from npm:
 
 ```powershell
-node packages/cli/dist/bin.js <command>
+npm install @flrande/bak-cli @flrande/bak-extension
 ```
 
-## Common Commands
+Run commands with:
 
-### Runtime
+```powershell
+npx bak <command>
+```
+
+## Core Runtime Commands
+
+Runtime:
 
 - `bak serve`: start daemon and RPC endpoints.
-- `bak doctor`: local diagnostics (blocking errors + non-blocking warnings).
+- `bak doctor`: runtime diagnostics.
 - `bak export`: export redacted diagnostics zip.
 - `bak gc`: retention cleanup (dry-run unless `--force`).
 
-### Pairing
+Pairing:
 
 - `bak pair`
 - `bak pair status`
 - `bak pair revoke`
 
-### Browser Basics
+Browser basics:
 
 - `bak tabs list|new|focus|get|close|active`
 - `bak page goto|wait|url|title`
 - `bak debug console`
 
-### Memory
+Memory:
 
 - `bak record start|stop`
 - `bak skills list|show|retrieve|run|delete`
 - `bak memory migrate|export`
 
-## Full Capability Via `call`
+## Agent Integration Pattern
 
-When a method has no dedicated subcommand, use:
-
-```powershell
-node packages/cli/dist/bin.js call --method <method.name> --params '<json>'
-```
-
-Examples:
+Keep one long-running daemon:
 
 ```powershell
-node packages/cli/dist/bin.js call --method page.snapshot --params "{}"
-node packages/cli/dist/bin.js call --method element.click --params '{"locator":{"css":"button[type=submit]"}}'
-node packages/cli/dist/bin.js call --method network.list --params '{}'
+npx bak serve --port 17373 --rpc-ws-port 17374
 ```
 
-## Useful Options
+Then let the agent issue commands in another shell:
 
-- RPC port override: `--rpc-ws-port <port>` (default `17374`)
-- Extension bridge port: `--port <port>` (default `17373`, used by `serve`/`doctor`/`export`)
-- Data dir override: `--data-dir <path>` on selected commands
+```powershell
+npx bak doctor --port 17373 --rpc-ws-port 17374
+npx bak tabs active --rpc-ws-port 17374
+npx bak page goto "https://example.com" --rpc-ws-port 17374
+npx bak page title --rpc-ws-port 17374
+```
+
+For methods without dedicated subcommands, use `call`:
+
+```powershell
+npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+npx bak call --method element.click --params '{"locator":{"css":"button[type=submit]"}}' --rpc-ws-port 17374
+npx bak call --method network.list --params '{}' --rpc-ws-port 17374
+```
+
+## Ports And Data Directory
+
+- `--port`: extension bridge port (default `17373`)
+- `--rpc-ws-port`: JSON-RPC WebSocket port (default `17374`)
+- `--data-dir`: override `.bak-data` location on supported commands
 
 ## Environment Variables
 
@@ -65,5 +80,5 @@ node packages/cli/dist/bin.js call --method network.list --params '{}'
 - `BAK_PAIR_TTL_DAYS`: default token TTL
 - `BAK_HEARTBEAT_MS`: heartbeat interval
 - `BAK_MEMORY_BACKEND`: `json` or `sqlite`
-- `BAK_MEMORY_RECORD_INPUT_TEXT`: `1` to keep typed-input text in memory records (off by default)
+- `BAK_MEMORY_RECORD_INPUT_TEXT`: `1` to keep typed-input text in memory records
 - `BAK_MEMORY_RETRIEVE_MIN_SCORE`: retrieval threshold

@@ -7,28 +7,28 @@ Memory lets BAK learn repeatable website workflows and replay them with paramete
 ### 1) Record
 
 ```powershell
-node packages/cli/dist/bin.js record start --intent "create ticket"
+npx bak record start --intent "create ticket"
 # perform actions in browser
-node packages/cli/dist/bin.js record stop --outcome success
+npx bak record stop --outcome success
 ```
 
 ### 2) Inspect
 
 ```powershell
-node packages/cli/dist/bin.js skills list
-node packages/cli/dist/bin.js skills show <skillId>
+npx bak skills list
+npx bak skills show <skillId>
 ```
 
 ### 3) Retrieve
 
 ```powershell
-node packages/cli/dist/bin.js skills retrieve --intent "create ticket" --anchor submit --anchor assignee
+npx bak skills retrieve --intent "create ticket" --anchor submit --anchor assignee
 ```
 
 ### 4) Run
 
 ```powershell
-node packages/cli/dist/bin.js skills run <skillId> --param param_1=alice --param param_2=high
+npx bak skills run <skillId> --param param_1=alice --param param_2=high
 ```
 
 ## Storage Backends
@@ -39,8 +39,8 @@ node packages/cli/dist/bin.js skills run <skillId> --param param_1=alice --param
 Migrate and export:
 
 ```powershell
-node packages/cli/dist/bin.js memory migrate
-node packages/cli/dist/bin.js memory export --backend sqlite
+npx bak memory migrate
+npx bak memory export --backend sqlite
 ```
 
 ## Sensitive Input Handling

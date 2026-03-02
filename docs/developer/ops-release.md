@@ -29,7 +29,7 @@ pnpm -w e2e:matrix
 pnpm -w release:report
 ```
 
-Nightly full run:
+Full regression run:
 
 ```powershell
 pnpm -w test:e2e:full

@@ -1,61 +1,89 @@
 # Quickstart
 
+This quickstart uses published npm packages:
+
+- `@flrande/bak-cli`
+- `@flrande/bak-extension`
+
 ## Prerequisites
 
 - Node.js 22.x
-- `pnpm`
-- Chromium browser (Chrome or Edge) with extension developer mode
+- npm
+- Chromium browser (Chrome or Edge)
 - Windows + PowerShell 7
 
-## 1) Install And Build
+## 1) Prepare A Runtime Folder
 
 ```powershell
-pnpm i
-pnpm build
+New-Item -ItemType Directory -Force -Path "$HOME\bak-runtime" | Out-Null
+Set-Location -LiteralPath "$HOME\bak-runtime"
+npm init -y
+npm install @flrande/bak-cli @flrande/bak-extension
 ```
 
-## 2) Start Daemon
+## 2) Start The CLI Daemon
 
 ```powershell
-node packages/cli/dist/bin.js serve --port 17373 --rpc-ws-port 17374
+npx bak serve --port 17373 --rpc-ws-port 17374
 ```
+
+Keep this terminal running.
 
 ## 3) Generate Pair Token
 
-In another terminal:
+Open a second terminal in the same folder:
 
 ```powershell
-node packages/cli/dist/bin.js pair
+Set-Location -LiteralPath "$HOME\bak-runtime"
+npx bak pair
 ```
 
 Copy the `token` from output.
 
-## 4) Load Extension
+## 4) Load Browser Extension
 
 1. Open `chrome://extensions` (or `edge://extensions`).
 2. Enable Developer mode.
-3. Load unpacked extension from `packages/extension/dist`.
-4. Open extension popup.
-5. Paste the pair token, keep port `17373`, save and connect.
+3. Click `Load unpacked`.
+4. Select:
+   `C:\Users\<your-user>\bak-runtime\node_modules\@flrande\bak-extension\dist`
+5. Open extension popup.
+6. Paste pair token.
+7. Set port to `17373`.
+8. Save/connect.
 
 ## 5) Verify Health
 
 ```powershell
-node packages/cli/dist/bin.js doctor
+npx bak doctor --port 17373 --rpc-ws-port 17374
+npx bak tabs list --rpc-ws-port 17374
 ```
 
-Then run a simple command:
+When connected, `doctor` should show `ok: true` and `extensionConnected: true`.
+
+## 6) First Browser Control Commands
 
 ```powershell
-node packages/cli/dist/bin.js tabs list
+npx bak page goto "https://example.com" --rpc-ws-port 17374
+npx bak page title --rpc-ws-port 17374
+npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
 ```
 
-## 6) First Browser Actions
+`page.snapshot` is currently available through generic `call`.
+
+## 7) Let Your Agent Use It
+
+Give your coding agent these constraints:
+
+1. All browser actions go through `bak` commands.
+2. Do not start/stop `bak serve` for every action; keep one daemon session.
+3. Use `--rpc-ws-port 17374` consistently.
+
+A minimal action sequence an agent can run:
 
 ```powershell
-node packages/cli/dist/bin.js page goto "https://example.com"
-node packages/cli/dist/bin.js page title
-node packages/cli/dist/bin.js call --method page.snapshot --params "{}"
+npx bak tabs active --rpc-ws-port 17374
+npx bak page goto "https://news.ycombinator.com" --rpc-ws-port 17374
+npx bak page wait --mode text --value "Hacker News" --rpc-ws-port 17374
+npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
 ```
-
-`page.snapshot` is currently exposed through generic `call`.

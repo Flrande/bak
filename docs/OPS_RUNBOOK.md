@@ -82,9 +82,9 @@ node packages/cli/dist/bin.js export --include-memory --memory-backend json
 
 The command result and `index.json` both include `warnings` for non-blocking issues (for example protocol/version drift or memory export fallback).
 
-## CI / nightly e2e notes
+## CI notes
 
-- `.github/workflows/e2e-nightly.yml` uploads `playwright-report` and `test-results` artifacts on every run (`if: always()`), so failures keep diagnostics.
+- `.github/workflows/ci.yml` runs full quality checks on `push`/`pull_request` and uploads `test-results` artifacts on every run (`if: always()`), so failures keep diagnostics.
 
 ## Memory backend operations
 
