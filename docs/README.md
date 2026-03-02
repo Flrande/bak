@@ -14,8 +14,9 @@ This repo now uses an audience-first documentation layout.
 
 1. [Quickstart](./user/quickstart.md)
 2. [CLI Guide](./user/cli-guide.md)
-3. [Memory Guide](./user/memory-guide.md)
-4. [Troubleshooting](./user/troubleshooting.md)
+3. [Agent Prompts](./user/agent-prompts.md)
+4. [Memory Guide](./user/memory-guide.md)
+5. [Troubleshooting](./user/troubleshooting.md)
 
 ### For Developers
 
