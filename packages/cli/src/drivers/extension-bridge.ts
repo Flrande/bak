@@ -291,7 +291,11 @@ export class ExtensionBridge {
     try {
       this.socket.send(JSON.stringify(payload));
     } catch (error) {
-      this.pending.delete(id);
+      const pending = this.pending.get(id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+      }
       this.totalFailures += 1;
       this.totalNotReady += 1;
       throw new BridgeError('E_NOT_READY', 'Failed to send request to extension', {

@@ -92,4 +92,33 @@ describe('connection health', () => {
     expect(health.heartbeatStale).toBe(false);
     expect(health.heartbeatAgeMs).toBeNull();
   });
+
+  it('uses lastSeenTs before connectedAtTs when heartbeat timestamp is missing', () => {
+    const now = 20_000;
+    const health = evaluateConnectionHealth(
+      {
+        state: 'connected',
+        reason: null,
+        extensionVersion: '0.1.0',
+        lastSeenTs: 19_500,
+        lastRequestTs: 19_400,
+        lastResponseTs: 19_450,
+        lastHeartbeatTs: null,
+        lastError: null,
+        connectedAtTs: 10_000,
+        disconnectedAtTs: null,
+        pendingRequests: 0,
+        totalRequests: 0,
+        totalFailures: 0,
+        totalTimeouts: 0,
+        totalNotReady: 0
+      },
+      now,
+      800
+    );
+
+    expect(health.heartbeatAgeMs).toBe(500);
+    expect(health.heartbeatStale).toBe(false);
+    expect(health.connectionState).toBe('connected');
+  });
 });

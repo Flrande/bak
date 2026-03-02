@@ -2,6 +2,26 @@ import type { ConsoleEntry, ElementMapItem, Locator } from '@bak/protocol';
 import type { BrowserDriver, BrowserTab, DriverConnectionStatus, SnapshotResult } from './browser-driver.js';
 import type { ExtensionBridge } from './extension-bridge.js';
 
+const BRIDGE_TIMEOUT_GRACE_MS = 1_500;
+const BRIDGE_TIMEOUT_MIN_MS = 1_000;
+
+function normalizeTimeoutMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function resolveBridgeTimeoutMs(params?: Record<string, unknown>, timeoutMs?: number): number | undefined {
+  const explicitTimeoutMs = normalizeTimeoutMs(timeoutMs);
+  const paramsTimeoutMs = normalizeTimeoutMs(params?.timeoutMs);
+  const baseTimeoutMs = explicitTimeoutMs ?? paramsTimeoutMs;
+  if (baseTimeoutMs === undefined) {
+    return undefined;
+  }
+  return Math.max(BRIDGE_TIMEOUT_MIN_MS, baseTimeoutMs + BRIDGE_TIMEOUT_GRACE_MS);
+}
+
 export class ExtensionDriver implements BrowserDriver {
   private readonly bridge: ExtensionBridge;
 
@@ -78,11 +98,12 @@ export class ExtensionDriver implements BrowserDriver {
     timeoutMs?: number,
     tabId?: number
   ): Promise<{ ok: true }> {
-    return this.bridge.request('page.wait', { mode, value, timeoutMs, tabId });
+    const params = { mode, value, timeoutMs, tabId };
+    return this.bridge.request('page.wait', params, resolveBridgeTimeoutMs(params, timeoutMs));
   }
 
-  pageSnapshot(tabId?: number): Promise<SnapshotResult> {
-    return this.bridge.request('page.snapshot', { tabId });
+  pageSnapshot(tabId?: number, includeBase64 = true): Promise<SnapshotResult> {
+    return this.bridge.request('page.snapshot', { tabId, includeBase64 });
   }
 
   elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }> {
@@ -106,6 +127,6 @@ export class ExtensionDriver implements BrowserDriver {
   }
 
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult> {
-    return this.bridge.request<TResult>(method, params, timeoutMs);
+    return this.bridge.request<TResult>(method, params, resolveBridgeTimeoutMs(params, timeoutMs));
   }
 }

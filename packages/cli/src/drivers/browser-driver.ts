@@ -1,4 +1,5 @@
 import type {
+  AccessibilityNode,
   ConsoleEntry,
   ElementMapItem,
   Locator,
@@ -54,7 +55,7 @@ export interface BrowserDriver {
   pageForward(tabId?: number): Promise<{ ok: true }>;
   pageReload(tabId?: number): Promise<{ ok: true }>;
   pageWait(mode: 'selector' | 'text' | 'url', value: string, timeoutMs?: number, tabId?: number): Promise<{ ok: true }>;
-  pageSnapshot(tabId?: number): Promise<SnapshotResult>;
+  pageSnapshot(tabId?: number, includeBase64?: boolean): Promise<SnapshotResult>;
   elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
   elementType(locator: Locator, text: string, clear?: boolean, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
@@ -74,6 +75,7 @@ export interface PageDumpState {
   text: PageTextChunk[];
   console: ConsoleEntry[];
   network: NetworkEntry[];
+  accessibility?: AccessibilityNode[];
 }
 
 export interface DriverExtendedApis {

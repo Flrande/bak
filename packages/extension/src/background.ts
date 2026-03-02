@@ -41,6 +41,7 @@ let reconnectTimer: number | null = null;
 let nextReconnectInMs: number | null = null;
 let reconnectAttempt = 0;
 let lastError: RuntimeErrorDetails | null = null;
+let manualDisconnect = false;
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -193,6 +194,33 @@ async function withTab(tabId?: number, options: WithTabOptions = {}): Promise<ch
     throw toError('E_NOT_FOUND', 'No active tab');
   }
   return validate(tab);
+}
+
+async function captureAlignedTabScreenshot(tab: chrome.tabs.Tab): Promise<string> {
+  if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
+    throw toError('E_NOT_FOUND', 'Tab screenshot requires tab id and window id');
+  }
+
+  const activeTabs = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+  const activeTab = activeTabs[0];
+  const shouldSwitch = activeTab?.id !== tab.id;
+
+  if (shouldSwitch) {
+    await chrome.tabs.update(tab.id, { active: true });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+
+  try {
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    if (shouldSwitch && typeof activeTab?.id === 'number') {
+      try {
+        await chrome.tabs.update(activeTab.id, { active: true });
+      } catch {
+        // Ignore restore errors if the original tab no longer exists.
+      }
+    }
+  }
 }
 
 async function sendToContent<TResponse>(tabId: number, message: Record<string, unknown>): Promise<TResponse> {
@@ -411,17 +439,18 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     }
     case 'page.snapshot': {
       const tab = await withTab(params.tabId as number | undefined);
-      if (!tab.id || !tab.windowId) {
+      if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
         throw toError('E_NOT_FOUND', 'Tab missing id');
       }
+      const includeBase64 = params.includeBase64 !== false;
       const config = await getConfig();
       const elements = await sendToContent<{ elements: unknown[] }>(tab.id, {
         type: 'bak.collectElements',
         debugRichText: config.debugRichText
       });
-      const imageData = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      const imageData = await captureAlignedTabScreenshot(tab);
       return {
-        imageBase64: imageData.replace(/^data:image\/png;base64,/, ''),
+        imageBase64: includeBase64 ? imageData.replace(/^data:image\/png;base64,/, '') : '',
         elements: elements.elements,
         tabId: tab.id,
         url: tab.url ?? ''
@@ -500,7 +529,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         }
       );
       if (!response.ok || !response.selectedEid) {
-        throw response.error ?? toError('E_PERMISSION', 'User did not confirm candidate');
+        throw response.error ?? toError('E_NEED_USER_CONFIRM', 'User did not confirm candidate');
       }
       return { selectedEid: response.selectedEid };
     }
@@ -514,6 +543,9 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
 }
 
 function scheduleReconnect(reason: string): void {
+  if (manualDisconnect) {
+    return;
+  }
   if (reconnectTimer !== null) {
     return;
   }
@@ -534,6 +566,9 @@ function scheduleReconnect(reason: string): void {
 
 async function connectWebSocket(): Promise<void> {
   clearReconnectTimer();
+  if (manualDisconnect) {
+    return;
+  }
 
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
@@ -549,6 +584,7 @@ async function connectWebSocket(): Promise<void> {
   ws = new WebSocket(url);
 
   ws.addEventListener('open', () => {
+    manualDisconnect = false;
     reconnectAttempt = 0;
     lastError = null;
     ws?.send(JSON.stringify({
@@ -606,6 +642,7 @@ void connectWebSocket();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'bak.updateConfig') {
+    manualDisconnect = false;
     void setConfig({
       token: message.token,
       port: Number(message.port ?? DEFAULT_PORT),
@@ -636,6 +673,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'bak.disconnect') {
+    manualDisconnect = true;
     clearReconnectTimer();
     reconnectAttempt = 0;
     ws?.close();

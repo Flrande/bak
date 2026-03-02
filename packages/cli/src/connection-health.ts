@@ -14,7 +14,7 @@ export function evaluateConnectionHealth(
   nowTs: number,
   staleAfterMs: number
 ): ConnectionHealth {
-  const referenceTs = connection.lastHeartbeatTs ?? connection.connectedAtTs ?? connection.lastSeenTs;
+  const referenceTs = connection.lastHeartbeatTs ?? connection.lastSeenTs ?? connection.connectedAtTs;
   const heartbeatAgeMs = typeof referenceTs === 'number' ? Math.max(0, nowTs - referenceTs) : null;
   const heartbeatStale =
     connection.state === 'connected' &&

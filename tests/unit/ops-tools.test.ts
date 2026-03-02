@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exportDiagnosticZip } from '../../packages/cli/src/diagnostic-export.js';
 import { runDoctor } from '../../packages/cli/src/doctor.js';
+import { PairingStore } from '../../packages/cli/src/pairing-store.js';
 
 describe('ops tools', () => {
   it('exports redacted diagnostic zip', () => {
@@ -98,6 +99,33 @@ describe('ops tools', () => {
     expect(report.summary.errorChecks).toContain('pairing');
     expect(report.summary.errorChecks).not.toContain('rpcSessionInfo');
     expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(report.ok).toBe(false);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('doctor fails hard when pairing exists but rpc is offline', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-doctor-runtime-test-'));
+    const pairing = new PairingStore(dataDir);
+    pairing.createToken();
+
+    const report = await runDoctor({
+      dataDir,
+      port: 29977,
+      rpcWsPort: 29978
+    });
+
+    expect(report.checks.pairing.ok).toBe(true);
+    expect(report.checks.rpcSessionInfo.ok).toBe(false);
+    expect(report.checks.rpcSessionInfo.severity).toBeUndefined();
+    expect(report.checks.rpcConnectionHealth.ok).toBe(false);
+    expect(report.checks.rpcConnectionHealth.severity).toBeUndefined();
+    expect(report.checks.activeTabTelemetry.ok).toBe(false);
+    expect(report.checks.activeTabTelemetry.severity).toBeUndefined();
+    expect(report.summary.errorChecks).toContain('rpcSessionInfo');
+    expect(report.summary.errorChecks).toContain('rpcConnectionHealth');
+    expect(report.summary.errorChecks).toContain('activeTabTelemetry');
+    expect(report.summary.warningChecks).not.toContain('rpcSessionInfo');
     expect(report.ok).toBe(false);
 
     rmSync(dataDir, { recursive: true, force: true });

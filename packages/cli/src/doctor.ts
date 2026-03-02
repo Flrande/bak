@@ -383,13 +383,14 @@ async function probeRpcSessionInfo(rpcWsPort: number): Promise<SessionInfoProbe>
   }
 }
 
-function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe): DoctorCheck {
+function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
       message: 'rpc session.info unavailable',
-      severity: 'warn',
+      severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
+        mode,
         detail: probe.detail ?? 'unknown'
       }
     };
@@ -612,14 +613,15 @@ export function assessProtocolCompatibility(info: Record<string, unknown>): Doct
   };
 }
 
-function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe): DoctorCheck {
+function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
       message: 'protocol compatibility unknown (session.info unavailable)',
-      severity: 'warn',
+      severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
         expectedProtocolVersion: PROTOCOL_VERSION,
+        mode,
         detail: probe.detail ?? 'unknown'
       }
     };
@@ -627,14 +629,19 @@ function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe): DoctorChe
   return assessProtocolCompatibility(probe.info);
 }
 
-function checkVersionCompatibilityFromProbe(probe: SessionInfoProbe, cliVersion: string): DoctorCheck {
+function checkVersionCompatibilityFromProbe(
+  probe: SessionInfoProbe,
+  cliVersion: string,
+  mode: 'preflight' | 'runtime'
+): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
       message: 'version compatibility unknown (session.info unavailable)',
-      severity: 'warn',
+      severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
         cliVersion,
+        mode,
         detail: probe.detail ?? 'unknown'
       }
     };
@@ -645,8 +652,11 @@ function checkVersionCompatibilityFromProbe(probe: SessionInfoProbe, cliVersion:
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const dataDir = options.dataDir ? resolve(options.dataDir) : resolveDataDir();
   const cliVersion = readCliVersion();
+  const pairing = checkPairing(dataDir);
   const sessionInfo = await probeRpcSessionInfo(options.rpcWsPort);
-  const portMode: 'preflight' | 'runtime' = sessionInfo.ok && sessionInfo.info ? 'runtime' : 'preflight';
+  const runtimeExpected = pairing.ok;
+  const portMode: 'preflight' | 'runtime' = sessionInfo.ok && sessionInfo.info ? 'runtime' : runtimeExpected ? 'runtime' : 'preflight';
+  const unavailableSeverity: DoctorCheck['severity'] = portMode === 'preflight' ? 'warn' : undefined;
   const [extensionPort, rpcPort] = await Promise.all([
     probePortState(options.port),
     probePortState(options.rpcWsPort)
@@ -656,17 +666,18 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     dataDirWritable: checkDataDirWritable(dataDir),
     memoryBackend: checkMemoryBackend(dataDir),
     healingTelemetry: checkHealingTelemetry(dataDir),
-    pairing: checkPairing(dataDir),
+    pairing,
     extensionBridgePort: assessPortAvailability(options.port, extensionPort.available, portMode, extensionPort.code),
     rpcPort: assessPortAvailability(options.rpcWsPort, rpcPort.available, portMode, rpcPort.code),
-    rpcSessionInfo: checkRpcSessionInfoFromProbe(sessionInfo),
+    rpcSessionInfo: checkRpcSessionInfoFromProbe(sessionInfo, portMode),
     rpcConnectionHealth: sessionInfo.ok && sessionInfo.info
       ? assessSessionInfoHealth(sessionInfo.info)
       : {
           ok: false,
           message: 'rpc connection health unavailable (session.info unavailable)',
-          severity: 'warn',
+          severity: unavailableSeverity,
           details: {
+            mode: portMode,
             detail: sessionInfo.detail ?? 'unknown'
           }
         },
@@ -675,13 +686,14 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
       : {
           ok: false,
           message: 'active tab telemetry unavailable (session.info unavailable)',
-          severity: 'warn',
+          severity: unavailableSeverity,
           details: {
+            mode: portMode,
             detail: sessionInfo.detail ?? 'unknown'
           }
         },
-    protocolCompatibility: checkProtocolCompatibilityFromProbe(sessionInfo),
-    versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion)
+    protocolCompatibility: checkProtocolCompatibilityFromProbe(sessionInfo, portMode),
+    versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion, portMode)
   };
 
   const summary = {
