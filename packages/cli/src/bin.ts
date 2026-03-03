@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
@@ -13,6 +13,7 @@ import { readEnvInt, resolveDataDir } from './utils.js';
 
 const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
 const DEFAULT_RPC_PORT = readEnvInt('BAK_RPC_WS_PORT', DEFAULT_PORT + 1);
+const DEFAULT_PAIR_TTL_DAYS = readEnvInt('BAK_PAIR_TTL_DAYS', 30);
 
 function parseParams(values: string[]): Record<string, string> {
   const output: Record<string, string> = {};
@@ -41,17 +42,108 @@ function parseNonNegativeInt(value: unknown, label: string): number | undefined 
   return parsed;
 }
 
+function parsePositiveInt(value: unknown, label: string): number {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be an integer > 0`);
+  }
+  return parsed;
+}
+
+function resolveExtensionDistPath(): string | null {
+  const candidates = [
+    resolve(__dirname, '..', '..', 'bak-extension', 'dist'),
+    resolve(__dirname, '..', '..', '..', 'extension', 'dist'),
+    resolve(process.cwd(), 'node_modules', '@flrande', 'bak-extension', 'dist'),
+    resolve(process.cwd(), 'packages', 'extension', 'dist')
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 const program = new Command();
 program.name('bak').description('Browser Agent Kit CLI').version('0.1.0');
+
+program
+  .command('setup')
+  .description('Generate a pairing token and print quickstart instructions')
+  .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
+  .option('--ttl-days <days>', 'token ttl in days', `${DEFAULT_PAIR_TTL_DAYS}`)
+  .option('--json', 'print setup payload as JSON', false)
+  .action((options) => {
+    const ttlDays = parsePositiveInt(options.ttlDays, 'ttl-days');
+    const port = Number.parseInt(String(options.port), 10);
+    const rpcWsPort = Number.parseInt(String(options.rpcWsPort), 10);
+    if (!Number.isInteger(port) || port < 1) {
+      throw new Error('port must be an integer >= 1');
+    }
+    if (!Number.isInteger(rpcWsPort) || rpcWsPort < 1) {
+      throw new Error('rpc-ws-port must be an integer >= 1');
+    }
+
+    const store = new PairingStore();
+    const created = store.createToken({ ttlDays, reason: 'setup' });
+    const extensionDistPath = resolveExtensionDistPath();
+    const payload = {
+      token: created.token,
+      createdAt: created.createdAt,
+      expiresAt: created.expiresAt,
+      port,
+      rpcWsPort,
+      extensionDistPath,
+      serveCommand: `npx bak serve --port ${port} --rpc-ws-port ${rpcWsPort}`,
+      doctorCommand: `npx bak doctor --port ${port} --rpc-ws-port ${rpcWsPort}`
+    };
+
+    if (options.json === true) {
+      printResult(payload);
+      return;
+    }
+
+    process.stdout.write('[bak] setup ready\n');
+    process.stdout.write(`token: ${created.token}\n`);
+    process.stdout.write(`token expires: ${created.expiresAt}\n`);
+    process.stdout.write(`serve: ${payload.serveCommand}\n`);
+    process.stdout.write(`doctor: ${payload.doctorCommand}\n`);
+    process.stdout.write(`extension dist: ${extensionDistPath ?? 'not found (install @flrande/bak-extension)'}\n`);
+  });
 
 program
   .command('serve')
   .description('Start bak daemon with extension bridge + JSON-RPC servers')
   .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
   .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
+  .option('--pair', 'rotate pairing token at startup and print token', false)
+  .option('--pair-ttl-days <days>', 'token ttl days used with --pair', `${DEFAULT_PAIR_TTL_DAYS}`)
   .action(async (options) => {
     const port = Number.parseInt(String(options.port), 10);
     const rpcWsPort = Number.parseInt(String(options.rpcWsPort), 10);
+    if (!Number.isInteger(port) || port < 1) {
+      throw new Error('port must be an integer >= 1');
+    }
+    if (!Number.isInteger(rpcWsPort) || rpcWsPort < 1) {
+      throw new Error('rpc-ws-port must be an integer >= 1');
+    }
+
+    if (options.pair === true) {
+      const ttlDays = parsePositiveInt(options.pairTtlDays, 'pair-ttl-days');
+      const store = new PairingStore();
+      const created = store.createToken({ ttlDays, reason: 'serve-pair' });
+      process.stderr.write(`[bak] pair token: ${created.token}\n`);
+      process.stderr.write(`[bak] pair token expires: ${created.expiresAt}\n`);
+      const extensionDistPath = resolveExtensionDistPath();
+      if (extensionDistPath) {
+        process.stderr.write(`[bak] extension dist: ${extensionDistPath}\n`);
+      } else {
+        process.stderr.write('[bak] extension dist not found; install @flrande/bak-extension or provide local dist path\n');
+      }
+      process.stderr.write(`[bak] next: open extension popup, paste token, set port ${port}, click save/connect\n`);
+    }
 
     const daemon = await startBakDaemon(port, rpcWsPort);
 
@@ -82,13 +174,10 @@ program
 
 const pair = program.command('pair').description('Pairing token operations');
 pair
-  .option('--ttl-days <days>', 'token ttl in days', `${readEnvInt('BAK_PAIR_TTL_DAYS', 30)}`)
+  .option('--ttl-days <days>', 'token ttl in days', `${DEFAULT_PAIR_TTL_DAYS}`)
   .description('Generate and rotate pairing token for extension')
   .action((options) => {
-    const ttlDays = Number.parseInt(String(options.ttlDays), 10);
-    if (!Number.isInteger(ttlDays) || ttlDays <= 0) {
-      throw new Error('ttl-days must be an integer > 0');
-    }
+    const ttlDays = parsePositiveInt(options.ttlDays, 'ttl-days');
 
     const store = new PairingStore();
     const created = store.createToken({ ttlDays, reason: 'manual-rotate' });

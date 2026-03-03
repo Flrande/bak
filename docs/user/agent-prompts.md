@@ -10,6 +10,14 @@ Use this page when you want your coding agent to control a real browser through 
 npx bak serve --port 17373 --rpc-ws-port 17374
 ```
 
+For first-time setup:
+
+```powershell
+npx bak setup
+# or
+npx bak serve --pair --port 17373 --rpc-ws-port 17374
+```
+
 2. Ensure extension is paired and connected (see `quickstart.md`).
 3. Keep daemon terminal open during the whole agent session.
 
@@ -88,4 +96,3 @@ npx bak page goto "https://example.com" --rpc-ws-port 17374
 npx bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374
 npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
 ```
-

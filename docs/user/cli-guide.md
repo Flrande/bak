@@ -18,6 +18,7 @@ npx bak <command>
 
 Runtime:
 
+- `bak setup`: generate token + print extension path + next commands.
 - `bak serve`: start daemon and RPC endpoints.
 - `bak doctor`: runtime diagnostics.
 - `bak export`: export redacted diagnostics zip.
@@ -47,6 +48,18 @@ Keep one long-running daemon:
 
 ```powershell
 npx bak serve --port 17373 --rpc-ws-port 17374
+```
+
+Faster first-time startup:
+
+```powershell
+npx bak serve --pair --port 17373 --rpc-ws-port 17374
+```
+
+Or pre-generate setup instructions:
+
+```powershell
+npx bak setup
 ```
 
 Then let the agent issue commands in another shell:

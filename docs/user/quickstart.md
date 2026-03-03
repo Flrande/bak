@@ -21,7 +21,19 @@ npm init -y
 npm install @flrande/bak-cli @flrande/bak-extension
 ```
 
-## 2) Start The CLI Daemon
+## 2) One-Command Setup (Token + Paths)
+
+```powershell
+npx bak setup
+```
+
+This prints:
+
+- pair token
+- extension `dist` path
+- recommended `serve`/`doctor` commands
+
+## 3) Start The CLI Daemon
 
 ```powershell
 npx bak serve --port 17373 --rpc-ws-port 17374
@@ -29,16 +41,11 @@ npx bak serve --port 17373 --rpc-ws-port 17374
 
 Keep this terminal running.
 
-## 3) Generate Pair Token
-
-Open a second terminal in the same folder:
+You can also merge step 2 + 3 with one command:
 
 ```powershell
-Set-Location -LiteralPath "$HOME\bak-runtime"
-npx bak pair
+npx bak serve --pair --port 17373 --rpc-ws-port 17374
 ```
-
-Copy the `token` from output.
 
 ## 4) Load Browser Extension
 
@@ -48,7 +55,7 @@ Copy the `token` from output.
 4. Select:
    `C:\Users\<your-user>\bak-runtime\node_modules\@flrande\bak-extension\dist`
 5. Open extension popup.
-6. Paste pair token.
+6. Paste pair token from `bak setup` (or `bak serve --pair` output).
 7. Set port to `17373`.
 8. Save/connect.
 
