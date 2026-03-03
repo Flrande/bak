@@ -2,16 +2,16 @@
 
 `bak` is the runtime bridge between your coding agent and a real browser extension.
 
-Install from npm:
+Install from npm (recommended):
 
 ```powershell
-npm install @flrande/bak-cli @flrande/bak-extension
+npm install -g @flrande/bak-cli @flrande/bak-extension
 ```
 
 Run commands with:
 
 ```powershell
-npx bak <command>
+bak <command>
 ```
 
 ## Core Runtime Commands
@@ -47,37 +47,39 @@ Memory:
 Keep one long-running daemon:
 
 ```powershell
-npx bak serve --port 17373 --rpc-ws-port 17374
+bak serve --port 17373 --rpc-ws-port 17374
 ```
 
 Faster first-time startup:
 
 ```powershell
-npx bak serve --pair --port 17373 --rpc-ws-port 17374
+bak serve --pair --port 17373 --rpc-ws-port 17374
 ```
 
 Or pre-generate setup instructions:
 
 ```powershell
-npx bak setup
+bak setup
 ```
 
 Then let the agent issue commands in another shell:
 
 ```powershell
-npx bak doctor --port 17373 --rpc-ws-port 17374
-npx bak tabs active --rpc-ws-port 17374
-npx bak page goto "https://example.com" --rpc-ws-port 17374
-npx bak page title --rpc-ws-port 17374
+bak doctor --port 17373 --rpc-ws-port 17374
+bak tabs active --rpc-ws-port 17374
+bak page goto "https://example.com" --rpc-ws-port 17374
+bak page title --rpc-ws-port 17374
 ```
 
 For methods without dedicated subcommands, use `call`:
 
 ```powershell
-npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
-npx bak call --method element.click --params '{"locator":{"css":"button[type=submit]"}}' --rpc-ws-port 17374
-npx bak call --method network.list --params '{}' --rpc-ws-port 17374
+bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+bak call --method element.click --params '{"locator":{"css":"button[type=submit]"}}' --rpc-ws-port 17374
+bak call --method network.list --params '{}' --rpc-ws-port 17374
 ```
+
+If `bak` is not available in PATH, use `npx bak <command>`.
 
 ## Ports And Data Directory
 

@@ -96,8 +96,8 @@ program
       port,
       rpcWsPort,
       extensionDistPath,
-      serveCommand: `npx bak serve --port ${port} --rpc-ws-port ${rpcWsPort}`,
-      doctorCommand: `npx bak doctor --port ${port} --rpc-ws-port ${rpcWsPort}`
+      serveCommand: `bak serve --port ${port} --rpc-ws-port ${rpcWsPort}`,
+      doctorCommand: `bak doctor --port ${port} --rpc-ws-port ${rpcWsPort}`
     };
 
     if (options.json === true) {

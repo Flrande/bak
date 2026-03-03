@@ -1,6 +1,6 @@
 # Quickstart
 
-This quickstart uses published npm packages:
+This quickstart uses published npm packages and defaults to global install:
 
 - `@flrande/bak-cli`
 - `@flrande/bak-extension`
@@ -12,19 +12,16 @@ This quickstart uses published npm packages:
 - Chromium browser (Chrome or Edge)
 - Windows + PowerShell 7
 
-## 1) Prepare A Runtime Folder
+## 1) Install Globally (Recommended)
 
 ```powershell
-New-Item -ItemType Directory -Force -Path "$HOME\bak-runtime" | Out-Null
-Set-Location -LiteralPath "$HOME\bak-runtime"
-npm init -y
-npm install @flrande/bak-cli @flrande/bak-extension
+npm install -g @flrande/bak-cli @flrande/bak-extension
 ```
 
 ## 2) One-Command Setup (Token + Paths)
 
 ```powershell
-npx bak setup
+bak setup
 ```
 
 This prints:
@@ -36,7 +33,7 @@ This prints:
 ## 3) Start The CLI Daemon
 
 ```powershell
-npx bak serve --port 17373 --rpc-ws-port 17374
+bak serve --port 17373 --rpc-ws-port 17374
 ```
 
 Keep this terminal running.
@@ -44,7 +41,7 @@ Keep this terminal running.
 You can also merge step 2 + 3 with one command:
 
 ```powershell
-npx bak serve --pair --port 17373 --rpc-ws-port 17374
+bak serve --pair --port 17373 --rpc-ws-port 17374
 ```
 
 ## 4) Load Browser Extension
@@ -52,18 +49,24 @@ npx bak serve --pair --port 17373 --rpc-ws-port 17374
 1. Open `chrome://extensions` (or `edge://extensions`).
 2. Enable Developer mode.
 3. Click `Load unpacked`.
-4. Select:
-   `C:\Users\<your-user>\bak-runtime\node_modules\@flrande\bak-extension\dist`
-5. Open extension popup.
-6. Paste pair token from `bak setup` (or `bak serve --pair` output).
-7. Set port to `17373`.
-8. Save/connect.
+4. Resolve global extension path:
+
+```powershell
+$extDist = Join-Path (npm root -g) '@flrande\bak-extension\dist'
+$extDist
+```
+
+5. Select the printed `$extDist` path.
+6. Open extension popup.
+7. Paste pair token from `bak setup` (or `bak serve --pair` output).
+8. Set port to `17373`.
+9. Save/connect.
 
 ## 5) Verify Health
 
 ```powershell
-npx bak doctor --port 17373 --rpc-ws-port 17374
-npx bak tabs list --rpc-ws-port 17374
+bak doctor --port 17373 --rpc-ws-port 17374
+bak tabs list --rpc-ws-port 17374
 ```
 
 When connected, `doctor` should show `ok: true` and `extensionConnected: true`.
@@ -71,9 +74,9 @@ When connected, `doctor` should show `ok: true` and `extensionConnected: true`.
 ## 6) First Browser Control Commands
 
 ```powershell
-npx bak page goto "https://example.com" --rpc-ws-port 17374
-npx bak page title --rpc-ws-port 17374
-npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+bak page goto "https://example.com" --rpc-ws-port 17374
+bak page title --rpc-ws-port 17374
+bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
 ```
 
 `page.snapshot` is currently available through generic `call`.
@@ -89,8 +92,17 @@ Give your coding agent these constraints:
 A minimal action sequence an agent can run:
 
 ```powershell
-npx bak tabs active --rpc-ws-port 17374
-npx bak page goto "https://news.ycombinator.com" --rpc-ws-port 17374
-npx bak page wait --mode text --value "Hacker News" --rpc-ws-port 17374
-npx bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+bak tabs active --rpc-ws-port 17374
+bak page goto "https://news.ycombinator.com" --rpc-ws-port 17374
+bak page wait --mode text --value "Hacker News" --rpc-ws-port 17374
+bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+```
+
+## 8) If `bak` Is Not In PATH
+
+Use `npx` as fallback:
+
+```powershell
+npx bak setup
+npx bak serve --pair --port 17373 --rpc-ws-port 17374
 ```

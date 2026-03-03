@@ -7,6 +7,8 @@ Published npm packages:
 - `@flrande/bak-cli`
 - `@flrande/bak-extension`
 
+Default recommendation: install globally and use `bak ...` commands.
+
 ## Read In Order
 
 1. [Quickstart](./quickstart.md): first successful connection and command.
