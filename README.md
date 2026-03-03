@@ -65,7 +65,7 @@ If you are integrating with a coding agent as an end user, start from `docs/user
 Paste this one sentence to your coding agent:
 
 ```text
-Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, then verify with `bak doctor --port 17373 --rpc-ws-port 17374` and continue all browser tasks via `bak` CLI.
+Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, verify with `bak doctor --port 17373 --rpc-ws-port 17374`, and if extension is not connected explicitly guide the user to complete `chrome://extensions` load-unpacked plus popup token/port connect and wait for confirmation before continuing browser tasks via `bak` CLI.
 ```
 
 One-line PowerShell fallback (if your agent needs an explicit command):
