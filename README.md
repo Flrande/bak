@@ -61,6 +61,20 @@ If you are integrating with a coding agent as an end user, use:
 - `docs/user/quickstart.md`
 - `docs/user/cli-guide.md`
 
+## One-Line For Agents
+
+Paste this one sentence to your coding agent:
+
+```text
+Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, then verify with `bak doctor --port 17373 --rpc-ws-port 17374` and continue all browser tasks via `bak` CLI.
+```
+
+One-line PowerShell fallback (if your agent needs an explicit command):
+
+```powershell
+$q='https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md';$l='https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/from-guide-url.ps1';$p=Join-Path $env:TEMP 'bak-bootstrap-from-guide.ps1';Invoke-WebRequest -Uri $l -OutFile $p;pwsh -NoLogo -NoProfile -File $p -GuideUrl $q
+```
+
 ## Install
 
 ```powershell
