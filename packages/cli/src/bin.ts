@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
 import { startBakDaemon } from './server.js';
@@ -14,6 +15,7 @@ import { readEnvInt, resolveDataDir } from './utils.js';
 const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
 const DEFAULT_RPC_PORT = readEnvInt('BAK_RPC_WS_PORT', DEFAULT_PORT + 1);
 const DEFAULT_PAIR_TTL_DAYS = readEnvInt('BAK_PAIR_TTL_DAYS', 30);
+const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
 function parseParams(values: string[]): Record<string, string> {
   const output: Record<string, string> = {};
@@ -52,8 +54,8 @@ function parsePositiveInt(value: unknown, label: string): number {
 
 function resolveExtensionDistPath(): string | null {
   const candidates = [
-    resolve(__dirname, '..', '..', 'bak-extension', 'dist'),
-    resolve(__dirname, '..', '..', '..', 'extension', 'dist'),
+    resolve(CURRENT_DIR, '..', '..', 'bak-extension', 'dist'),
+    resolve(CURRENT_DIR, '..', '..', '..', 'extension', 'dist'),
     resolve(process.cwd(), 'node_modules', '@flrande', 'bak-extension', 'dist'),
     resolve(process.cwd(), 'packages', 'extension', 'dist')
   ];
@@ -65,8 +67,21 @@ function resolveExtensionDistPath(): string | null {
   return null;
 }
 
+function readCliVersion(): string {
+  try {
+    const packageJsonUrl = new URL('../package.json', import.meta.url);
+    const packageJson = JSON.parse(readFileSync(packageJsonUrl, 'utf8')) as { version?: unknown };
+    if (typeof packageJson.version === 'string' && packageJson.version.trim().length > 0) {
+      return packageJson.version;
+    }
+  } catch {
+    // fall back to a safe sentinel version if package metadata is unavailable
+  }
+  return '0.0.0';
+}
+
 const program = new Command();
-program.name('bak').description('Browser Agent Kit CLI').version('0.1.0');
+program.name('bak').description('Browser Agent Kit CLI').version(readCliVersion());
 
 program
   .command('setup')
