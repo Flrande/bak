@@ -38,7 +38,7 @@ pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 Expected bootstrap output:
 
 - global npm install of CLI + extension packages
-- pairing token
+- pairing token (`bak setup` preferred, auto-fallback to `bak pair` when needed)
 - daemon start status
 - extension `dist` path
 - result JSON at `.bak-data/bootstrap-result.json`

@@ -38,14 +38,14 @@ function Invoke-NativeCapture {
 
 function Test-TcpPort {
   param(
-    [Parameter(Mandatory = $true)][string]$Host,
+    [Parameter(Mandatory = $true)][string]$HostName,
     [Parameter(Mandatory = $true)][int]$Port,
     [int]$TimeoutMs = 500
   )
 
   $client = [System.Net.Sockets.TcpClient]::new()
   try {
-    $connectTask = $client.ConnectAsync($Host, $Port)
+    $connectTask = $client.ConnectAsync($HostName, $Port)
     $completed = $connectTask.Wait($TimeoutMs)
     return $completed -and $client.Connected
   } catch {
@@ -57,14 +57,14 @@ function Test-TcpPort {
 
 function Wait-TcpPort {
   param(
-    [Parameter(Mandatory = $true)][string]$Host,
+    [Parameter(Mandatory = $true)][string]$HostName,
     [Parameter(Mandatory = $true)][int]$Port,
     [int]$TimeoutSeconds = 25
   )
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    if (Test-TcpPort -Host $Host -Port $Port -TimeoutMs 400) {
+    if (Test-TcpPort -HostName $HostName -Port $Port -TimeoutMs 400) {
       return $true
     }
     Start-Sleep -Milliseconds 300
@@ -96,14 +96,43 @@ $env:BAK_DATA_DIR = $resolvedDataDir
 
 try {
   Write-Host "[bak-bootstrap] Generating pairing token and setup payload..."
-  $setupRaw = Invoke-NativeCapture -Description 'bak setup --json' -Command {
-    & $bakCmd setup --port $Port --rpc-ws-port $RpcWsPort --json
+  $setupSource = 'setup'
+  $setupError = $null
+  $setup = $null
+
+  try {
+    $setupRaw = Invoke-NativeCapture -Description 'bak setup --json' -Command {
+      & $bakCmd setup --port $Port --rpc-ws-port $RpcWsPort --json
+    }
+    $setupJson = ($setupRaw -join "`n").Trim()
+    if (-not $setupJson) {
+      throw 'bak setup --json returned empty output'
+    }
+    $setup = $setupJson | ConvertFrom-Json
+  } catch {
+    $setupSource = 'pair-fallback'
+    $setupError = $_.Exception.Message
+    Write-Warning "[bak-bootstrap] bak setup failed. Falling back to bak pair + manual setup payload. Detail: $setupError"
+
+    $pairRaw = Invoke-NativeCapture -Description 'bak pair' -Command {
+      & $bakCmd pair
+    }
+    $pairJson = ($pairRaw -join "`n").Trim()
+    if (-not $pairJson) {
+      throw 'bak pair returned empty output during setup fallback'
+    }
+    $pair = $pairJson | ConvertFrom-Json
+    $setup = [PSCustomObject]@{
+      token = [string]$pair.token
+      createdAt = [string]$pair.createdAt
+      expiresAt = [string]$pair.expiresAt
+      port = $Port
+      rpcWsPort = $RpcWsPort
+      extensionDistPath = $null
+      serveCommand = "$bakCmd serve --port $Port --rpc-ws-port $RpcWsPort"
+      doctorCommand = "$bakCmd doctor --port $Port --rpc-ws-port $RpcWsPort"
+    }
   }
-  $setupJson = ($setupRaw -join "`n").Trim()
-  if (-not $setupJson) {
-    throw 'bak setup --json returned empty output'
-  }
-  $setup = $setupJson | ConvertFrom-Json
 
   $extensionDistPath = if ($setup.extensionDistPath) {
     [string]$setup.extensionDistPath
@@ -119,7 +148,7 @@ try {
   $stderrLog = Join-Path $logDir 'daemon-stderr.log'
 
   if (-not $SkipDaemonStart) {
-    if (Test-TcpPort -Host '127.0.0.1' -Port $RpcWsPort -TimeoutMs 400) {
+    if (Test-TcpPort -HostName '127.0.0.1' -Port $RpcWsPort -TimeoutMs 400) {
       Write-Host "[bak-bootstrap] Daemon already running on rpc port $RpcWsPort."
       $daemonStarted = $true
     } else {
@@ -130,7 +159,7 @@ try {
         '--rpc-ws-port', "$RpcWsPort"
       ) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
       $daemonPid = $daemon.Id
-      $daemonStarted = Wait-TcpPort -Host '127.0.0.1' -Port $RpcWsPort -TimeoutSeconds 25
+      $daemonStarted = Wait-TcpPort -HostName '127.0.0.1' -Port $RpcWsPort -TimeoutSeconds 25
       if (-not $daemonStarted) {
         throw "Daemon failed to open rpc port $RpcWsPort. Check logs: $stderrLog"
       }
@@ -154,6 +183,8 @@ try {
 
   $result = [PSCustomObject]@{
     ok = $true
+    setupSource = $setupSource
+    setupError = $setupError
     port = $Port
     rpcWsPort = $RpcWsPort
     token = [string]$setup.token
