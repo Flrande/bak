@@ -13,7 +13,7 @@ Packages used in this guide:
 Paste this sentence:
 
 ```text
-Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, verify with `bak doctor --port 17373 --rpc-ws-port 17374`, and if extension is not connected explicitly guide the user to complete `chrome://extensions` load-unpacked plus popup token/port connect and wait for confirmation before continuing browser tasks via `bak` CLI.
+Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, verify with `bak doctor --port 17373 --rpc-ws-port 17374`, and if extension is not connected explicitly guide the user to complete extension setup in Chrome (`chrome://extensions`) or Edge (`edge://extensions`) with Load unpacked plus popup token/port connect, then wait for confirmation before continuing browser tasks via `bak` CLI.
 ```
 
 ## 1) Prerequisites
