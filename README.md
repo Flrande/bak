@@ -50,6 +50,7 @@ repo/
 - User path: `docs/user/README.md`
 - Developer path: `docs/developer/README.md`
 - Reference path: `docs/reference/README.md`
+- Setup source of truth (agent-first): `docs/user/quickstart.md`
 
 Published npm packages:
 
@@ -57,9 +58,7 @@ Published npm packages:
 - `@flrande/bak-extension`
 - `@flrande/bak-protocol`
 
-If you are integrating with a coding agent as an end user, use:
-- `docs/user/quickstart.md`
-- `docs/user/cli-guide.md`
+If you are integrating with a coding agent as an end user, start from `docs/user/quickstart.md`.
 
 ## One-Line For Agents
 
