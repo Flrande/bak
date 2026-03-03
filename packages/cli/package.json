@@ -1,12 +1,17 @@
 {
   "name": "@flrande/bak-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "bin": {
     "bak": "dist/bin.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "tsconfig.json"
+  ],
   "scripts": {
     "build": "tsup src/bin.ts src/index.ts --format esm --dts --clean",
     "dev": "tsx watch src/bin.ts serve --port 17373",
