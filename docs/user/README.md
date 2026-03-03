@@ -8,6 +8,7 @@ Published npm packages:
 - `@flrande/bak-extension`
 
 Default recommendation: install globally and use `bak ...` commands.
+For link-driven agent setup, paste the raw `quickstart.md` link to your coding agent.
 
 ## Read In Order
 

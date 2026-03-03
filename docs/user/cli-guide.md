@@ -14,6 +14,16 @@ Run commands with:
 bak <command>
 ```
 
+Agent-friendly bootstrap from quickstart URL:
+
+```powershell
+$quickstartUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md'
+$launcherUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/from-guide-url.ps1'
+$launcherPath = Join-Path $env:TEMP 'bak-bootstrap-from-guide.ps1'
+Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
+pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
+```
+
 ## Core Runtime Commands
 
 Runtime:

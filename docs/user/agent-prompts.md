@@ -4,6 +4,16 @@ Use this page when you want your coding agent to control a real browser through 
 
 ## Before You Paste Any Prompt
 
+Optional bootstrap from URL:
+
+```powershell
+$quickstartUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md'
+$launcherUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/from-guide-url.ps1'
+$launcherPath = Join-Path $env:TEMP 'bak-bootstrap-from-guide.ps1'
+Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
+pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
+```
+
 1. Start daemon:
 
 ```powershell
@@ -37,12 +47,13 @@ Environment:
 Execution rules:
 1) Use only `bak ...` commands for browser control and reading.
 2) Do not use Playwright/Puppeteer/selenium directly.
-3) Before complex actions, run `bak doctor --port 17373 --rpc-ws-port 17374`.
-4) If a method has no dedicated subcommand, use:
+3) If user provides quickstart raw URL, resolve marker `BAK_BOOTSTRAP_SCRIPT_URL` and run that script first.
+4) Before complex actions, run `bak doctor --port 17373 --rpc-ws-port 17374`.
+5) If a method has no dedicated subcommand, use:
    bak call --method <method> --params '<json>' --rpc-ws-port 17374
-5) Prefer explicit waits:
+6) Prefer explicit waits:
    bak page wait --mode text --value "<text>" --rpc-ws-port 17374
-6) On failure, report exact command + error, then retry with one corrective step.
+7) On failure, report exact command + error, then retry with one corrective step.
 ```
 
 ## Codex Prompt Template
