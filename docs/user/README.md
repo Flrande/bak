@@ -1,24 +1,29 @@
 # User Docs
 
-These docs are for operators and coding-agent users who want to control a real browser through BAK.
+This section is for people using a coding agent to control a real browser.
 
-Published npm packages:
+## Agent-First Default
+
+Paste this URL to your agent:
+
+- `https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md`
+
+That quickstart is the canonical setup path.
+
+## Read In Order
+
+1. [Quickstart](./quickstart.md): bootstrap, pairing, first successful browser control.
+2. [CLI Guide](./cli-guide.md): command map and daily runtime usage.
+3. [Memory Guide](./memory-guide.md): record and replay repeated web tasks.
+4. [Troubleshooting](./troubleshooting.md): diagnose runtime and connection issues.
+5. [Agent Prompts](./agent-prompts.md): reusable instruction templates.
+
+## Package Names
 
 - `@flrande/bak-cli`
 - `@flrande/bak-extension`
 
-Default recommendation: install globally and use `bak ...` commands.
-For link-driven agent setup, paste the raw `quickstart.md` link to your coding agent.
+## Style
 
-## Read In Order
-
-1. [Quickstart](./quickstart.md): first successful connection and command.
-2. [CLI Guide](./cli-guide.md): daily command usage.
-3. [Agent Prompts](./agent-prompts.md): copy-paste templates for Codex/Claude/Cursor.
-4. [Memory Guide](./memory-guide.md): record/retrieve/replay repeated web tasks.
-5. [Troubleshooting](./troubleshooting.md): diagnose pairing, RPC, and extension issues.
-
-## Scope
-
-- Focuses on practical usage, not internal implementation.
-- Uses PowerShell 7 command examples.
+- Commands are written for Windows + PowerShell 7.
+- Global `bak` commands are the default; `npx bak` is a fallback when PATH is missing.
