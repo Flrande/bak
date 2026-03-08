@@ -1,7 +1,7 @@
 {
   "name": "bak-monorepo",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "packageManager": "pnpm@9.15.1",
   "engines": {
     "node": ">=22.0.0"
@@ -17,7 +17,8 @@
     "test:e2e:critical": "pnpm build && playwright test tests/e2e/scenarios tests/e2e/memory --reporter=line",
     "test:e2e:full": "pnpm build && playwright test --reporter=line --output=test-results",
     "e2e:matrix": "pwsh -NoLogo -NoProfile -File scripts/e2e/generate-matrix.ps1",
-    "release:report": "pwsh -NoLogo -NoProfile -File scripts/release/generate-capability-report.ps1"
+    "release:report": "pwsh -NoLogo -NoProfile -File scripts/release/generate-capability-report.ps1",
+    "release:publish": "pnpm --filter @flrande/bak-protocol publish --access public --no-git-checks && pnpm --filter @flrande/bak-cli publish --access public --no-git-checks && pnpm --filter @flrande/bak-extension publish --access public --no-git-checks"
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
