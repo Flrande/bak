@@ -1,108 +1,110 @@
-# Browser Agent Kit (bak)
+# Browser Agent Kit (`bak`)
 
-Browser Agent Kit is a browser extension plus a CLI for coding-agent browser control.
+`bak` lets a coding agent control your real browser through:
 
-The product model is simple:
-- the user installs the MV3 extension in a real Chromium browser
-- the user runs the `bak` CLI daemon locally
-- the agent drives the real browser through first-class CLI commands or JSON-RPC
+- a local CLI daemon
+- a Chromium extension
+
+Use it when you want the agent to click, type, read pages, inspect DOM/text/a11y, work with frame or shadow DOM, and reuse remembered browser paths.
+
+## Install
+
+Prerequisites:
+
+- Windows + PowerShell 7
+- Node.js 22+
+- Chrome or Edge
+
+Install the CLI and extension package:
+
+```powershell
+npm install -g @flrande/bak-cli @flrande/bak-extension
+```
+
+If `bak` is not in PATH yet, use `npx @flrande/bak-cli@latest ...` for the same commands.
+
+## Start `bak`
+
+Create a pairing token:
+
+```powershell
+bak setup
+```
+
+Start the daemon:
+
+```powershell
+bak serve --port 17373 --rpc-ws-port 17374
+```
+
+Leave this process running.
+
+## Load The Extension
+
+1. Open `chrome://extensions` or `edge://extensions`
+2. Turn on `Developer mode`
+3. Click `Load unpacked`
+4. Load this folder:
+
+```powershell
+Join-Path (npm root -g) '@flrande\bak-extension\dist'
+```
+
+5. Open the extension popup
+6. Paste the token from `bak setup`
+7. Keep port `17373`
+8. Click connect
+
+## Verify
+
+```powershell
+bak doctor --port 17373 --rpc-ws-port 17374
+bak tabs list --rpc-ws-port 17374
+```
+
+You want to see:
+
+- `ok: true`
+- `extensionConnected: true`
+
+## Let Your Agent Use It
+
+Give your agent a short instruction like this:
+
+```text
+Use `bak` for browser tasks. If the browser is not connected, tell me to complete extension setup first. Always verify with `bak doctor --port 17373 --rpc-ws-port 17374` before doing browser work.
+```
+
+Common commands the agent can use:
+
+```powershell
+bak page goto "https://example.com" --rpc-ws-port 17374
+bak page title --rpc-ws-port 17374
+bak page snapshot --include-base64 --rpc-ws-port 17374
+bak debug dump-state --include-snapshot --rpc-ws-port 17374
+bak element click --css "#submit" --rpc-ws-port 17374
+bak element type --css "#email" --value "me@example.com" --clear --rpc-ws-port 17374
+bak memory capture begin --goal "return to billing settings" --rpc-ws-port 17374
+bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374
+```
+
+## What `bak` Supports
+
+- browser control: click, type, select, upload, keyboard, mouse
+- browser reading: snapshot, text, DOM, accessibility tree
+- context handling: frame, shadow DOM, frame + shadow
+- debug: console, network, structured dump-state
+- explicit memory: capture, review, promote, search, explain, plan, execute, patch
+
+Notes:
+
+- console and network are useful agent context, but still best-effort rather than full DevTools parity
 - memory is explicit and advisory, not automatic
 
-## What Ships
+## More Docs
 
-- `packages/extension`: the paired browser extension
-- `packages/cli`: the `bak` CLI, daemon, JSON-RPC server, and memory service
-- `packages/protocol`: shared `v3` protocol types and schema
-- `apps/test-sites`: local multi-page test app used by e2e coverage
-- `tests`: unit and Playwright e2e coverage
-
-## Core Capabilities
-
-Browser control and reading:
-- page snapshot, text, DOM, accessibility tree, metrics, viewport
-- console, network, and structured debug dump
-- `debug dump-state --include-snapshot` can attach a fresh viewport snapshot artifact to the structured dump
-- console capture is structured but best-effort for page-origin logs; treat it as advisory rather than a guaranteed browser-devtools equivalent
-- network capture is best-effort: when page-world request hooks are unavailable, `network.*` falls back to resource timing entries with `kind: "resource"` and `status: 0`
-- frame context, shadow context, and frame+shadow combinations
-- element read/write actions, keyboard, mouse, and file upload
-
-Memory lifecycle:
-- `capture begin -> capture mark -> capture end`
-- only one capture session can be active at a time
-- draft review before promotion
-- durable memories with immutable revisions
-- search returns candidates only
-- search can rank against the active tab or an explicit URL
-- explain returns applicability checks and risks
-- plan creation binds parameters and checks fit
-- execute runs a specific plan in `dry-run`, `assist`, or `auto`
-- drift produces explicit patch suggestions instead of silent writeback
-- captured element steps retain live locator candidates so later patch suggestions can match by name/text/role instead of only the original css
-
-## Memory Model
-
-The memory system is `v3` and intentionally breaks the old skill-centric model.
-
-Durable memory kinds:
-- `route`: how to reach a page, feature, or entry point
-- `procedure`: how to complete a task on a page
-- `composite`: an execution composition, usually route + procedure
-
-Principles:
-- no silent durable memory writes
-- no silent recall
-- no silent execution
-- no silent mutation during replay
-- capture/promote `route` memories explicitly when you want repeated path reuse, then search with `--kind route` and explain/plan against the current starting page before executing
-- captured text stays literal unless it is already templated or clearly sensitive
-- context-aware page metadata uses the active document for the current frame/shadow stack
-- default execution mode is `assist`
-- sqlite is the only supported durable memory backend
-
-## Quick Start
-
-```powershell
-pnpm i
-pnpm build
-node packages/cli/dist/bin.js pair create
-node packages/cli/dist/bin.js serve --port 17373 --rpc-ws-port 17374
-```
-
-Then load `packages/extension/dist` as an unpacked extension in Chrome or Edge, connect it with the popup, and verify:
-
-```powershell
-node packages/cli/dist/bin.js doctor --port 17373 --rpc-ws-port 17374
-```
-
-## CLI Examples
-
-```powershell
-node packages/cli/dist/bin.js page snapshot --include-base64 --rpc-ws-port 17374
-node packages/cli/dist/bin.js debug dump-state --include-snapshot --rpc-ws-port 17374
-node packages/cli/dist/bin.js context enter-frame --frame-path '#demo-frame' --rpc-ws-port 17374
-node packages/cli/dist/bin.js element drag-drop --from-css '#drag-source' --to-css '#drop-target' --rpc-ws-port 17374
-node packages/cli/dist/bin.js memory capture begin --goal "open billing settings" --rpc-ws-port 17374
-node packages/cli/dist/bin.js memory search --goal "open billing settings" --kind route --url "https://portal.local/settings/billing" --rpc-ws-port 17374
-node packages/cli/dist/bin.js memory explain <memoryId> --url "https://portal.local/home" --rpc-ws-port 17374
-node packages/cli/dist/bin.js memory plan create --memory-id <memoryId> --mode assist --rpc-ws-port 17374
-node packages/cli/dist/bin.js memory execute <planId> --rpc-ws-port 17374
-```
-
-## Build And Validation
-
-```powershell
-pnpm build
-pnpm typecheck
-pnpm test:unit
-pnpm exec playwright test --reporter=line
-```
-
-## Documentation
-
-- [docs/README.md](./docs/README.md)
-- [docs/user/README.md](./docs/user/README.md)
-- [docs/developer/README.md](./docs/developer/README.md)
-- [docs/PROTOCOL.md](./docs/PROTOCOL.md)
-- [docs/user/cli-guide.md](./docs/user/cli-guide.md)
-- [docs/user/memory-guide.md](./docs/user/memory-guide.md)
+- [Quickstart](./docs/user/quickstart.md)
+- [CLI Guide](./docs/user/cli-guide.md)
+- [Memory Guide](./docs/user/memory-guide.md)
+- [Protocol](./docs/PROTOCOL.md)
+- [Developer Docs](./docs/developer/README.md)
