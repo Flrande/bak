@@ -22,7 +22,6 @@ import {
   type MemoryRunStep,
   type MemorySearchCandidate,
   type MemoryStep,
-  type MethodMap,
   type MethodName,
   type MethodParams,
   type MethodResult,
@@ -234,10 +233,6 @@ function applyTemplates(value: string | undefined, parameters: Record<string, Me
     }
     return '';
   });
-}
-
-function rpcErrorMetadata(error: RpcError): Record<string, unknown> {
-  return (error as RpcError & { details?: Record<string, unknown> }).details ?? {};
 }
 
 export class BakService {
@@ -701,7 +696,8 @@ export class BakService {
     if (!fingerprint) {
       return undefined;
     }
-    const { id: _fingerprintId, ...persisted } = fingerprint;
+    const { id: fingerprintId, ...persisted } = fingerprint;
+    void fingerprintId;
     return this.memoryStore.createPageFingerprint(persisted);
   }
 

@@ -67,21 +67,6 @@ function textScore(left: string, right: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-function normalizeUrl(input: string): { origin: string; path: string } {
-  try {
-    const parsed = new URL(input);
-    return {
-      origin: parsed.origin,
-      path: parsed.pathname || '/'
-    };
-  } catch {
-    return {
-      origin: '',
-      path: '/'
-    };
-  }
-}
-
 function safeLocatorLabel(step: MemoryStep): string {
   const locator = step.locator ?? step.targetCandidates?.[0];
   return locator?.name ?? locator?.text ?? locator?.role ?? locator?.css ?? locator?.eid ?? step.url ?? step.waitFor?.value ?? step.kind;
