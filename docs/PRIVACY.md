@@ -10,7 +10,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/security-priv
 4. Trace logs are redacted before write (for example `element.type.text` is stored as `[REDACTED]`, and snapshot base64 payloads are not persisted in trace entries).
 5. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
 6. `bak export` excludes snapshot image folders by default; use `--include-snapshots` only when operators explicitly need visual artifacts.
-7. Memory recording stores typed input as `[REDACTED:input]` by default; set `BAK_MEMORY_RECORD_INPUT_TEXT=1` only when explicitly needed.
+7. Memory capture does not silently create durable memories. Typed values are redacted in traces by default, and durable memories are only created after explicit draft promotion.
 
 Run `bak gc` to clean old traces/snapshots. The command is dry-run by default and requires `--force` to delete.
 

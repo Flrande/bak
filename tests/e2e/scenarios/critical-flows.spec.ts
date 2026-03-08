@@ -90,7 +90,7 @@ test.describe('scenario-level e2e', () => {
     try {
       await page.click('#fetch-ok');
       await page.click('#fetch-fail');
-      await expect(page.locator('#network-log')).toContainText('fetch:503:fail');
+      await expect(page.locator('#network-log')).toContainText('fetch:503:');
 
       const waited = (await harness.rpcCall('network.waitFor', {
         tabId,

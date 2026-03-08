@@ -38,7 +38,7 @@ pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 Expected bootstrap output:
 
 - global npm install of CLI + extension packages
-- pairing token (`bak setup` preferred, auto-fallback to `bak pair` when needed)
+- pairing token (`bak setup` preferred, auto-fallback to `bak pair create` when needed)
 - daemon start status
 - extension `dist` path
 - result JSON at `.bak-data/bootstrap-result.json`
@@ -97,7 +97,7 @@ You should see:
 If your installed version is older and lacks these features, use fallback:
 
 ```powershell
-bak pair
+bak pair create
 bak serve --port 17373 --rpc-ws-port 17374
 ```
 

@@ -14,6 +14,9 @@ function initFormPage(): void {
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement;
   const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
   const result = document.getElementById('result') as HTMLDivElement;
+  const dragSource = document.getElementById('drag-source') as HTMLDivElement;
+  const dropTarget = document.getElementById('drop-target') as HTMLDivElement;
+  const dragResult = document.getElementById('drag-result') as HTMLDivElement;
 
   const nameInput = document.getElementById('name-input') as HTMLInputElement;
   const emailInput = document.getElementById('email-input') as HTMLInputElement;
@@ -37,6 +40,22 @@ function initFormPage(): void {
     noteInput.value = '';
     result.textContent = 'Reset done';
     result.dataset.status = 'reset';
+  });
+
+  dragSource.addEventListener('dragstart', (event) => {
+    event.dataTransfer?.setData('text/plain', dragSource.id);
+    dragResult.textContent = 'drag:started';
+  });
+  dropTarget.addEventListener('dragenter', (event) => {
+    event.preventDefault();
+  });
+  dropTarget.addEventListener('dragover', (event) => {
+    event.preventDefault();
+  });
+  dropTarget.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const sourceId = event.dataTransfer?.getData('text/plain') || 'unknown';
+    dragResult.textContent = `drag:${sourceId}->${dropTarget.id}`;
   });
 }
 
@@ -99,7 +118,11 @@ function initControlledPage(): void {
   const blockedAction = document.getElementById('blocked-action') as HTMLButtonElement;
   const cover = document.getElementById('cover') as HTMLDivElement;
   const toggleCover = document.getElementById('toggle-cover') as HTMLButtonElement;
+  const swapAction = document.getElementById('swap-action') as HTMLButtonElement;
+  const driftActionHost = document.getElementById('drift-action-host') as HTMLDivElement;
+  const actionVariant = document.getElementById('action-variant') as HTMLDivElement;
   const result = document.getElementById('action-result') as HTMLDivElement;
+  let driftVariant: 'primary' | 'secondary' = 'primary';
 
   const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
   let instanceSetterWrites = 0;
@@ -129,6 +152,26 @@ function initControlledPage(): void {
   toggleCover.addEventListener('click', () => {
     cover.style.display = cover.style.display === 'none' ? 'block' : 'none';
   });
+
+  const renderDriftAction = (): void => {
+    driftActionHost.dataset.variant = driftVariant;
+    driftActionHost.innerHTML =
+      driftVariant === 'primary'
+        ? '<button id="action-primary" data-variant="primary">Run Action</button>'
+        : '<button id="action-primary-v2" data-variant="secondary">Run Action</button>';
+    actionVariant.textContent = `actionVariant: ${driftVariant}`;
+    const actionButton = driftActionHost.querySelector('button') as HTMLButtonElement | null;
+    actionButton?.addEventListener('click', () => {
+      result.textContent = `result:${actionButton.dataset.variant}@${Date.now()}`;
+    });
+  };
+
+  swapAction.addEventListener('click', () => {
+    driftVariant = driftVariant === 'primary' ? 'secondary' : 'primary';
+    renderDriftAction();
+  });
+
+  renderDriftAction();
 }
 
 function initSpaPage(): void {
@@ -245,14 +288,36 @@ function initShadowPage(): void {
     <div class="shadow-wrap">
       <button id="shadow-btn" class="shadow-btn">Shadow Action</button>
       <input id="shadow-input" class="shadow-input" placeholder="shadow value" />
+      <div id="inner-shadow-host"></div>
     </div>
   `;
   shadow.appendChild(wrapper);
 
   const button = shadow.getElementById('shadow-btn') as HTMLButtonElement;
   const input = shadow.getElementById('shadow-input') as HTMLInputElement;
+  const innerHost = shadow.getElementById('inner-shadow-host') as HTMLDivElement;
+  const innerShadow = innerHost.attachShadow({ mode: 'open' });
+  const innerWrapper = document.createElement('div');
+  innerWrapper.innerHTML = `
+    <style>
+      .inner-shadow-wrap { margin-top: 12px; border-top: 1px dashed #fb923c; padding-top: 12px; }
+      .inner-shadow-btn { border: none; border-radius: 6px; padding: 8px 12px; background: #9a3412; color: white; cursor: pointer; }
+      .inner-shadow-input { margin-top: 8px; width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #7c2d12; border-radius: 6px; }
+    </style>
+    <div class="inner-shadow-wrap">
+      <button id="inner-shadow-btn" class="inner-shadow-btn">Inner Shadow Action</button>
+      <input id="inner-shadow-input" class="inner-shadow-input" placeholder="inner shadow value" />
+    </div>
+  `;
+  innerShadow.appendChild(innerWrapper);
+
   button.addEventListener('click', () => {
     status.textContent = `shadow:${input.value || '(empty)'}`;
+  });
+  const innerButton = innerShadow.getElementById('inner-shadow-btn') as HTMLButtonElement;
+  const innerInput = innerShadow.getElementById('inner-shadow-input') as HTMLInputElement;
+  innerButton.addEventListener('click', () => {
+    status.textContent = `nested-shadow:${innerInput.value || '(empty)'}`;
   });
 }
 
@@ -271,12 +336,19 @@ function initNetworkPage(): void {
 
   const request = async (status: number): Promise<void> => {
     log.textContent = `fetch:${status}:pending`;
+    console.info(`network request started: ${status}`);
     try {
       const response = await fetch(`/api/slow?delay=250&status=${status}`);
       const payload = (await response.json()) as { status: number; ok: boolean };
       log.textContent = `fetch:${payload.status}:${payload.ok ? 'ok' : 'fail'}`;
+      if (payload.ok) {
+        console.info(`network request ok: ${payload.status}`);
+      } else {
+        console.warn(`network request failed: ${payload.status}`);
+      }
     } catch (error) {
       log.textContent = `fetch:${status}:error:${error instanceof Error ? error.message : String(error)}`;
+      console.error(`network request error: ${status}`, error);
     }
   };
 

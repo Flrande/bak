@@ -1,14 +1,15 @@
-# PROTOCOL (JSON-RPC v1 - Legacy)
+# Protocol v3
 
-This page is legacy compatibility guidance. Start from [docs/developer/protocol-rpc.md](./developer/protocol-rpc.md) and use [docs/PROTOCOL_V2.md](./PROTOCOL_V2.md) for current method coverage.
+`bak` uses JSON-RPC 2.0 over stdio or WebSocket.
 
-`v2` is now the active protocol baseline. See `docs/PROTOCOL_V2.md`.
+This document describes the active protocol baseline: `v3`.
 
 Schema artifact:
 - `packages/protocol/schemas/protocol.schema.json`
-- this file is versioned as `v1` and updated with additive compatibility by default
 
-Base envelope:
+## Envelope
+
+Request:
 
 ```json
 {
@@ -19,7 +20,7 @@ Base envelope:
 }
 ```
 
-Response success:
+Success:
 
 ```json
 {
@@ -29,7 +30,7 @@ Response success:
 }
 ```
 
-Response failure:
+Failure:
 
 ```json
 {
@@ -45,7 +46,7 @@ Response failure:
 }
 ```
 
-## Error codes
+## Error Codes
 
 - `E_NOT_PAIRED`
 - `E_PERMISSION`
@@ -56,130 +57,102 @@ Response failure:
 - `E_INTERNAL`
 - `E_NOT_READY`
 
-## Methods
+## Session And Runtime
 
-### Session
-
+Key methods:
 - `session.create`
 - `session.close`
 - `session.info`
 
-`session.info` includes:
-- `sessionId`
-- `paired`
-- `extensionConnected`
-- `connectionState` (`connecting|connected|disconnected`)
-- `connectionReason`
-- `protocolVersion` (`v1`)
-- `extensionVersion`
-- `memoryBackend` (`requestedBackend`, `backend`, `fallbackReason`)
-- `activeTab` (`null` or `{ id, title, url }`)
-- `recording`
-- `heartbeatStale`
-- `heartbeatAgeMs`
-- `staleAfterMs`
-- `lastSeenTs`
-- `lastHeartbeatTs`
-- `bridgePendingRequests`
-- `bridgeLastError`
-- `bridgeTotalRequests`
-- `bridgeTotalFailures`
-- `bridgeTotalTimeouts`
-- `bridgeTotalNotReady`
+`session.info` reports:
+- protocol version and compatible versions
+- bridge connection and heartbeat state
+- active tab summary
+- effective context stack
+- active capture session id
+- sqlite memory backend status
 
-When heartbeat age exceeds `staleAfterMs`, service reports `connectionState=disconnected` with `connectionReason=heartbeat-timeout`.
+## Browser Surface
 
-### Tabs
+Primary method groups:
+- `tabs.*`
+- `page.*`
+- `element.*`
+- `keyboard.*`
+- `mouse.*`
+- `file.upload`
+- `context.*`
+- `network.*`
+- `debug.*`
 
-- `tabs.list`
-- `tabs.focus`
-- `tabs.new`
-- `tabs.close`
+Important behavior:
+- actions and reads share the same effective frame/shadow context
+- `page.url`, `page.title`, DOM summaries, debug state, and memory fingerprints use the active document for the current context
+- in frame context that document can differ from the top-level tab; use `session.info.activeTab` when you need top-level tab metadata
+- `debug.dumpState` includes context, text, DOM summary, element map, metrics, viewport, console, and network
+- `debug.dumpState` can optionally attach a fresh persisted snapshot artifact when `includeSnapshot` is requested
+- `page.snapshot` returns image and element-map artifacts for agent inspection
+- `debug.console` and `debug.dumpState.console` are best-effort for page-origin logs and should be treated as advisory, not a full browser-devtools stream
+- `network.*` prefers page-level fetch/XHR capture, but can fall back to `resource` timing entries with `status: 0` when richer interception is unavailable
 
-### Page
+## Memory Surface
 
-- `page.goto`
-- `page.back`
-- `page.forward`
-- `page.reload`
-- `page.wait` (selector/text/url)
-- `page.snapshot`
+Capture:
+- `memory.capture.begin`
+- `memory.capture.mark`
+- `memory.capture.end`
 
-### Elements
+Drafts:
+- `memory.drafts.list`
+- `memory.drafts.get`
+- `memory.drafts.promote`
+- `memory.drafts.discard`
 
-- `element.click`
-- `element.type`
-- `element.scroll`
+Durable memories:
+- `memory.memories.search`
+- `memory.memories.get`
+- `memory.memories.explain`
+- `memory.memories.deprecate`
+- `memory.memories.delete`
 
-Action behavior notes:
-- `element.click` scrolls target into view, checks center-point obstruction, then dispatches pointer/mouse click sequence.
-- `element.type` uses native input/textarea value setter + `input/change` events.
-- Covered/disabled targets return structured permission failures instead of silent no-op.
-- `element.click` / `element.type` accept optional `requiresConfirm` to force explicit user confirmation.
+Plans and execution:
+- `memory.plans.create`
+- `memory.plans.get`
+- `memory.plans.execute`
 
-### Debug
+Runs and patches:
+- `memory.runs.list`
+- `memory.runs.get`
+- `memory.patches.list`
+- `memory.patches.get`
+- `memory.patches.apply`
+- `memory.patches.reject`
 
-- `debug.getConsole`
+## Memory Semantics
 
-### Memory
+- capture is single-active: `memory.capture.begin` rejects while another capture is still open
+- `memory.capture.mark` and `memory.capture.end` operate on the current active capture session
+- search returns candidates only
+- search can rank against the live tab context or an explicit `url`
+- route search is entry-page oriented, procedure search is target-page oriented, and composite search/planning weighs both route entry fit and route-to-procedure handoff
+- explain returns structured applicability and rationale
+- plan creation binds parameters, checks current-page fit, and for route+procedure composition validates the route-to-procedure handoff instead of requiring the procedure to fit the entry page
+- direct `composite` memories use the same route-entry plus route-to-procedure handoff applicability model as separately supplied route and procedure memories
+- the recommended repeated-path workflow is: capture and promote a `route`, later search with `kind=route`, explain/plan it against the current starting page, then optionally compose it with a separate `procedure`
+- execute always targets a specific plan
+- drift produces explicit patch suggestions
+- captured element steps keep live locator candidates from the current page element so drift repair can match by role/name/text/css instead of only the original locator
+- durable memories are immutable by revision
+- applying a patch creates a new revision
+- patch review is one-way: `open -> applied` or `open -> rejected`
+- default execution mode is `assist`
+- captured text stays literal unless it is already templated or clearly sensitive, such as password-like fields
 
-- `memory.recordStart`
-- `memory.recordStop`
-- `memory.skills.list`
-- `memory.skills.show`
-- `memory.skills.retrieve`
-- `memory.skills.run`
-- `memory.skills.delete`
+## CLI Notes
 
-## `page.snapshot` result
-
-- `traceId`
-- `imagePath`
-- `elementsPath`
-- `imageBase64` (optional)
-- `elementCount`
-
-## Trace audit events
-
-Traces are written to `.bak-data/traces/<traceId>.jsonl` as method/result/error events.
-
-`policy.decision` audit event includes:
-- `action`
-- `decision`
-- `reason`
-- `source`
-- `ruleId`
-- `domain`
-- `path`
-- `locatorSummary` (`hasEid/hasRole/hasName/hasText/hasCss`)
-- `tags`
-- `matchedRuleCount`
-- `matchedRules` (summary only: `id/action/decision/tag`)
-- `defaultDecision`
-- `defaultReason`
-
-Policy audit fields intentionally exclude raw sensitive text payloads.
-
-`memory.healing` audit event includes:
-- `skillId`
-- `attempts`
-- `successes`
-- `failed`
-- `successRate`
-
-## Locator schema
-
-Any of:
-- `eid`
-- `role` + `name`
-- `text`
-- `css`
-
-CLI/skill healing tries candidates in this order.
-
-## Known limits (v1)
-
-- Nested cross-origin iframe content is not targeted in v1.
-- Shadow DOM locator coverage is best-effort and may miss closed-shadow targets.
-- When locator css explicitly targets unsupported iframe/shadow patterns, API returns `E_NOT_FOUND` with a limitation hint.
-- Browser-internal URLs (`chrome://`, `chrome-extension://`, `file://`) are intentionally blocked and return `E_PERMISSION`.
+- `bak element drag-drop` requires explicit source and target locators via `--from-*` and `--to-*`
+- `bak element scroll` and `bak mouse wheel` accept negative deltas
+- `bak mouse move` and `bak mouse click` accept zero coordinates
+- `bak page snapshot` accepts `--include-base64`
+- `bak debug dump-state` accepts `--include-snapshot` and `--include-snapshot-base64`
+- `bak memory explain` accepts `--url` when applicability should be evaluated against an explicit page context without relying on the live tab

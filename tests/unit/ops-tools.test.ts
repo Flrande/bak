@@ -202,37 +202,17 @@ describe('ops tools', () => {
   it('includes memory snapshot when includeMemory is enabled', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-test-'));
     const outPath = join(dataDir, 'diag-memory.zip');
-    writeFileSync(
-      join(dataDir, 'memory.json'),
-      JSON.stringify({
-        episodes: [],
-        skills: [
-          {
-            id: 'skill_demo',
-            domain: 'example.com',
-            intent: 'send report to alice@example.com',
-            description: 'send report',
-            plan: [],
-            paramsSchema: { fields: {} },
-            healing: { retries: 1 },
-            stats: { runs: 0, success: 0, failure: 0 },
-            createdAt: new Date().toISOString()
-          }
-        ]
-      }),
-      'utf8'
-    );
 
     const result = exportDiagnosticZip({
       dataDir,
       outPath,
       includeMemory: true,
-      memoryBackend: 'json'
+      memoryBackend: 'sqlite'
     });
 
     expect(result.includesMemory).toBe(true);
     expect(result.includesHealingSummary).toBe(false);
-    expect(result.memoryBackend).toBe('json');
+    expect(result.memoryBackend).toBe('sqlite');
     expect(result.memoryExportError).toBeUndefined();
     expect(result.warnings).toEqual([]);
     expect(existsSync(outPath)).toBe(true);
@@ -240,23 +220,23 @@ describe('ops tools', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('adds warning when memory export fails', () => {
+  it('exports an empty sqlite memory snapshot when no prior memory data exists', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-fail-test-'));
     const outPath = join(dataDir, 'diag-memory-fail.zip');
-    writeFileSync(join(dataDir, 'memory.json'), '{ this is invalid json', 'utf8');
+    const impossibleDataDir = join(dataDir, 'missing', 'child');
 
     const result = exportDiagnosticZip({
-      dataDir,
+      dataDir: impossibleDataDir,
       outPath,
       includeMemory: true,
-      memoryBackend: 'json'
+      memoryBackend: 'sqlite'
     });
 
-    expect(result.includesMemory).toBe(false);
+    expect(result.includesMemory).toBe(true);
     expect(result.includesHealingSummary).toBe(false);
-    expect(result.memoryBackend).toBe('json');
-    expect(result.memoryExportError).toBeTruthy();
-    expect(result.warnings.some((message) => message.startsWith('memory export skipped:'))).toBe(true);
+    expect(result.memoryBackend).toBe('sqlite');
+    expect(result.memoryExportError).toBeUndefined();
+    expect(result.warnings).toEqual([]);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });

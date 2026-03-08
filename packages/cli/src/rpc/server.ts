@@ -41,7 +41,7 @@ export class RpcServer {
     const id = request.id ?? null;
 
     try {
-      const result = await this.service.invokeDynamic(request.method, request.params ?? {});
+      const result = await this.service.invokeDynamic(request.method, (request.params ?? {}) as Record<string, unknown>);
       if (request.id !== undefined) {
         send(JSON.stringify(ok(id, result)));
       }

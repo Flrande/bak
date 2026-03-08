@@ -8,6 +8,7 @@ import type {
   PageMetrics,
   PageTextChunk
 } from '@flrande/bak-protocol';
+import { documentMetadata, isDocumentNode, isShadowRootNode } from './context-metadata.js';
 import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
 import { unsupportedLocatorHint } from './limitations.js';
 
@@ -130,6 +131,20 @@ function pushConsole(level: ConsoleEntry['level'], message: string, source?: str
 }
 
 function patchConsoleCapture(): void {
+  const handleConsoleBridgeEvent = (event: Event): void => {
+    const detail = (event as CustomEvent<{ level?: ConsoleEntry['level']; message?: string; source?: string; ts?: number }>).detail;
+    if (!detail || typeof detail !== 'object') {
+      return;
+    }
+    const level: ConsoleEntry['level'] =
+      detail.level === 'debug' || detail.level === 'info' || detail.level === 'warn' || detail.level === 'error' ? detail.level : 'log';
+    const message = typeof detail.message === 'string' ? detail.message : '';
+    if (!message) {
+      return;
+    }
+    pushConsole(level, message, detail.source ?? 'page');
+  };
+
   const methods: Array<{ method: 'log' | 'debug' | 'info' | 'warn' | 'error'; level: ConsoleEntry['level'] }> = [
     { method: 'log', level: 'log' },
     { method: 'debug', level: 'debug' },
@@ -161,19 +176,8 @@ function patchConsoleCapture(): void {
     };
   }
 
-  window.addEventListener('bak:console', (event: Event) => {
-    const detail = (event as CustomEvent<{ level?: ConsoleEntry['level']; message?: string; source?: string; ts?: number }>).detail;
-    if (!detail || typeof detail !== 'object') {
-      return;
-    }
-    const level: ConsoleEntry['level'] =
-      detail.level === 'debug' || detail.level === 'info' || detail.level === 'warn' || detail.level === 'error' ? detail.level : 'log';
-    const message = typeof detail.message === 'string' ? detail.message : '';
-    if (!message) {
-      return;
-    }
-    pushConsole(level, message, detail.source ?? 'page');
-  });
+  document.addEventListener('bak:console', handleConsoleBridgeEvent as EventListener);
+  window.addEventListener('bak:console', handleConsoleBridgeEvent as EventListener);
 
   try {
     const injector = document.createElement('script');
@@ -183,7 +187,11 @@ function patchConsoleCapture(): void {
   if (g.__bakPageConsolePatched) return;
   g.__bakPageConsolePatched = true;
   const emit = (level, message, source) =>
-    window.dispatchEvent(new CustomEvent('bak:console', { detail: { level, message, source, ts: Date.now() } }));
+    document.dispatchEvent(new CustomEvent('bak:console', {
+      bubbles: true,
+      composed: true,
+      detail: { level, message, source, ts: Date.now() }
+    }));
   const serialize = (value) => {
     if (value instanceof Error) return value.message;
     if (typeof value === 'string') return value;
@@ -233,7 +241,7 @@ function pushNetwork(entry: NetworkEntry): void {
 }
 
 function patchNetworkCapture(): void {
-  window.addEventListener('bak:network', (event: Event) => {
+  const handleNetworkBridgeEvent = (event: Event): void => {
     const detail = (event as CustomEvent<NetworkEntry>).detail;
     if (!detail || typeof detail !== 'object') {
       return;
@@ -247,10 +255,13 @@ function patchNetworkCapture(): void {
       ok: detail.ok === true,
       ts: typeof detail.ts === 'number' ? detail.ts : Date.now(),
       durationMs: typeof detail.durationMs === 'number' ? detail.durationMs : 0,
-      requestBytes: typeof detail.requestBytes === 'number' ? detail.requestBytes : undefined,
-      responseBytes: typeof detail.responseBytes === 'number' ? detail.responseBytes : undefined
-    });
-  });
+        requestBytes: typeof detail.requestBytes === 'number' ? detail.requestBytes : undefined,
+        responseBytes: typeof detail.responseBytes === 'number' ? detail.responseBytes : undefined
+      });
+  };
+
+  document.addEventListener('bak:network', handleNetworkBridgeEvent as EventListener);
+  window.addEventListener('bak:network', handleNetworkBridgeEvent as EventListener);
 
   try {
     const injector = document.createElement('script');
@@ -260,7 +271,11 @@ function patchNetworkCapture(): void {
   if (g.__bakPageNetworkPatched) return;
   g.__bakPageNetworkPatched = true;
   let seq = 0;
-  const emit = (entry) => window.dispatchEvent(new CustomEvent('bak:network', { detail: entry }));
+  const emit = (entry) => document.dispatchEvent(new CustomEvent('bak:network', {
+    bubbles: true,
+    composed: true,
+    detail: entry
+  }));
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -1186,9 +1201,13 @@ function assessActionTarget(target: HTMLElement, action: ActionName): ActionAsse
   }
 
   let shadowHostBridge = false;
-  const rootNode = target.getRootNode();
-  if (rootNode instanceof ShadowRoot) {
-    shadowHostBridge = hit === rootNode.host;
+  let rootNode = target.getRootNode();
+  while (isShadowRootNode(rootNode)) {
+    if (hit === rootNode.host) {
+      shadowHostBridge = true;
+      break;
+    }
+    rootNode = rootNode.host.getRootNode();
   }
 
   if (hit !== target && !target.contains(hit) && !shadowHostBridge) {
@@ -1332,9 +1351,10 @@ function parseHotkey(keys: string[]): {
   };
 }
 
-function domSummary(): PageDomSummary {
-  const allElements = Array.from(document.querySelectorAll('*'));
-  const interactiveElements = Array.from(document.querySelectorAll<HTMLElement>('*')).filter((element) => isInteractive(element));
+function domSummary(root: ParentNode): PageDomSummary {
+  const metadata = documentMetadata(root, document);
+  const allElements = Array.from(root.querySelectorAll('*'));
+  const interactiveElements = Array.from(root.querySelectorAll<HTMLElement>('*')).filter((element) => isInteractive(element));
   const tags = new Map<string, number>();
 
   for (const element of allElements) {
@@ -1347,24 +1367,24 @@ function domSummary(): PageDomSummary {
     .slice(0, 20)
     .map(([tag, count]) => ({ tag, count }));
 
-  const shadowHosts = Array.from(document.querySelectorAll<HTMLElement>('*')).filter((element) => element.shadowRoot).length;
+  const shadowHosts = Array.from(root.querySelectorAll<HTMLElement>('*')).filter((element) => element.shadowRoot).length;
 
   return {
-    url: window.location.href,
-    title: document.title,
+    url: metadata.url,
+    title: metadata.title,
     totalElements: allElements.length,
     interactiveElements: interactiveElements.length,
-    headings: document.querySelectorAll('h1,h2,h3,h4,h5,h6').length,
-    links: document.querySelectorAll('a[href]').length,
-    forms: document.querySelectorAll('form').length,
-    iframes: document.querySelectorAll('iframe,frame').length,
+    headings: root.querySelectorAll('h1,h2,h3,h4,h5,h6').length,
+    links: root.querySelectorAll('a[href]').length,
+    forms: root.querySelectorAll('form').length,
+    iframes: root.querySelectorAll('iframe,frame').length,
     shadowHosts,
     tagHistogram
   };
 }
 
-function pageTextChunks(maxChunks = 24, chunkSize = 320): PageTextChunk[] {
-  const nodes = Array.from(document.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,td,th,label,button,a,span,div'));
+function pageTextChunks(root: ParentNode, maxChunks = 24, chunkSize = 320): PageTextChunk[] {
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6,p,li,td,th,label,button,a,span,div'));
   const chunks: PageTextChunk[] = [];
 
   for (const node of nodes) {
@@ -1391,9 +1411,9 @@ function pageTextChunks(maxChunks = 24, chunkSize = 320): PageTextChunk[] {
   return chunks;
 }
 
-function pageAccessibility(limit = 200): AccessibilityNode[] {
+function pageAccessibility(root: ParentNode, limit = 200): AccessibilityNode[] {
   const nodes: AccessibilityNode[] = [];
-  for (const element of getInteractiveElements(document, true).slice(0, limit)) {
+  for (const element of getInteractiveElements(root, true).slice(0, limit)) {
     nodes.push({
       role: inferRole(element),
       name: inferName(element),
@@ -1716,7 +1736,7 @@ function waitConditionMet(message: WaitMessage, root: ParentNode): boolean {
   }
 
   if (message.mode === 'text') {
-    if (root instanceof Document) {
+    if (isDocumentNode(root)) {
       const bodyText = root.body?.innerText ?? root.documentElement?.textContent ?? '';
       return bodyText.includes(message.value);
     }
@@ -1765,7 +1785,7 @@ async function waitFor(message: WaitMessage): Promise<ActionResult> {
     const observer = new MutationObserver(() => {
       check();
     });
-    const observationRoot = root instanceof Document ? root.documentElement : (root as Node);
+    const observationRoot = isDocumentNode(root) ? root.documentElement : (root as Node);
     if (observationRoot) {
       observer.observe(observationRoot, {
         childList: true,
@@ -1787,23 +1807,52 @@ async function waitFor(message: WaitMessage): Promise<ActionResult> {
 
 async function dispatchRpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
   switch (method) {
-    case 'page.title':
-      return { title: document.title };
-    case 'page.url':
-      return { url: window.location.href };
+    case 'page.title': {
+      const rootResult = resolveRootForLocator();
+      if (!rootResult.ok) {
+        throw rootResult.error;
+      }
+      return { title: documentMetadata(rootResult.root, document).title };
+    }
+    case 'page.url': {
+      const rootResult = resolveRootForLocator();
+      if (!rootResult.ok) {
+        throw rootResult.error;
+      }
+      return { url: documentMetadata(rootResult.root, document).url };
+    }
     case 'page.text':
+      {
+        const rootResult = resolveRootForLocator();
+        if (!rootResult.ok) {
+          throw rootResult.error;
+        }
       return {
         chunks: pageTextChunks(
+          rootResult.root,
           typeof params.maxChunks === 'number' ? params.maxChunks : 24,
           typeof params.chunkSize === 'number' ? params.chunkSize : 320
         )
       };
+      }
     case 'page.dom':
-      return { summary: domSummary() };
+      {
+        const rootResult = resolveRootForLocator();
+        if (!rootResult.ok) {
+          throw rootResult.error;
+        }
+        return { summary: domSummary(rootResult.root) };
+      }
     case 'page.accessibilityTree':
+      {
+        const rootResult = resolveRootForLocator();
+        if (!rootResult.ok) {
+          throw rootResult.error;
+        }
       return {
-        nodes: pageAccessibility(typeof params.limit === 'number' ? params.limit : 200)
+        nodes: pageAccessibility(rootResult.root, typeof params.limit === 'number' ? params.limit : 200)
       };
+      }
     case 'page.scrollTo': {
       const x = typeof params.x === 'number' ? params.x : window.scrollX;
       const y = typeof params.y === 'number' ? params.y : window.scrollY;
@@ -2135,12 +2184,12 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       if (hostSelectors.length === 0) {
         throw { code: 'E_INVALID_PARAMS', message: 'hostSelectors or locator.css is required' } satisfies ActionError;
       }
-      const rootResult = resolveRootForLocator();
-      if (!rootResult.ok) {
-        throw rootResult.error;
+      const frameResult = resolveFrameDocument(contextState.framePath);
+      if (!frameResult.ok) {
+        throw frameResult.error;
       }
       const candidate = [...contextState.shadowPath, ...hostSelectors];
-      const check = resolveShadowRoot(rootResult.root, candidate);
+      const check = resolveShadowRoot(frameResult.document, candidate);
       if (!check.ok) {
         throw check.error;
       }
@@ -2182,18 +2231,30 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       const consoleLimit = typeof params.consoleLimit === 'number' ? Math.max(1, Math.floor(params.consoleLimit)) : 80;
       const networkLimit = typeof params.networkLimit === 'number' ? Math.max(1, Math.floor(params.networkLimit)) : 80;
       const includeAccessibility = params.includeAccessibility === true;
+      const rootResult = resolveRootForLocator();
+      if (!rootResult.ok) {
+        throw rootResult.error;
+      }
+      const metadata = documentMetadata(rootResult.root, document);
       return {
-        url: window.location.href,
-        title: document.title,
+        url: metadata.url,
+        title: metadata.title,
         context: {
           framePath: [...contextState.framePath],
           shadowPath: [...contextState.shadowPath]
         },
-        dom: domSummary(),
-        text: pageTextChunks(12, 260),
+        dom: domSummary(rootResult.root),
+        text: pageTextChunks(rootResult.root, 12, 260),
+        elements: collectElements(),
+        metrics: pageMetrics(),
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio
+        },
         console: consoleEntries.slice(-consoleLimit),
         network: filterNetworkEntries({ limit: networkLimit }),
-        accessibility: includeAccessibility ? pageAccessibility(200) : undefined
+        accessibility: includeAccessibility ? pageAccessibility(rootResult.root, 200) : undefined
       };
     }
     default:

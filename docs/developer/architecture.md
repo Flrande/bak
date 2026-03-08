@@ -1,55 +1,44 @@
 # Architecture
 
-## System Overview
+## Major Components
 
-BAK connects a coding agent to a real Chromium tab through a local daemon and MV3 extension.
+- Extension: content script, background worker, popup pairing UI, overlay interactions
+- CLI: daemon, RPC server, browser driver abstraction, policy checks, diagnostics, memory service
+- Protocol: shared `v3` request/response types and schema
+- Test app: multi-page browser fixtures for e2e context, debug, and memory coverage
 
-```text
-Agent <-> CLI JSON-RPC (stdio/ws)
-CLI daemon <-> Extension bridge websocket
-Extension background <-> Content script (tab message passing)
-Content script <-> DOM / events / page signals
-```
+## Runtime Flow
 
-## Main Packages
+1. user pairs extension to the local CLI daemon
+2. CLI exposes WebSocket and stdio JSON-RPC
+3. agent issues first-class CLI commands or raw RPC calls
+4. CLI routes browser calls through the extension bridge
+5. traces, snapshots, and sqlite memory records are written under `.bak-data`
 
-### `@flrande/bak-protocol`
+## Memory Subsystem
 
-- Source of truth for `MethodMap`, shared types, and error contracts.
-- JSON schema lives in `packages/protocol/schemas/protocol.schema.json`.
+The memory subsystem no longer centers on skills.
 
-### `@flrande/bak-cli`
+Instead it uses:
+- explicit capture sessions
+- draft generation for review
+- durable memories with immutable revisions
+- memory search plus explain before planning
+- plan execution with explicit mode
+- explicit patch suggestion review for drift
 
-- `packages/cli/src/server.ts`: daemon bootstrap (`ExtensionBridge`, `BakService`, `RpcServer`).
-- `packages/cli/src/bin.ts`: command surface and user entrypoints.
-- `packages/cli/src/service.ts`: RPC method handlers, tracing, memory orchestration.
-- `packages/cli/src/drivers/*`: extension bridge + browser driver abstraction.
+## Execution Safety
 
-### `@flrande/bak-extension`
+- policy checks still gate high-risk actions
+- `assist` is the default plan execution mode
+- mutating procedure steps pause in assist mode
+- patch application is explicit and revisioned
 
-- `background.ts`: connection lifecycle, handshake, browser dispatch.
-- `content.ts`: DOM interactions, waits, snapshots, user confirmation overlay, debug buffers.
-- `popup.ts`: pairing config and runtime status.
+## Context Alignment
 
-## Runtime Data
+The extension maintains a shared effective context stack for:
+- action APIs
+- read APIs
+- debug APIs
 
-Default root: `.bak-data` (override with `BAK_DATA_DIR`).
-
-- traces: `.bak-data/traces/<traceId>.jsonl`
-- snapshots: `.bak-data/snapshots/<traceId>/`
-- memory: `.bak-data/memory.json` or `.bak-data/memory.sqlite`
-- pairing token: `.bak-data/pairing.json`
-
-## Memory Pipeline
-
-1. `memory.recordStart` begins episode collection.
-2. `memory.recordStop` stores episode and extracts a reusable skill.
-3. `memory.skills.retrieve` ranks candidate skills by query context.
-4. `memory.skills.run` replays steps with parameter substitution and healing.
-
-## Driver Model
-
-- Current implementation: `ExtensionDriver`
-- Interface designed for additional backends (for example CDP/Playwright in future)
-
-
+This prevents the agent from acting inside one frame or shadow root while reading from another.

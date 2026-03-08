@@ -1,4 +1,7 @@
 import { defineConfig } from '@playwright/test';
+import { ensurePlaywrightRuntimeFresh } from './tests/e2e/helpers/runtime';
+
+ensurePlaywrightRuntimeFresh();
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -8,9 +11,9 @@ export default defineConfig({
   },
   workers: 1,
   webServer: {
-    command: 'pnpm --filter @flrande/bak-test-sites dev',
+    command: 'pwsh -NoLogo -NoProfile -Command "pnpm --filter @flrande/bak-test-sites preview"',
     url: 'http://127.0.0.1:4173',
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 60_000
   }
 });

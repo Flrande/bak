@@ -22,12 +22,31 @@
     <input id="frame-input" placeholder="type in iframe" />
     <button id="frame-btn">Frame Action</button>
     <div id="frame-result">idle</div>
+    <div id="frame-shadow-host"></div>
     <script>
       const input = document.getElementById('frame-input');
       const button = document.getElementById('frame-btn');
       const result = document.getElementById('frame-result');
+      const shadowHost = document.getElementById('frame-shadow-host');
       button.addEventListener('click', () => {
         result.textContent = `clicked:${input.value || '(empty)'}`;
+      });
+      const shadow = shadowHost.attachShadow({ mode: 'open' });
+      shadow.innerHTML = `
+        <style>
+          .frame-shadow-wrap { margin-top: 12px; border: 1px solid #99f6e4; border-radius: 8px; padding: 10px; background: #f0fdfa; }
+          .frame-shadow-btn { border: none; border-radius: 6px; padding: 8px 12px; background: #0f766e; color: white; cursor: pointer; }
+          .frame-shadow-input { margin-top: 8px; width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #14b8a6; border-radius: 6px; }
+        </style>
+        <div class="frame-shadow-wrap">
+          <button id="frame-shadow-btn" class="frame-shadow-btn">Frame Shadow Action</button>
+          <input id="frame-shadow-input" class="frame-shadow-input" placeholder="frame shadow value" />
+        </div>
+      `;
+      const shadowButton = shadow.getElementById('frame-shadow-btn');
+      const shadowInput = shadow.getElementById('frame-shadow-input');
+      shadowButton.addEventListener('click', () => {
+        result.textContent = `frame-shadow:${shadowInput.value || '(empty)'}`;
       });
     </script>
   </body>

@@ -1,229 +1,108 @@
 # Browser Agent Kit (bak)
 
-Browser Agent Kit is a TypeScript monorepo that lets a coding agent control a **real user browser** through a Chrome/Edge MV3 extension.
+Browser Agent Kit is a browser extension plus a CLI for coding-agent browser control.
 
-It includes:
-- `packages/extension`: MV3 extension (background worker + content script + overlay UI + popup pairing)
-- `packages/cli`: `bak` CLI daemon with JSON-RPC (stdio + ws) and extension bridge
-- `packages/protocol`: shared TS protocol types/schemas/errors
-- `apps/test-sites`: local test app for automation scenarios
-- `tests`: unit + e2e tests
+The product model is simple:
+- the user installs the MV3 extension in a real Chromium browser
+- the user runs the `bak` CLI daemon locally
+- the agent drives the real browser through first-class CLI commands or JSON-RPC
+- memory is explicit and advisory, not automatic
 
-## Runtime
+## What Ships
 
-- Node.js: **22.x LTS**
-- Package manager: `pnpm`
-- OS assumption: Windows + PowerShell 7
+- `packages/extension`: the paired browser extension
+- `packages/cli`: the `bak` CLI, daemon, JSON-RPC server, and memory service
+- `packages/protocol`: shared `v3` protocol types and schema
+- `apps/test-sites`: local multi-page test app used by e2e coverage
+- `tests`: unit and Playwright e2e coverage
 
-## Repo layout
+## Core Capabilities
 
-```text
-repo/
-  package.json
-  pnpm-workspace.yaml
-  packages/
-    protocol/
-    cli/
-    extension/
-  apps/
-    test-sites/
-  tests/
-    unit/
-    e2e/
-  docs/
-    README.md
-    user/
-    developer/
-    reference/
-    PROTOCOL_V2.md
-    PROTOCOL.md
-    CAPABILITY_MATRIX.md
-    E2E_MATRIX.md
-    RELEASE_CAPABILITY_REPORT.md
-  scripts/
-    demo-rpc.ps1
+Browser control and reading:
+- page snapshot, text, DOM, accessibility tree, metrics, viewport
+- console, network, and structured debug dump
+- `debug dump-state --include-snapshot` can attach a fresh viewport snapshot artifact to the structured dump
+- console capture is structured but best-effort for page-origin logs; treat it as advisory rather than a guaranteed browser-devtools equivalent
+- network capture is best-effort: when page-world request hooks are unavailable, `network.*` falls back to resource timing entries with `kind: "resource"` and `status: 0`
+- frame context, shadow context, and frame+shadow combinations
+- element read/write actions, keyboard, mouse, and file upload
+
+Memory lifecycle:
+- `capture begin -> capture mark -> capture end`
+- only one capture session can be active at a time
+- draft review before promotion
+- durable memories with immutable revisions
+- search returns candidates only
+- search can rank against the active tab or an explicit URL
+- explain returns applicability checks and risks
+- plan creation binds parameters and checks fit
+- execute runs a specific plan in `dry-run`, `assist`, or `auto`
+- drift produces explicit patch suggestions instead of silent writeback
+- captured element steps retain live locator candidates so later patch suggestions can match by name/text/role instead of only the original css
+
+## Memory Model
+
+The memory system is `v3` and intentionally breaks the old skill-centric model.
+
+Durable memory kinds:
+- `route`: how to reach a page, feature, or entry point
+- `procedure`: how to complete a task on a page
+- `composite`: an execution composition, usually route + procedure
+
+Principles:
+- no silent durable memory writes
+- no silent recall
+- no silent execution
+- no silent mutation during replay
+- capture/promote `route` memories explicitly when you want repeated path reuse, then search with `--kind route` and explain/plan against the current starting page before executing
+- captured text stays literal unless it is already templated or clearly sensitive
+- context-aware page metadata uses the active document for the current frame/shadow stack
+- default execution mode is `assist`
+- sqlite is the only supported durable memory backend
+
+## Quick Start
+
+```powershell
+pnpm i
+pnpm build
+node packages/cli/dist/bin.js pair create
+node packages/cli/dist/bin.js serve --port 17373 --rpc-ws-port 17374
+```
+
+Then load `packages/extension/dist` as an unpacked extension in Chrome or Edge, connect it with the popup, and verify:
+
+```powershell
+node packages/cli/dist/bin.js doctor --port 17373 --rpc-ws-port 17374
+```
+
+## CLI Examples
+
+```powershell
+node packages/cli/dist/bin.js page snapshot --include-base64 --rpc-ws-port 17374
+node packages/cli/dist/bin.js debug dump-state --include-snapshot --rpc-ws-port 17374
+node packages/cli/dist/bin.js context enter-frame --frame-path '#demo-frame' --rpc-ws-port 17374
+node packages/cli/dist/bin.js element drag-drop --from-css '#drag-source' --to-css '#drop-target' --rpc-ws-port 17374
+node packages/cli/dist/bin.js memory capture begin --goal "open billing settings" --rpc-ws-port 17374
+node packages/cli/dist/bin.js memory search --goal "open billing settings" --kind route --url "https://portal.local/settings/billing" --rpc-ws-port 17374
+node packages/cli/dist/bin.js memory explain <memoryId> --url "https://portal.local/home" --rpc-ws-port 17374
+node packages/cli/dist/bin.js memory plan create --memory-id <memoryId> --mode assist --rpc-ws-port 17374
+node packages/cli/dist/bin.js memory execute <planId> --rpc-ws-port 17374
+```
+
+## Build And Validation
+
+```powershell
+pnpm build
+pnpm typecheck
+pnpm test:unit
+pnpm exec playwright test --reporter=line
 ```
 
 ## Documentation
 
-- Start here: `docs/README.md`
-- User path: `docs/user/README.md`
-- Developer path: `docs/developer/README.md`
-- Reference path: `docs/reference/README.md`
-- Setup source of truth (agent-first): `docs/user/quickstart.md`
-
-Published npm packages:
-
-- `@flrande/bak-cli`
-- `@flrande/bak-extension`
-- `@flrande/bak-protocol`
-
-If you are integrating with a coding agent as an end user, start from `docs/user/quickstart.md`.
-
-## One-Line For Agents
-
-Paste this one sentence to your coding agent:
-
-```text
-Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, verify with `bak doctor --port 17373 --rpc-ws-port 17374`, and if extension is not connected explicitly guide the user to complete extension setup in Chrome (`chrome://extensions`) or Edge (`edge://extensions`) with Load unpacked plus popup token/port connect, then wait for confirmation before continuing browser tasks via `bak` CLI.
-```
-
-One-line PowerShell fallback (if your agent needs an explicit command):
-
-```powershell
-$q='https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md';$l='https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/from-guide-url.ps1';$p=Join-Path $env:TEMP 'bak-bootstrap-from-guide.ps1';Invoke-WebRequest -Uri $l -OutFile $p;pwsh -NoLogo -NoProfile -File $p -GuideUrl $q
-```
-
-## Install
-
-```powershell
-pnpm i
-```
-
-## Build / Dev / Test
-
-```powershell
-pnpm build
-pnpm dev
-pnpm test
-```
-
-CI strategy:
-- PR/push on `main`/`master`: typecheck + lint + unit + full e2e (`.github/workflows/ci.yml`)
-
-`pnpm dev` starts:
-- protocol watcher
-- cli daemon on `17373` (+ rpc ws `17374`)
-- extension build watcher (`packages/extension/dist`)
-- test-site dev server on `http://127.0.0.1:4173`
-
-## Run `bak` commands
-
-The commands below are for running from this source repo. For released package usage (`npx bak ...`), see `docs/user/quickstart.md`.
-
-Build once before invoking the CLI binary:
-
-```powershell
-pnpm build
-```
-
-Then run commands from repo root:
-
-```powershell
-node packages/cli/dist/bin.js serve --port 17373
-```
-
-## Pairing + launch demo (manual)
-
-1) Start test site:
-
-```powershell
-pnpm --filter @flrande/bak-test-sites dev
-```
-
-2) Generate pair token:
-
-```powershell
-node packages/cli/dist/bin.js pair
-node packages/cli/dist/bin.js pair status
-# revoke current token if needed
-node packages/cli/dist/bin.js pair revoke
-```
-
-3) Start daemon:
-
-```powershell
-node packages/cli/dist/bin.js serve --port 17373 --rpc-ws-port 17374
-```
-
-4) Load extension in Chrome/Edge:
-- Open `chrome://extensions` (or `edge://extensions`)
-- Enable Developer mode
-- Load unpacked: `packages/extension/dist`
-- Open extension popup
-- Paste token from `bak pair`, keep port `17373`, click `Save & Connect`
-
-5) Run demo script (record + actions + snapshot + skill run):
-
-```powershell
-pwsh ./scripts/demo-rpc.ps1
-```
-
-## JSON-RPC quick call examples
-
-```powershell
-node packages/cli/dist/bin.js call --method session.create --params '{"clientName":"demo"}'
-node packages/cli/dist/bin.js call --method page.goto --params '{"url":"http://127.0.0.1:4173/form.html"}'
-node packages/cli/dist/bin.js call --method element.type --params '{"locator":{"css":"#name-input"},"text":"hello"}'
-node packages/cli/dist/bin.js call --method page.snapshot --params '{}'
-node packages/cli/dist/bin.js doctor
-node packages/cli/dist/bin.js export --out ./.bak-data/diag.zip
-# include visual snapshot folders explicitly (contains raw screenshots)
-node packages/cli/dist/bin.js export --trace-id <traceId> --include-snapshots --out ./.bak-data/diag-with-images.zip
-```
-
-`bak export` now generates a redacted diagnostic zip package. Use `--trace-id` (or deprecated alias `--trace`) to limit to one trace set.
-Snapshot images are excluded by default and require explicit `--include-snapshots`.
-
-## Memory CLI commands
-
-```powershell
-node packages/cli/dist/bin.js record start --intent "fill form"
-node packages/cli/dist/bin.js record stop --outcome success
-node packages/cli/dist/bin.js skills list
-node packages/cli/dist/bin.js skills retrieve --intent "fill form" --anchor save
-node packages/cli/dist/bin.js skills run <skillId> --param param_1=Alice --param param_2=alice@example.com
-node packages/cli/dist/bin.js skills delete <skillId>
-node packages/cli/dist/bin.js memory migrate
-node packages/cli/dist/bin.js memory export --backend sqlite
-```
-
-Memory backend selection:
-- default: `json` (`.bak-data/memory.json`)
-- opt-in sqlite: set `BAK_MEMORY_BACKEND=sqlite` (uses `.bak-data/memory.sqlite`; `node:sqlite` runtime is currently experimental on Node 22)
-- episode input text recording: default redacted (`[REDACTED:input]`); set `BAK_MEMORY_RECORD_INPUT_TEXT=1` to keep redacted textual hints
-
-## Trace / snapshot output
-
-Default data root: `./.bak-data`
-
-- snapshots: `.bak-data/snapshots/<traceId>/...`
-- traces: `.bak-data/traces/<traceId>.jsonl`
-- memory db file: `.bak-data/memory.json`
-- pairing token: `.bak-data/pairing.json`
-
-### Retention and cleanup
-
-`bak gc` is dry-run by default and only deletes files with `--force`.
-
-```powershell
-# preview what would be deleted
-node packages/cli/dist/bin.js gc
-
-# apply retention with explicit force
-node packages/cli/dist/bin.js gc --trace-days 7 --snapshot-days 7 --force
-```
-
-Retention defaults (override via `.bak-data/retention.json` or env):
-- traces: keep 14 days + newest 200
-- snapshots: keep 14 days + newest 100
-
-### Policy guardrails
-
-The CLI checks a local policy file before `element.click` / `element.type`:
-- default path: `.bak-data/.bak-policy.json`
-- override path: `BAK_POLICY_PATH`
-- decisions: `allow`, `deny`, `requireConfirm`
-
-## Safety defaults
-
-- Extension only connects to `ws://127.0.0.1`
-- CLI/extension token pairing required
-- High-risk actions require user approval overlay (`submit/delete/send/upload` semantics)
-- Sensitive input masking in record traces (basic)
-- Snapshot element maps avoid `input.value`; richer capture is explicit opt-in in popup
-- No cookie/password exfiltration features
-
-See `docs/SECURITY.md` and `docs/PRIVACY.md` for defaults and operational guidance.
-
-
+- [docs/README.md](./docs/README.md)
+- [docs/user/README.md](./docs/user/README.md)
+- [docs/developer/README.md](./docs/developer/README.md)
+- [docs/PROTOCOL.md](./docs/PROTOCOL.md)
+- [docs/user/cli-guide.md](./docs/user/cli-guide.md)
+- [docs/user/memory-guide.md](./docs/user/memory-guide.md)

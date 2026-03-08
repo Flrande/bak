@@ -12,7 +12,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/security-priv
 - extension stores token in `chrome.storage.local`
 - unauthenticated extensions are rejected
 - token metadata includes `createdAt` + `expiresAt`
-- CLI supports rotate (`bak pair`), revoke (`bak pair revoke`) and status (`bak pair status`)
+- CLI supports token creation (`bak pair create`), revoke (`bak pair revoke`), and status (`bak pair status`)
 
 3. High-risk action gate
 - keyword-based high-risk detection in content script (`submit/delete/send/upload` + CN variants)
@@ -22,7 +22,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/security-priv
 4. Minimal sensitive-data handling
 - no cookie export API
 - no password/captcha bypass feature
-- recording text is masked for likely password/otp fields
+- captured trace text is masked for likely password/otp fields
 - element map naming no longer reads `input.value`
 - snapshot text fields use rule-based redaction before leaving content script
 - CLI re-applies redaction before writing `elements.json` (defense-in-depth)
@@ -83,14 +83,14 @@ Example (`policy.decision` params excerpt):
 - Keyword risk detector can have false positives/false negatives.
 - Pair token stored locally in plain text under `.bak-data/pairing.json`.
 - Extension popup currently does not provide rotate/revoke buttons; use CLI commands.
-- Memory backend (`memory.json` or `memory.sqlite`) is local-only but not encrypted at rest.
+- Memory backend (`memory.sqlite`) is local-only but not encrypted at rest.
 - Healing candidate ranking is heuristic and can select wrong elements on dense UIs.
 - Rich text debug mode can still capture non-secret page copy; enable only when needed.
 
 ## Mitigations and operational guidance
 
 - Keep daemon bound to localhost only (default behavior).
-- Rotate token regularly (`bak pair`) and re-pair extension.
+- Rotate token regularly (`bak pair create`) and re-pair extension.
 - Keep `.bak-data` out of source control.
 - Run `bak gc` regularly to enforce local retention and reduce stale artifacts.
 - Use policy file for domain/path/action guardrails:

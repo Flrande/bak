@@ -1,130 +1,77 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { Episode, Skill } from '@flrande/bak-protocol';
-import { ensureDir, id, nowIso, resolveDataDir } from '../utils.js';
+import type {
+  CaptureEvent,
+  CaptureSession,
+  DraftMemory,
+  DraftStatus,
+  DurableMemory,
+  MemoryKind,
+  MemoryPlan,
+  MemoryRevision,
+  MemoryRun,
+  MemoryRunStatus,
+  MemoryStatus,
+  PageFingerprint,
+  PatchSuggestion,
+  PatchSuggestionStatus
+} from '@flrande/bak-protocol';
 
-interface MemoryState {
-  episodes: Episode[];
-  skills: Skill[];
+export interface MemoryStoreSnapshot {
+  captureSessions: CaptureSession[];
+  captureEvents: CaptureEvent[];
+  pageFingerprints: PageFingerprint[];
+  drafts: DraftMemory[];
+  memories: DurableMemory[];
+  revisions: MemoryRevision[];
+  plans: MemoryPlan[];
+  runs: MemoryRun[];
+  patches: PatchSuggestion[];
 }
 
 export interface MemoryStoreBackend {
-  createEpisode(input: Omit<Episode, 'id' | 'createdAt'>): Episode;
-  listEpisodes(): Episode[];
-  createSkill(input: Omit<Skill, 'id' | 'createdAt' | 'stats'>): Skill;
-  updateSkill(skill: Skill): Skill;
-  listSkills(filters?: { domain?: string; intent?: string }): Skill[];
-  getSkill(idValue: string): Skill | null;
-  deleteSkill(idValue: string): boolean;
+  createPageFingerprint(input: Omit<PageFingerprint, 'id'>): PageFingerprint;
+  getPageFingerprint(idValue: string): PageFingerprint | null;
+
+  createCaptureSession(input: Omit<CaptureSession, 'id' | 'startedAt' | 'status' | 'eventCount'>): CaptureSession;
+  updateCaptureSession(session: CaptureSession): CaptureSession;
+  getCaptureSession(idValue: string): CaptureSession | null;
+  listCaptureSessions(limit?: number): CaptureSession[];
+
+  createCaptureEvent(input: Omit<CaptureEvent, 'id' | 'at'>): CaptureEvent;
+  listCaptureEvents(captureSessionId: string): CaptureEvent[];
+
+  createDraftMemory(input: Omit<DraftMemory, 'id' | 'createdAt' | 'status'>): DraftMemory;
+  updateDraftMemory(draft: DraftMemory): DraftMemory;
+  getDraftMemory(idValue: string): DraftMemory | null;
+  listDraftMemories(filters?: { captureSessionId?: string; kind?: MemoryKind; status?: DraftStatus; limit?: number }): DraftMemory[];
+
+  createMemory(input: Omit<DurableMemory, 'id' | 'createdAt' | 'updatedAt' | 'latestRevisionId' | 'status'>): DurableMemory;
+  updateMemory(memory: DurableMemory): DurableMemory;
+  getMemory(idValue: string): DurableMemory | null;
+  listMemories(filters?: { kind?: MemoryKind; status?: MemoryStatus; limit?: number }): DurableMemory[];
+  deleteMemory(idValue: string): boolean;
+
+  createRevision(
+    input: Omit<MemoryRevision, 'id' | 'createdAt' | 'revision'> & {
+      revision?: number;
+    }
+  ): MemoryRevision;
+  getRevision(idValue: string): MemoryRevision | null;
+  listRevisions(memoryId: string): MemoryRevision[];
+
+  createPlan(input: Omit<MemoryPlan, 'id' | 'createdAt'>): MemoryPlan;
+  updatePlan(plan: MemoryPlan): MemoryPlan;
+  getPlan(idValue: string): MemoryPlan | null;
+
+  createRun(input: Omit<MemoryRun, 'id' | 'startedAt'>): MemoryRun;
+  updateRun(run: MemoryRun): MemoryRun;
+  getRun(idValue: string): MemoryRun | null;
+  listRuns(filters?: { memoryId?: string; planId?: string; status?: MemoryRunStatus; limit?: number }): MemoryRun[];
+
+  createPatchSuggestion(input: Omit<PatchSuggestion, 'id' | 'createdAt' | 'status'>): PatchSuggestion;
+  updatePatchSuggestion(patch: PatchSuggestion): PatchSuggestion;
+  getPatchSuggestion(idValue: string): PatchSuggestion | null;
+  listPatchSuggestions(filters?: { memoryId?: string; status?: PatchSuggestionStatus; limit?: number }): PatchSuggestion[];
+
+  exportSnapshot(): MemoryStoreSnapshot;
   close?(): void;
 }
-
-export class MemoryStore implements MemoryStoreBackend {
-  private readonly path: string;
-  private cache: MemoryState | null = null;
-
-  constructor(dataDir = resolveDataDir()) {
-    ensureDir(dataDir);
-    this.path = join(dataDir, 'memory.json');
-  }
-
-  private load(): MemoryState {
-    if (this.cache) {
-      return this.cache;
-    }
-
-    if (!existsSync(this.path)) {
-      this.cache = { episodes: [], skills: [] };
-      return this.cache;
-    }
-
-    this.cache = JSON.parse(readFileSync(this.path, 'utf8')) as MemoryState;
-    return this.cache;
-  }
-
-  private persist(state: MemoryState): void {
-    this.cache = state;
-    writeFileSync(this.path, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
-  }
-
-  createEpisode(input: Omit<Episode, 'id' | 'createdAt'>): Episode {
-    const state = this.load();
-    const episode: Episode = {
-      ...input,
-      id: id('episode'),
-      createdAt: nowIso()
-    };
-    state.episodes.push(episode);
-    this.persist(state);
-    return episode;
-  }
-
-  listEpisodes(): Episode[] {
-    return this.load().episodes.slice().reverse();
-  }
-
-  createSkill(input: Omit<Skill, 'id' | 'createdAt' | 'stats'>): Skill {
-    const state = this.load();
-    const skill: Skill = {
-      ...input,
-      id: id('skill'),
-      createdAt: nowIso(),
-      stats: {
-        runs: 0,
-        success: 0,
-        failure: 0
-      }
-    };
-    state.skills.push(skill);
-    this.persist(state);
-    return skill;
-  }
-
-  updateSkill(skill: Skill): Skill {
-    const state = this.load();
-    const index = state.skills.findIndex((item) => item.id === skill.id);
-    if (index < 0) {
-      throw new Error(`Skill not found: ${skill.id}`);
-    }
-    state.skills[index] = skill;
-    this.persist(state);
-    return skill;
-  }
-
-  listSkills(filters?: { domain?: string; intent?: string }): Skill[] {
-    const state = this.load();
-    return state.skills
-      .filter((skill) => {
-        if (filters?.domain && skill.domain !== filters.domain) {
-          return false;
-        }
-        if (filters?.intent && !skill.intent.toLowerCase().includes(filters.intent.toLowerCase())) {
-          return false;
-        }
-        return true;
-      })
-      .slice()
-      .reverse();
-  }
-
-  getSkill(idValue: string): Skill | null {
-    return this.load().skills.find((skill) => skill.id === idValue) ?? null;
-  }
-
-  deleteSkill(idValue: string): boolean {
-    const state = this.load();
-    const before = state.skills.length;
-    state.skills = state.skills.filter((item) => item.id !== idValue);
-    const changed = state.skills.length !== before;
-    if (changed) {
-      this.persist(state);
-    }
-    return changed;
-  }
-
-  close(): void {
-    // No-op for JSON file backend.
-  }
-}
-
-

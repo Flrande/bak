@@ -1,124 +1,83 @@
-# TECH_SPEC (v1)
+# Technical Spec
 
-This legacy page is kept for compatibility. Prefer [docs/developer/architecture.md](./developer/architecture.md).
+## Product Shape
 
-## Architecture
+Browser Agent Kit is a paired system:
+- a Chromium MV3 extension that runs in the real user browser
+- a local CLI daemon that exposes browser capabilities to an agent
 
-- Agent <-> CLI: JSON-RPC 2.0
-  - stdio in daemon process
-  - optional websocket endpoint: `ws://127.0.0.1:<rpcPort>/rpc`
-- CLI <-> Extension: websocket
-  - `ws://127.0.0.1:<port>/extension?token=<pairToken>`
-- Extension BG <-> Content: `chrome.tabs.sendMessage` / `chrome.runtime.onMessage`
+The extension and CLI are both product surface, not implementation detail.
 
-## Main components
+## Design Goals
 
-### `@flrande/bak-protocol`
+- expose broad browser control and reading through first-class CLI commands and JSON-RPC
+- keep browser action, browser reading, and browser debugging aligned to the same context model
+- support reusable browser path memory without silent automation
+- keep memory explainable, revision-safe, and conservative by default
 
-- Shared method map types
-- Shared RPC error codes
-- Shared core structures:
-  - locator
-  - element map item
-  - episode / skill
+## Memory Architecture
 
-### `@flrande/bak-extension`
+Core entities:
+- `CaptureSession`
+- `CaptureEvent`
+- `DraftMemory`
+- `DurableMemory`
+- `MemoryRevision`
+- `PageFingerprint`
+- `MemoryPlan`
+- `MemoryRun`
+- `PatchSuggestion`
 
-- `background.ts`
-  - websocket client with reconnect
-  - validates bridge methods and dispatches browser operations
-  - popup message API: update config, get status, disconnect
-- `content.ts`
-  - element collection and locator resolution
-  - action execution: click/type/scroll
-  - wait primitive: selector/text/url
-  - debug buffer: error/unhandledrejection
-  - overlay UI: high-risk confirm + healing candidate picker
-- `popup.ts`
-  - pairing token + port input
-  - runtime status rendering
+Kinds:
+- `route`
+- `procedure`
+- `composite`
 
-### `@flrande/bak-cli`
+Rules:
+- durable memory writes are explicit
+- capture is single-active; agents must end the active capture before starting another
+- search never executes
+- search may rank against a live tab fingerprint or an explicit URL-only page context
+- route ranking is entry-page oriented, procedure ranking is target-page oriented, and composite ranking considers both route entry fit and route-to-procedure handoff
+- replay never mutates durable memory silently
+- healing creates patch suggestions, not writeback
+- patch review is one-way: open patches can resolve to applied or rejected, but not both
+- runs are attached to specific revisions
+- accepted patches create new revisions
+- captured text inputs stay literal by default; only clearly sensitive inputs and file payloads are auto-parameterized
+- composite route+procedure planning evaluates route entry fit plus route-to-procedure target handoff
+- the recommended repeated-path workflow is: capture and promote a `route`, later search with `kind=route`, explain or plan it against the current starting page, then optionally compose it with a separate `procedure`
+- captured element steps store live locator candidates from the element that was actually used so later drift repair can rank replacements by role/name/text/css instead of only the original raw locator
 
-- `ExtensionBridge`
-  - local ws server for extension connection
-  - token verification during ws upgrade
-  - request/response multiplexing with timeout
-- `ExtensionDriver`
-  - BrowserDriver v1 implementation
-- `BakService`
-  - JSON-RPC method handling
-  - trace write to jsonl
-  - snapshot file persistence
-  - recording episode
-  - skill extraction + retrieval + run with minimal healing
-- `RpcServer`
-  - stdio JSON-RPC reader
-  - websocket JSON-RPC endpoint for easier local debug
+## Storage
 
-## Memory model
+- backend: sqlite only
+- durable store location: `.bak-data/memory.sqlite`
 
-Backends:
-- `json` (default): `memory.json`
-- `sqlite` (opt-in): `memory.sqlite` (WAL, indexed)
-- when sqlite initialization fails, runtime falls back to `json` unless `BAK_MEMORY_SQLITE_STRICT=true`
+## Context Model
 
-Common data shape:
-- episodes[]
-  - domain, startUrl, intent, steps, anchors, outcome
-- skills[]
-  - domain, intent, description, plan, paramsSchema, healing (`retries`, optional `attempts/successes`), stats
+Supported effective contexts:
+- top-level page
+- nested frame
+- nested shadow DOM
+- frame + shadow combinations
 
-Migration / export:
-- `bak memory migrate` imports JSON records into SQLite (`INSERT OR IGNORE`, idempotent)
-- `bak memory export --backend <json|sqlite>` writes a portable JSON backup
+Requirement:
+- actions, reads, and debug APIs must resolve against the same effective context stack
+- context-aware metadata uses the active document for that stack; frame context may therefore report a different URL/title than the top-level tab
 
-Extraction rules (v1):
-- successful recording auto-creates skill
-- `type` step text auto-parameterized to `{{param_n}}`
-- target candidates generated by priority:
-  1) eid
-  2) role/name
-  3) text
-  4) css
+## Debug Surface
 
-Healing rules (v1):
-1) refresh snapshot
-2) retry target candidates in order
-3) if still failed, rank top candidates from element map
-4) show overlay candidate picker once (NeedUserConfirm flow)
-5) if user selects, prepend selected eid and continue
-
-Healing telemetry:
-- each skill tracks optional `healing.attempts` and `healing.successes`
-- stats are updated during `memory.skills.run` (including failed runs after heal attempt)
-- retrieve ranking uses healing reliability as a tie-breaker for otherwise similar matches
-
-Retrieve ranking (v2 hardening):
-- score combines domain, intent similarity, and structured plan anchors (locator name/text/role/css, wait value, url, non-template type text)
-- deterministic ordering for score ties (`createdAt` then `id`)
-- minimum score threshold configurable via `BAK_MEMORY_RETRIEVE_MIN_SCORE` (default `0.2`)
-
-## Trace format
-
-`traces/<traceId>.jsonl` records method lifecycle:
-- method input line
-- method result or normalized error line
-
-## Data directories
-
-By default: `./.bak-data`
-
-Override with env:
-- `BAK_DATA_DIR`
-
-## Driver abstraction
-
-- `BrowserDriver` interface in CLI
-- implemented:
-  - `ExtensionDriver`
-- reserved stubs:
-  - `CDPDriver`
-  - `PlaywrightDriver`
-
-
+Agent-usable debug outputs include:
+- visual snapshot
+- element map
+- extracted text
+- accessibility nodes
+- active-document URL/title for the current context
+- console entries
+- network entries
+- viewport and metrics
+- current frame/shadow context
+- `debug.dumpState` can optionally attach a fresh persisted viewport snapshot artifact when the CLI requests `includeSnapshot`
+- console capture is structured but best-effort for page-origin logs; it is not a full browser-devtools mirror
+- network capture is best-effort: page-level fetch/XHR hooks are preferred, but the fallback path can degrade to `resource` timing entries with `status: 0`

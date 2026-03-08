@@ -358,12 +358,9 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
     }
 
     if (options.includeMemory === true) {
-      const resolvedBackend = resolveMemoryBackend(options.memoryBackend);
+      const resolvedBackend = resolveMemoryBackend();
       try {
-        const resolution = createMemoryStoreResolved({
-          dataDir,
-          backend: resolvedBackend
-        });
+        const resolution = createMemoryStoreResolved({ dataDir });
         memoryBackend = resolution.backend;
         if (resolution.fallbackReason) {
           warnings.push(

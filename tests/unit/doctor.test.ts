@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION } from '../../packages/protocol/src/types.js';
 import {
   assessActiveTabTelemetry,
   assessHealingTelemetry,
@@ -99,7 +98,7 @@ describe('doctor session.info health assessment', () => {
 
   it('detects aligned protocol versions', () => {
     const check = assessProtocolCompatibility({
-      protocolVersion: PROTOCOL_VERSION
+      protocolVersion: 'v3'
     });
 
     expect(check.ok).toBe(true);
@@ -116,8 +115,8 @@ describe('doctor session.info health assessment', () => {
 
   it('passes when protocol versions are compatible', () => {
     const check = assessProtocolCompatibility({
-      protocolVersion: 'v1',
-      compatibleProtocolVersions: ['v1', PROTOCOL_VERSION]
+      protocolVersion: 'v2',
+      compatibleProtocolVersions: ['v2', 'v3']
     });
 
     expect(check.ok).toBe(true);
@@ -174,12 +173,12 @@ describe('doctor session.info health assessment', () => {
 
   it('passes memory backend check when no fallback happened', () => {
     const check = assessMemoryBackendResolution({
-      requestedBackend: 'json',
-      backend: 'json'
+      requestedBackend: 'sqlite',
+      backend: 'sqlite'
     });
 
     expect(check.ok).toBe(true);
-    expect(check.message).toContain('ready');
+    expect(check.message).toContain('sqlite');
   });
 
   it('adds advisory message when sqlite backend is selected', () => {
@@ -195,7 +194,7 @@ describe('doctor session.info health assessment', () => {
   it('warns memory backend check when fallback happened', () => {
     const check = assessMemoryBackendResolution({
       requestedBackend: 'sqlite',
-      backend: 'json',
+      backend: 'sqlite',
       fallbackReason: 'sqlite unavailable'
     });
 

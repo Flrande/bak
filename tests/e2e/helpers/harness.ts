@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, expect, type BrowserContext, type Page } from '@playwright/test';
 import WebSocket from 'ws';
+import { cliDistPath, ensureE2ERuntimeFresh, extensionDistPath } from './runtime';
 
 interface RpcResponse {
   id: string;
@@ -18,7 +19,14 @@ interface RpcResponse {
 }
 
 const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'page.reload']);
-const SLOW_MEMORY_METHODS = new Set(['memory.recordStop', 'memory.skills.retrieve', 'memory.skills.run', 'memory.replay.explain']);
+const SLOW_MEMORY_METHODS = new Set([
+  'memory.capture.end',
+  'memory.memories.search',
+  'memory.memories.explain',
+  'memory.plans.create',
+  'memory.plans.execute',
+  'memory.patches.apply'
+]);
 const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
 const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
 const SLOW_MEMORY_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_MEMORY_RPC_TIMEOUT_MS', 60_000);
@@ -188,13 +196,69 @@ async function waitForTabContentReady(port: number, tabId: number, timeoutMs = 1
   throw new Error(`Content script not ready for tab ${tabId}: ${lastError}`);
 }
 
+async function removeDirQuiet(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+async function gotoWithRetry(page: Page, url: string, readySelector: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = 'unknown';
+
+  while (Date.now() < deadline) {
+    try {
+      await page.goto(url);
+      await expect(page.locator(readySelector)).toBeVisible();
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes('ERR_CONNECTION_REFUSED')) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
+  throw new Error(`Failed to open ${url}: ${lastError}`);
+}
+
+async function stopChildProcess(child: ChildProcess | undefined): Promise<void> {
+  if (!child || child.killed) {
+    return;
+  }
+
+  child.kill('SIGTERM');
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+      resolve();
+    }, 2_000);
+
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 export async function createHarness(): Promise<E2EHarness> {
   const repoRoot = resolve(__dirname, '../..', '..');
-  const cliBin = join(repoRoot, 'packages/cli/dist/bin.js');
-  const extensionDist = join(repoRoot, 'packages/extension/dist');
+  ensureE2ERuntimeFresh(repoRoot);
+  const cliBin = cliDistPath(repoRoot);
+  const extensionDist = extensionDistPath(repoRoot);
 
   if (!existsSync(cliBin) || !existsSync(extensionDist)) {
-    throw new Error('Build artifacts are missing; run pnpm build first.');
+    throw new Error('E2E runtime artifacts are still missing after automatic refresh.');
   }
 
   const dataDir = mkdtempSync(join(tmpdir(), 'bak-e2e-data-'));
@@ -235,7 +299,7 @@ export async function createHarness(): Promise<E2EHarness> {
       'utf8'
     );
 
-    const pairRaw = execFileSync('node', [cliBin, 'pair'], {
+    const pairRaw = execFileSync('node', [cliBin, 'pair', 'create'], {
       cwd: repoRoot,
       env: { ...process.env, BAK_DATA_DIR: dataDir },
       encoding: 'utf8'
@@ -287,16 +351,15 @@ export async function createHarness(): Promise<E2EHarness> {
             connectionState: string;
             protocolVersion: string;
           };
-          return info.extensionConnected && info.connectionState === 'connected' && info.protocolVersion === 'v2';
+          return info.extensionConnected && info.connectionState === 'connected' && info.protocolVersion === 'v3';
         },
         { timeout: 40_000 }
       )
       .toBe(true);
 
     const page = await context.newPage();
-    await page.goto('http://127.0.0.1:4173/form.html');
+    await gotoWithRetry(page, 'http://127.0.0.1:4173/form.html', '#name-input');
     await page.bringToFront();
-    await expect(page.locator('#name-input')).toBeVisible();
     const initialActive = (await rpcCallInternal(rpcPort, 'tabs.getActive', {})) as {
       tab: { id: number } | null;
     };
@@ -352,7 +415,7 @@ export async function createHarness(): Promise<E2EHarness> {
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
       const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
-      await target.goto(url);
+      await gotoWithRetry(target, url, 'body');
       await target.bringToFront();
       const tabId = await findTabIdByUrl(marker);
       await waitForTabContentReady(rpcPort, tabId);
@@ -439,11 +502,9 @@ export async function createHarness(): Promise<E2EHarness> {
       } catch {
         // ignore
       }
-      if (daemon && !daemon.killed) {
-        daemon.kill('SIGTERM');
-      }
-      rmSync(dataDir, { recursive: true, force: true });
-      rmSync(userDataDir, { recursive: true, force: true });
+      await stopChildProcess(daemon);
+      await removeDirQuiet(dataDir);
+      await removeDirQuiet(userDataDir);
     };
 
     return {
@@ -467,11 +528,9 @@ export async function createHarness(): Promise<E2EHarness> {
     } catch {
       // ignore cleanup errors
     }
-    if (daemon && !daemon.killed) {
-      daemon.kill('SIGTERM');
-    }
-    rmSync(dataDir, { recursive: true, force: true });
-    rmSync(userDataDir, { recursive: true, force: true });
+    await stopChildProcess(daemon);
+    await removeDirQuiet(dataDir);
+    await removeDirQuiet(userDataDir);
 
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(

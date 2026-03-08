@@ -14,8 +14,8 @@ export const BakErrorCode = {
 export type BakErrorCodeValue = (typeof BakErrorCode)[keyof typeof BakErrorCode];
 
 export const JSON_RPC_VERSION = '2.0' as const;
-export const PROTOCOL_VERSION = 'v2' as const;
-export const COMPATIBLE_PROTOCOL_VERSIONS = ['v1', 'v2'] as const;
+export const PROTOCOL_VERSION = 'v3' as const;
+export const COMPATIBLE_PROTOCOL_VERSIONS = ['v3'] as const;
 
 export type CompatibleProtocolVersion = (typeof COMPATIBLE_PROTOCOL_VERSIONS)[number];
 
@@ -154,26 +154,93 @@ export interface PageMetrics {
   };
 }
 
-export interface SkillPlanStep {
-  kind:
-    | 'goto'
-    | 'click'
-    | 'type'
-    | 'wait'
-    | 'hover'
-    | 'doubleClick'
-    | 'rightClick'
-    | 'dragDrop'
-    | 'select'
-    | 'check'
-    | 'uncheck'
-    | 'upload'
-    | 'press'
-    | 'hotkey'
-    | 'scrollTo'
-    | 'scrollIntoView'
-    | 'elementScroll'
-    | 'keyboardType';
+export type MemoryKind = 'route' | 'procedure' | 'composite';
+export type MemoryExecutionMode = 'dry-run' | 'assist' | 'auto';
+export type MemoryStatus = 'active' | 'deprecated' | 'deleted';
+export type DraftStatus = 'draft' | 'discarded' | 'promoted';
+export type CaptureSessionStatus = 'capturing' | 'ended';
+export type CaptureOutcome = 'completed' | 'failed' | 'abandoned';
+export type CaptureMarkRole = 'checkpoint' | 'route' | 'procedure' | 'target-page' | 'note';
+export type MemoryApplicabilityStatus = 'applicable' | 'partial' | 'inapplicable';
+export type MemoryRunStatus = 'completed' | 'blocked' | 'failed';
+export type PatchSuggestionStatus = 'open' | 'applied' | 'rejected';
+export type MemoryParameterKind = 'text' | 'secret' | 'file' | 'enum' | 'boolean';
+
+export interface UploadFilePayload {
+  name: string;
+  contentBase64: string;
+  mimeType?: string;
+}
+
+export interface MemoryParameterDefinition {
+  kind: MemoryParameterKind;
+  required: boolean;
+  description?: string;
+  enumValues?: string[];
+}
+
+export interface MemoryParameterValueFile {
+  kind: 'file';
+  name: string;
+  contentBase64: string;
+  mimeType?: string;
+}
+
+export type MemoryParameterValue =
+  | string
+  | boolean
+  | MemoryParameterValueFile
+  | Array<string>
+  | Array<MemoryParameterValueFile>;
+
+export interface PageFingerprint {
+  id: string;
+  url: string;
+  origin: string;
+  path: string;
+  title: string;
+  headings: string[];
+  textSnippets: string[];
+  anchorNames: string[];
+  dom: {
+    totalElements: number;
+    interactiveElements: number;
+    iframes: number;
+    shadowHosts: number;
+    tagHistogram: Array<{ tag: string; count: number }>;
+  };
+  capturedAt: string;
+}
+
+export type MemoryStepKind =
+  | 'goto'
+  | 'wait'
+  | 'click'
+  | 'type'
+  | 'hover'
+  | 'doubleClick'
+  | 'rightClick'
+  | 'dragDrop'
+  | 'select'
+  | 'check'
+  | 'uncheck'
+  | 'upload'
+  | 'press'
+  | 'hotkey'
+  | 'scrollTo'
+  | 'scrollIntoView'
+  | 'elementScroll'
+  | 'keyboardType'
+  | 'focus'
+  | 'blur'
+  | 'enterFrame'
+  | 'exitFrame'
+  | 'enterShadow'
+  | 'exitShadow'
+  | 'resetContext';
+
+export interface MemoryStep {
+  kind: MemoryStepKind;
   locator?: Locator;
   targetCandidates?: Locator[];
   text?: string;
@@ -189,74 +256,206 @@ export interface SkillPlanStep {
   fromLocator?: Locator;
   toLocator?: Locator;
   values?: string[];
-  files?: Array<{ name: string; mimeType?: string; contentBase64: string }>;
+  files?: UploadFilePayload[];
   url?: string;
   waitFor?: {
     mode: 'selector' | 'text' | 'url';
     value: string;
     timeoutMs?: number;
   };
-  requiresConfirmation?: boolean;
+  framePath?: string[];
+  hostSelectors?: string[];
+  levels?: number;
+  summary?: string;
 }
 
-export interface SkillStats {
-  runs: number;
-  success: number;
-  failure: number;
-  healAttempts?: number;
-  healSuccess?: number;
-  retriesTotal?: number;
-  manualInterventions?: number;
-  lastRunAt?: string;
-}
-
-export interface Skill {
+export interface CaptureSession {
   id: string;
-  domain: string;
-  intent: string;
+  goal: string;
+  status: CaptureSessionStatus;
+  outcome?: CaptureOutcome;
+  tabId?: number;
+  startedAt: string;
+  endedAt?: string;
+  startFingerprintId?: string;
+  endFingerprintId?: string;
+  labels: string[];
+  eventCount: number;
+}
+
+export interface CaptureEvent {
+  id: string;
+  captureSessionId: string;
+  at: string;
+  kind: MemoryStepKind | 'mark';
+  label?: string;
+  note?: string;
+  role?: CaptureMarkRole;
+  step?: MemoryStep;
+  pageFingerprintId?: string;
+}
+
+export interface DraftMemory {
+  id: string;
+  captureSessionId: string;
+  kind: MemoryKind;
+  status: DraftStatus;
+  title: string;
+  goal: string;
   description: string;
-  urlPatterns?: string[];
-  plan: SkillPlanStep[];
-  paramsSchema: {
-    required?: string[];
-    fields: Record<string, { type: 'string'; description?: string }>;
-  };
-  preconditions?: {
-    urlPattern?: string;
-    requiredText?: string[];
-  };
-  healing: {
-    retries: number;
-    attempts?: number;
-    successes?: number;
-  };
-  stats: SkillStats;
-  stability?: 'stable' | 'beta' | 'experimental';
-  meta?: {
-    source?: 'manual' | 'auto';
-    fingerprint?: string;
-    learnCount?: number;
-    lastLearnedAt?: string;
-  };
+  steps: MemoryStep[];
+  parameterSchema: Record<string, MemoryParameterDefinition>;
+  tags: string[];
+  rationale: string[];
+  riskNotes: string[];
+  entryFingerprintId?: string;
+  targetFingerprintId?: string;
+  sourceEventIds: string[];
   createdAt: string;
+  discardedAt?: string;
+  promotedAt?: string;
 }
 
-export interface Episode {
+export interface DurableMemory {
   id: string;
-  domain: string;
-  startUrl: string;
-  intent: string;
-  steps: SkillPlanStep[];
-  anchors: string[];
-  outcome: 'success' | 'failed';
-  mode?: 'manual' | 'auto';
+  kind: MemoryKind;
+  status: MemoryStatus;
+  title: string;
+  goal: string;
+  description: string;
+  tags: string[];
+  latestRevisionId: string;
   createdAt: string;
+  updatedAt: string;
+  deprecatedReason?: string;
 }
 
-export interface NeedUserConfirmData {
+export interface MemoryRevision {
+  id: string;
+  memoryId: string;
+  revision: number;
+  kind: MemoryKind;
+  title: string;
+  goal: string;
+  description: string;
+  steps: MemoryStep[];
+  parameterSchema: Record<string, MemoryParameterDefinition>;
+  entryFingerprintId?: string;
+  targetFingerprintId?: string;
+  tags: string[];
+  rationale: string[];
+  riskNotes: string[];
+  changeSummary: string[];
+  createdAt: string;
+  createdFromDraftId?: string;
+  supersedesRevisionId?: string;
+}
+
+export interface MemorySearchCandidate {
+  memoryId: string;
+  revisionId: string;
+  kind: MemoryKind;
+  title: string;
+  goal: string;
+  score: number;
+  whyMatched: string[];
+  risks: string[];
+  warnings: string[];
+}
+
+export interface MemoryApplicabilityCheck {
+  key: string;
+  status: 'pass' | 'warn' | 'fail';
+  detail: string;
+}
+
+export interface MemoryExplanation {
+  status: MemoryApplicabilityStatus;
+  summary: string;
+  whyMatched: string[];
+  risks: string[];
+  warnings: string[];
+  checks: MemoryApplicabilityCheck[];
+  currentPageFingerprint?: PageFingerprint;
+}
+
+export interface MemoryPlanStep extends MemoryStep {
+  index: number;
+  sourceMemoryId: string;
+  sourceRevisionId: string;
+  sourceKind: MemoryKind;
+  assistBehavior: 'execute' | 'pause';
+}
+
+export interface MemoryPlan {
+  id: string;
+  kind: MemoryKind;
+  mode: MemoryExecutionMode;
+  status: 'ready' | 'executed' | 'failed';
+  routeRevisionId?: string;
+  procedureRevisionId?: string;
+  revisionIds: string[];
+  parameters: Record<string, MemoryParameterValue>;
+  entryFingerprintId?: string;
+  targetFingerprintId?: string;
+  applicabilityStatus: MemoryApplicabilityStatus;
+  applicabilitySummary: string;
+  checks: MemoryApplicabilityCheck[];
+  steps: MemoryPlanStep[];
+  createdAt: string;
+  lastRunId?: string;
+}
+
+export interface MemoryRunStep {
+  index: number;
+  kind: MemoryStepKind;
+  sourceMemoryId: string;
+  sourceRevisionId: string;
+  sourceKind: MemoryKind;
+  status: 'completed' | 'blocked' | 'failed' | 'dry-run' | 'skipped';
+  detail: string;
+  patchSuggestionId?: string;
+}
+
+export interface MemoryRun {
+  id: string;
+  planId: string;
+  mode: MemoryExecutionMode;
+  status: MemoryRunStatus;
+  revisionIds: string[];
+  startedAt: string;
+  endedAt?: string;
+  patchSuggestionIds: string[];
+  resultSummary: string;
+  steps: MemoryRunStep[];
+}
+
+export interface PatchSuggestion {
+  id: string;
+  memoryId: string;
+  baseRevisionId: string;
+  status: PatchSuggestionStatus;
+  title: string;
+  summary: string;
   reason: string;
-  candidates: ElementMapItem[];
-  action: 'click' | 'type';
+  affectedStepIndexes: number[];
+  changeSummary: string[];
+  proposedRevision: {
+    kind: MemoryKind;
+    title: string;
+    goal: string;
+    description: string;
+    steps: MemoryStep[];
+    parameterSchema: Record<string, MemoryParameterDefinition>;
+    entryFingerprintId?: string;
+    targetFingerprintId?: string;
+    tags: string[];
+    rationale: string[];
+    riskNotes: string[];
+  };
+  createdAt: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
 }
 
 export interface PolicyDecision {
@@ -298,8 +497,8 @@ interface SessionInfoResult {
   compatibleProtocolVersions: CompatibleProtocolVersion[];
   extensionVersion: string | null;
   memoryBackend: {
-    requestedBackend: 'json' | 'sqlite';
-    backend: 'json' | 'sqlite';
+    requestedBackend: 'sqlite';
+    backend: 'sqlite';
     fallbackReason: string | null;
   };
   activeTab: {
@@ -311,8 +510,7 @@ interface SessionInfoResult {
     frameDepth: number;
     shadowDepth: number;
   };
-  recording: boolean;
-  autoLearning: boolean;
+  captureSessionId: string | null;
   heartbeatStale: boolean;
   heartbeatAgeMs: number | null;
   staleAfterMs: number;
@@ -332,12 +530,6 @@ interface TabInfo {
   title: string;
   url: string;
   active: boolean;
-}
-
-interface UploadFilePayload {
-  name: string;
-  contentBase64: string;
-  mimeType?: string;
 }
 
 export interface MethodMap {
@@ -514,7 +706,14 @@ export interface MethodMap {
 
   'debug.getConsole': { params: { tabId?: number; limit?: number }; result: { entries: ConsoleEntry[] } };
   'debug.dumpState': {
-    params: { tabId?: number; consoleLimit?: number; networkLimit?: number; includeAccessibility?: boolean };
+    params: {
+      tabId?: number;
+      consoleLimit?: number;
+      networkLimit?: number;
+      includeAccessibility?: boolean;
+      includeSnapshot?: boolean;
+      includeSnapshotBase64?: boolean;
+    };
     result: {
       url: string;
       title: string;
@@ -524,59 +723,106 @@ export interface MethodMap {
       };
       dom: PageDomSummary;
       text: PageTextChunk[];
+      elements: ElementMapItem[];
+      metrics: PageMetrics;
+      viewport: { width: number; height: number; devicePixelRatio: number };
       console: ConsoleEntry[];
       network: NetworkEntry[];
       accessibility?: AccessibilityNode[];
+      snapshot?: {
+        traceId: string;
+        imagePath: string;
+        elementsPath: string;
+        imageBase64?: string;
+        elementCount: number;
+      };
     };
   };
 
-  'memory.recordStart': {
-    params: { intent: string; sessionId?: string };
-    result: { recordingId: string };
+  'memory.capture.begin': {
+    params: { goal: string; tabId?: number; labels?: string[] };
+    result: { captureSession: CaptureSession };
   };
-  'memory.recordStop': {
-    params: { outcome?: 'success' | 'failed'; mode?: 'manual' | 'auto' };
-    result: { episodeId: string; skillId?: string };
+  'memory.capture.mark': {
+    params: { label: string; note?: string; role?: CaptureMarkRole; tabId?: number };
+    result: { event: CaptureEvent };
   };
-  'memory.skills.list': {
-    params: { domain?: string; intent?: string; limit?: number };
-    result: { skills: Skill[] };
+  'memory.capture.end': {
+    params: { outcome?: CaptureOutcome; note?: string; tabId?: number };
+    result: { captureSession: CaptureSession; drafts: DraftMemory[] };
   };
-  'memory.skills.show': { params: { id: string }; result: { skill: Skill } };
-  'memory.skills.retrieve': {
-    params: { domain?: string; url?: string; intent: string; anchors?: string[]; minScore?: number; limit?: number };
-    result: { skills: Skill[] };
+
+  'memory.drafts.list': {
+    params: { captureSessionId?: string; kind?: MemoryKind; status?: DraftStatus; limit?: number };
+    result: { drafts: DraftMemory[] };
   };
-  'memory.skills.run': {
-    params: { id: string; params?: Record<string, string>; tabId?: number };
-    result: { ok: true; updatedSkill?: Skill; usedSkillId: string; retries: number; healed: boolean };
+  'memory.drafts.get': { params: { id: string }; result: { draft: DraftMemory } };
+  'memory.drafts.promote': {
+    params: { id: string; title?: string; goal?: string; description?: string; tags?: string[] };
+    result: { memory: DurableMemory; revision: MemoryRevision };
   };
-  'memory.skills.delete': { params: { id: string }; result: { ok: true } };
-  'memory.skills.stats': {
-    params: { id?: string; domain?: string };
-    result: {
-      stats: Array<{
-        id: string;
-        intent: string;
-        domain: string;
-        runs: number;
-        success: number;
-        failure: number;
-        healAttempts: number;
-        healSuccess: number;
-      }>;
+  'memory.drafts.discard': {
+    params: { id: string; reason?: string };
+    result: { draft: DraftMemory };
+  };
+
+  'memory.memories.search': {
+    params: { goal: string; kind?: MemoryKind; tabId?: number; url?: string; limit?: number; includeDeprecated?: boolean };
+    result: { candidates: MemorySearchCandidate[] };
+  };
+  'memory.memories.get': {
+    params: { id: string; includeRevisions?: boolean };
+    result: { memory: DurableMemory; revisions?: MemoryRevision[] };
+  };
+  'memory.memories.explain': {
+    params: { id: string; revisionId?: string; tabId?: number; url?: string; goal?: string };
+    result: { memory: DurableMemory; revision: MemoryRevision; explanation: MemoryExplanation };
+  };
+  'memory.memories.deprecate': {
+    params: { id: string; reason?: string };
+    result: { memory: DurableMemory };
+  };
+  'memory.memories.delete': { params: { id: string }; result: { ok: true } };
+
+  'memory.plans.create': {
+    params: {
+      memoryId?: string;
+      revisionId?: string;
+      routeMemoryId?: string;
+      routeRevisionId?: string;
+      procedureMemoryId?: string;
+      procedureRevisionId?: string;
+      goal?: string;
+      tabId?: number;
+      mode?: MemoryExecutionMode;
+      parameters?: Record<string, MemoryParameterValue>;
     };
+    result: { plan: MemoryPlan };
   };
-  'memory.episodes.list': {
-    params: { domain?: string; intent?: string; limit?: number };
-    result: { episodes: Episode[] };
+  'memory.plans.get': { params: { id: string }; result: { plan: MemoryPlan } };
+  'memory.plans.execute': {
+    params: { id: string; mode?: MemoryExecutionMode; tabId?: number };
+    result: { run: MemoryRun };
   };
-  'memory.replay.explain': {
-    params: { id: string };
-    result: {
-      skillId: string;
-      steps: Array<{ index: number; kind: SkillPlanStep['kind']; locator?: Locator; summary: string }>;
-    };
+
+  'memory.runs.list': {
+    params: { memoryId?: string; planId?: string; status?: MemoryRunStatus; limit?: number };
+    result: { runs: MemoryRun[] };
+  };
+  'memory.runs.get': { params: { id: string }; result: { run: MemoryRun } };
+
+  'memory.patches.list': {
+    params: { memoryId?: string; status?: PatchSuggestionStatus; limit?: number };
+    result: { patches: PatchSuggestion[] };
+  };
+  'memory.patches.get': { params: { id: string }; result: { patch: PatchSuggestion } };
+  'memory.patches.apply': {
+    params: { id: string; note?: string };
+    result: { patch: PatchSuggestion; memory: DurableMemory; revision: MemoryRevision };
+  };
+  'memory.patches.reject': {
+    params: { id: string; reason?: string };
+    result: { patch: PatchSuggestion };
   };
 }
 

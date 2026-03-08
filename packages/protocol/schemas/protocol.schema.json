@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bak.local/schemas/protocol-v2.json",
-  "title": "Browser Agent Kit Protocol v2",
+  "$id": "https://bak.local/schemas/protocol-v3.json",
+  "title": "Browser Agent Kit Protocol v3",
   "type": "object",
   "definitions": {
     "jsonRpcRequest": {
@@ -70,16 +70,27 @@
             "network.clear",
             "debug.getConsole",
             "debug.dumpState",
-            "memory.recordStart",
-            "memory.recordStop",
-            "memory.skills.list",
-            "memory.skills.show",
-            "memory.skills.retrieve",
-            "memory.skills.run",
-            "memory.skills.delete",
-            "memory.skills.stats",
-            "memory.episodes.list",
-            "memory.replay.explain"
+            "memory.capture.begin",
+            "memory.capture.mark",
+            "memory.capture.end",
+            "memory.drafts.list",
+            "memory.drafts.get",
+            "memory.drafts.promote",
+            "memory.drafts.discard",
+            "memory.memories.search",
+            "memory.memories.get",
+            "memory.memories.explain",
+            "memory.memories.deprecate",
+            "memory.memories.delete",
+            "memory.plans.create",
+            "memory.plans.get",
+            "memory.plans.execute",
+            "memory.runs.list",
+            "memory.runs.get",
+            "memory.patches.list",
+            "memory.patches.get",
+            "memory.patches.apply",
+            "memory.patches.reject"
           ]
         },
         "params": {}
@@ -208,8 +219,7 @@
         "memoryBackend",
         "activeTab",
         "context",
-        "recording",
-        "autoLearning",
+        "captureSessionId",
         "heartbeatStale",
         "heartbeatAgeMs",
         "staleAfterMs",
@@ -229,18 +239,18 @@
         "extensionConnected": { "type": "boolean" },
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
-        "protocolVersion": { "type": "string", "const": "v2" },
+        "protocolVersion": { "type": "string", "const": "v3" },
         "compatibleProtocolVersions": {
           "type": "array",
-          "items": { "type": "string", "enum": ["v1", "v2"] }
+          "items": { "type": "string", "enum": ["v3"] }
         },
         "extensionVersion": { "type": ["string", "null"] },
         "memoryBackend": {
           "type": "object",
           "required": ["requestedBackend", "backend", "fallbackReason"],
           "properties": {
-            "requestedBackend": { "type": "string", "enum": ["json", "sqlite"] },
-            "backend": { "type": "string", "enum": ["json", "sqlite"] },
+            "requestedBackend": { "type": "string", "enum": ["sqlite"] },
+            "backend": { "type": "string", "enum": ["sqlite"] },
             "fallbackReason": { "type": ["string", "null"] }
           },
           "additionalProperties": false
@@ -264,8 +274,7 @@
           },
           "additionalProperties": false
         },
-        "recording": { "type": "boolean" },
-        "autoLearning": { "type": "boolean" },
+        "captureSessionId": { "type": ["string", "null"] },
         "heartbeatStale": { "type": "boolean" },
         "heartbeatAgeMs": { "type": ["number", "null"] },
         "staleAfterMs": { "type": "number" },

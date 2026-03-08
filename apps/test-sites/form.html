@@ -38,6 +38,28 @@
       #save-btn { background: #ea580c; color: white; }
       #cancel-btn { background: #e2e8f0; }
       #result { margin-top: 14px; font-weight: 600; }
+      .drag-zone {
+        margin-top: 16px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .drag-card, .drop-card {
+        border-radius: 8px;
+        border: 1px dashed #94a3b8;
+        padding: 12px;
+      }
+      .drag-card {
+        background: #fff7ed;
+        cursor: grab;
+      }
+      .drop-card {
+        background: #f8fafc;
+      }
+      #drag-result {
+        margin-top: 8px;
+        font-weight: 600;
+      }
     </style>
   </head>
   <body data-page="form">
@@ -70,6 +92,11 @@
       <button id="save-btn">提交保存</button>
       <button id="cancel-btn">重置</button>
       <div id="result">Waiting...</div>
+      <div class="drag-zone">
+        <div id="drag-source" class="drag-card" draggable="true">Drag Source Card</div>
+        <div id="drop-target" class="drop-card">Drop Target Lane</div>
+      </div>
+      <div id="drag-result">drag:idle</div>
       <a id="next-page" href="/table.html">Go table page</a>
     </div>
     <script type="module" src="/src/main.ts"></script>
