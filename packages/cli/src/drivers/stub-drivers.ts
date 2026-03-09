@@ -41,6 +41,14 @@ export abstract class StubDriver implements BrowserDriver {
     return this.unavailable('tabsFocus');
   }
 
+  tabsGetActive() {
+    return this.unavailable('tabsGetActive');
+  }
+
+  tabsGet() {
+    return this.unavailable('tabsGet');
+  }
+
   tabsNew() {
     return this.unavailable('tabsNew');
   }
@@ -91,6 +99,42 @@ export abstract class StubDriver implements BrowserDriver {
 
   userSelectCandidate() {
     return this.unavailable('userSelectCandidate');
+  }
+
+  workspaceEnsure() {
+    return this.unavailable('workspaceEnsure');
+  }
+
+  workspaceInfo() {
+    return this.unavailable('workspaceInfo');
+  }
+
+  workspaceOpenTab() {
+    return this.unavailable('workspaceOpenTab');
+  }
+
+  workspaceListTabs() {
+    return this.unavailable('workspaceListTabs');
+  }
+
+  workspaceGetActiveTab() {
+    return this.unavailable('workspaceGetActiveTab');
+  }
+
+  workspaceSetActiveTab() {
+    return this.unavailable('workspaceSetActiveTab');
+  }
+
+  workspaceFocus() {
+    return this.unavailable('workspaceFocus');
+  }
+
+  workspaceReset() {
+    return this.unavailable('workspaceReset');
+  }
+
+  workspaceClose() {
+    return this.unavailable('workspaceClose');
   }
 
   rawRequest() {

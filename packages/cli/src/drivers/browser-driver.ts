@@ -3,6 +3,8 @@ import type {
   ConsoleEntry,
   ElementMapItem,
   Locator,
+  MethodParams,
+  MethodResult,
   NetworkEntry,
   PageDomSummary,
   PageMetrics,
@@ -48,7 +50,9 @@ export interface BrowserDriver {
   sessionPing(timeoutMs?: number): Promise<{ ok: boolean; ts: number }>;
   tabsList(): Promise<{ tabs: BrowserTab[] }>;
   tabsFocus(tabId: number): Promise<{ ok: true }>;
-  tabsNew(url?: string): Promise<{ tabId: number }>;
+  tabsGetActive(): Promise<MethodResult<'tabs.getActive'>>;
+  tabsGet(tabId: number): Promise<MethodResult<'tabs.get'>>;
+  tabsNew(options?: MethodParams<'tabs.new'>): Promise<MethodResult<'tabs.new'>>;
   tabsClose(tabId: number): Promise<{ ok: true }>;
   pageGoto(url: string, tabId?: number): Promise<{ ok: true }>;
   pageBack(tabId?: number): Promise<{ ok: true }>;
@@ -61,6 +65,15 @@ export interface BrowserDriver {
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
   debugGetConsole(limit?: number, tabId?: number): Promise<{ entries: ConsoleEntry[] }>;
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }>;
+  workspaceEnsure(params?: MethodParams<'workspace.ensure'>): Promise<MethodResult<'workspace.ensure'>>;
+  workspaceInfo(params?: MethodParams<'workspace.info'>): Promise<MethodResult<'workspace.info'>>;
+  workspaceOpenTab(params?: MethodParams<'workspace.openTab'>): Promise<MethodResult<'workspace.openTab'>>;
+  workspaceListTabs(params?: MethodParams<'workspace.listTabs'>): Promise<MethodResult<'workspace.listTabs'>>;
+  workspaceGetActiveTab(params?: MethodParams<'workspace.getActiveTab'>): Promise<MethodResult<'workspace.getActiveTab'>>;
+  workspaceSetActiveTab(params: MethodParams<'workspace.setActiveTab'>): Promise<MethodResult<'workspace.setActiveTab'>>;
+  workspaceFocus(params?: MethodParams<'workspace.focus'>): Promise<MethodResult<'workspace.focus'>>;
+  workspaceReset(params?: MethodParams<'workspace.reset'>): Promise<MethodResult<'workspace.reset'>>;
+  workspaceClose(params?: MethodParams<'workspace.close'>): Promise<MethodResult<'workspace.close'>>;
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult>;
 }
 

@@ -7,6 +7,15 @@
 
 Use it when you want the agent to click, type, read pages, inspect DOM/text/a11y, work with frame or shadow DOM, and reuse remembered browser paths.
 
+By default, `bak` prefers an existing agent workspace instead of the human user's active tab:
+
+- a dedicated browser window for the agent
+- a dedicated tab group inside that window
+- default browser and memory operations targeting that workspace once it exists
+- explicit focus via `bak workspace focus` when the agent should bring the workspace forward
+
+Ordinary browser reads and actions such as `bak page url` or `bak page title` do not silently create a workspace. Use `bak workspace ensure` or `bak workspace open-tab` when you want to create or repair the dedicated workspace first.
+
 ## Install
 
 Prerequisites:
@@ -78,6 +87,11 @@ Use `bak` for browser tasks. If the browser is not connected, tell me to complet
 Common commands the agent can use:
 
 ```powershell
+bak workspace ensure --rpc-ws-port 17374
+bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
+bak workspace info --rpc-ws-port 17374
+bak workspace get-active-tab --rpc-ws-port 17374
+bak workspace set-active-tab --tab-id 123 --rpc-ws-port 17374
 bak page goto "https://example.com" --rpc-ws-port 17374
 bak page title --rpc-ws-port 17374
 bak page snapshot --include-base64 --rpc-ws-port 17374
@@ -100,6 +114,7 @@ Notes:
 
 - console and network are useful agent context, but still best-effort rather than full DevTools parity
 - memory is explicit and advisory, not automatic
+- Chromium still controls some window-manager details. `bak` avoids navigating the human user's current tab by default, but a newly created workspace window can still cause brief focus churn on some Chromium builds until the user explicitly focuses or ignores it.
 
 ## More Docs
 

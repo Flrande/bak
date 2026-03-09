@@ -1,4 +1,4 @@
-import type { ConsoleEntry, ElementMapItem, Locator } from '@flrande/bak-protocol';
+import type { ConsoleEntry, ElementMapItem, Locator, MethodParams, MethodResult } from '@flrande/bak-protocol';
 import type { BrowserDriver, BrowserTab, DriverConnectionStatus, SnapshotResult } from './browser-driver.js';
 import type { ExtensionBridge } from './extension-bridge.js';
 
@@ -69,8 +69,16 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('tabs.focus', { tabId });
   }
 
-  tabsNew(url?: string): Promise<{ tabId: number }> {
-    return this.bridge.request('tabs.new', { url });
+  tabsGetActive(): Promise<MethodResult<'tabs.getActive'>> {
+    return this.bridge.request('tabs.getActive', {});
+  }
+
+  tabsGet(tabId: number): Promise<MethodResult<'tabs.get'>> {
+    return this.bridge.request('tabs.get', { tabId });
+  }
+
+  tabsNew(options: MethodParams<'tabs.new'> = {}): Promise<MethodResult<'tabs.new'>> {
+    return this.bridge.request('tabs.new', options);
   }
 
   tabsClose(tabId: number): Promise<{ ok: true }> {
@@ -125,6 +133,42 @@ export class ExtensionDriver implements BrowserDriver {
 
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }> {
     return this.bridge.request('ui.selectCandidate', { candidates, tabId }, 60_000);
+  }
+
+  workspaceEnsure(params: MethodParams<'workspace.ensure'> = {}): Promise<MethodResult<'workspace.ensure'>> {
+    return this.bridge.request('workspace.ensure', params);
+  }
+
+  workspaceInfo(params: MethodParams<'workspace.info'> = {}): Promise<MethodResult<'workspace.info'>> {
+    return this.bridge.request('workspace.info', params);
+  }
+
+  workspaceOpenTab(params: MethodParams<'workspace.openTab'> = {}): Promise<MethodResult<'workspace.openTab'>> {
+    return this.bridge.request('workspace.openTab', params);
+  }
+
+  workspaceListTabs(params: MethodParams<'workspace.listTabs'> = {}): Promise<MethodResult<'workspace.listTabs'>> {
+    return this.bridge.request('workspace.listTabs', params);
+  }
+
+  workspaceGetActiveTab(params: MethodParams<'workspace.getActiveTab'> = {}): Promise<MethodResult<'workspace.getActiveTab'>> {
+    return this.bridge.request('workspace.getActiveTab', params);
+  }
+
+  workspaceSetActiveTab(params: MethodParams<'workspace.setActiveTab'>): Promise<MethodResult<'workspace.setActiveTab'>> {
+    return this.bridge.request('workspace.setActiveTab', params);
+  }
+
+  workspaceFocus(params: MethodParams<'workspace.focus'> = {}): Promise<MethodResult<'workspace.focus'>> {
+    return this.bridge.request('workspace.focus', params);
+  }
+
+  workspaceReset(params: MethodParams<'workspace.reset'> = {}): Promise<MethodResult<'workspace.reset'>> {
+    return this.bridge.request('workspace.reset', params);
+  }
+
+  workspaceClose(params: MethodParams<'workspace.close'> = {}): Promise<MethodResult<'workspace.close'>> {
+    return this.bridge.request('workspace.close', params);
   }
 
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult> {

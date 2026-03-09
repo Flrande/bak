@@ -8,6 +8,30 @@ Browser Agent Kit is a paired system:
 
 The extension and CLI are both product surface, not implementation detail.
 
+## Workspace Model
+
+Browser automation defaults to a first-class agent workspace:
+- one default workspace id
+- a dedicated browser window as the main isolation boundary
+- a dedicated tab group inside that window for agent-owned tabs
+- tracked workspace tab ids plus primary/current tab pointers
+
+Canonical runtime state:
+- `workspaceId`
+- `windowId`
+- `groupId`
+- `tabIds`
+- `activeTabId`
+- `primaryTabId`
+
+Rules:
+- default browser targeting resolves in this order: explicit `tabId`, explicit `workspaceId`, current tab in an existing default workspace, browser active tab only if no workspace exists
+- `workspace.ensure` is the repair entrypoint for missing window, group, primary tab, and tracked tabs
+- ordinary omitted-target commands do not create a workspace as a side effect; explicit workspace commands such as `workspace.ensure` and `workspace.openTab` do
+- workspace repair must recover grouped/tracked tabs without adopting unrelated tabs in the same window
+- explicit focus is separate from default targeting; workspace creation and default operations should avoid navigating the human user's active tab
+- route-memory replay, explain, plan, and execute use workspace targeting when no explicit tab is provided
+
 ## Design Goals
 
 - expose broad browser control and reading through first-class CLI commands and JSON-RPC

@@ -2,6 +2,8 @@
 
 The `v3` memory system is explicit and agent-centered.
 
+When a workspace exists, memory capture, search, explain, plan, and execute default to the workspace current tab instead of the human user's current active tab. This keeps route replay and procedure execution inside the agent workspace unless you pass an explicit browser target. If no workspace exists yet, these flows follow the normal omitted-target browser rule and use the active browser tab until you explicitly create or open the workspace.
+
 ## Durable Memory Kinds
 
 - `route`: how to reach a page or feature
@@ -40,6 +42,7 @@ The `v3` memory system is explicit and agent-centered.
 - captured text stays literal unless it is already templated or clearly sensitive, such as password-like fields
 - captured element steps keep live locator candidates from the page element that was actually used, which gives later patch suggestions more signal than the original raw locator alone
 - memory fingerprints use the active document URL/title for the current context, not always the top-level tab
+- when a workspace exists, route replay and other memory-driven browser actions stay inside the workspace window/tab group by default
 
 ## Execution Modes
 

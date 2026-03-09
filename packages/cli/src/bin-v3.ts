@@ -55,6 +55,17 @@ function parseTabId(value: unknown): number | undefined {
   return parsed;
 }
 
+function parseWorkspaceId(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const workspaceId = String(value).trim();
+  if (!workspaceId) {
+    return undefined;
+  }
+  return workspaceId;
+}
+
 function resolveExtensionDistPath(): string | null {
   const candidates = [
     resolve(CURRENT_DIR, '..', '..', 'bak-extension', 'dist'),
@@ -92,7 +103,18 @@ function addRpcPortOption(command: Command): Command {
 }
 
 function addTabOption(command: Command): Command {
-  return command.option('--tab-id <tabId>', 'tab id');
+  return command.option('--tab-id <tabId>', 'tab id').option('--workspace-id <workspaceId>', 'workspace id');
+}
+
+function addWorkspaceOption(command: Command): Command {
+  return command.option('--workspace-id <workspaceId>', 'workspace id');
+}
+
+function targetParams(options: { tabId?: unknown; workspaceId?: unknown }): { tabId?: number; workspaceId?: string } {
+  return {
+    tabId: parseTabId(options.tabId),
+    workspaceId: parseWorkspaceId(options.workspaceId)
+  };
 }
 
 function addLocatorOptions(command: Command): Command {
@@ -247,15 +269,99 @@ addRpcPortOption(
 
 const tabs = program.command('tabs').description('Tab operations');
 addRpcPortOption(tabs.command('list')).action(async (options) => invoke('tabs.list', {}, parseRpcPort(options)));
-addRpcPortOption(tabs.command('new').option('--url <url>', 'initial url')).action(async (options) => invoke('tabs.new', { url: options.url ? String(options.url) : undefined }, parseRpcPort(options)));
+addRpcPortOption(
+  tabs
+    .command('new')
+    .option('--url <url>', 'initial url')
+    .option('--active', 'make the created tab active in its window', false)
+    .option('--window-id <windowId>', 'target browser window id')
+    .option('--workspace-id <workspaceId>', 'target workspace id')
+    .option('--add-to-group', 'group the new tab when creating in a window', false)
+).action(async (options) =>
+  invoke(
+    'tabs.new',
+    {
+      url: options.url ? String(options.url) : undefined,
+      active: options.active === true,
+      windowId: parseNonNegativeInt(options.windowId, 'window-id'),
+      workspaceId: parseWorkspaceId(options.workspaceId),
+      addToGroup: options.addToGroup === true
+    },
+    parseRpcPort(options)
+  )
+);
 addRpcPortOption(tabs.command('focus <tabId>')).action(async (tabId, options) => invoke('tabs.focus', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));
 addRpcPortOption(tabs.command('close <tabId>')).action(async (tabId, options) => invoke('tabs.close', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));
 addRpcPortOption(tabs.command('get <tabId>')).action(async (tabId, options) => invoke('tabs.get', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));
 addRpcPortOption(tabs.command('active')).action(async (options) => invoke('tabs.getActive', {}, parseRpcPort(options)));
 
+const workspace = program.command('workspace').description('Agent workspace commands');
+addRpcPortOption(addTabOption(workspace.command('ensure').option('--url <url>', 'initial or recovery url').option('--focus', 'focus the workspace window', false))).action(async (options) =>
+  invoke(
+    'workspace.ensure',
+    {
+      workspaceId: parseWorkspaceId(options.workspaceId),
+      url: options.url ? String(options.url) : undefined,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+addRpcPortOption(addTabOption(workspace.command('info'))).action(async (options) => invoke('workspace.info', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
+addRpcPortOption(
+  addTabOption(
+    workspace.command('open-tab').option('--url <url>', 'initial url').option('--active', 'activate the tab inside the workspace window', false).option('--focus', 'focus the workspace window', false)
+  )
+).action(async (options) =>
+  invoke(
+    'workspace.openTab',
+    {
+      workspaceId: parseWorkspaceId(options.workspaceId),
+      url: options.url ? String(options.url) : undefined,
+      active: options.active === true,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+addRpcPortOption(addTabOption(workspace.command('list-tabs'))).action(async (options) => invoke('workspace.listTabs', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
+addRpcPortOption(
+  addWorkspaceOption(workspace.command('get-active-tab').description('Show the workspace current tab used by default browser and memory commands'))
+).action(async (options) => invoke('workspace.getActiveTab', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
+addRpcPortOption(
+  addWorkspaceOption(
+    workspace
+      .command('set-active-tab')
+      .description('Set the workspace current tab used by default browser and memory commands')
+      .requiredOption('--tab-id <tabId>', 'workspace tab id to make current')
+  )
+).action(async (options) =>
+  invoke(
+    'workspace.setActiveTab',
+    {
+      workspaceId: parseWorkspaceId(options.workspaceId),
+      tabId: parseTabId(options.tabId)
+    },
+    parseRpcPort(options)
+  )
+);
+addRpcPortOption(addTabOption(workspace.command('focus'))).action(async (options) => invoke('workspace.focus', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(workspace.command('reset').option('--url <url>', 'initial url').option('--focus', 'focus the workspace window', false))).action(async (options) =>
+  invoke(
+    'workspace.reset',
+    {
+      workspaceId: parseWorkspaceId(options.workspaceId),
+      url: options.url ? String(options.url) : undefined,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+addRpcPortOption(addTabOption(workspace.command('close'))).action(async (options) => invoke('workspace.close', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
+
 const page = program.command('page').description('Page operations');
-addRpcPortOption(addTabOption(page.command('goto <url>'))).action(async (url, options) => invoke('page.goto', { url: String(url), tabId: parseTabId(options.tabId) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(page.command('wait').requiredOption('--mode <mode>', 'selector | text | url').requiredOption('--value <value>', 'selector/text/url matcher').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds'))).action(async (options) => invoke('page.wait', { tabId: parseTabId(options.tabId), mode: String(options.mode), value: String(options.value), timeoutMs: parsePositiveInt(options.timeoutMs, 'timeout-ms') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(page.command('goto <url>'))).action(async (url, options) => invoke('page.goto', { url: String(url), ...targetParams(options) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(page.command('wait').requiredOption('--mode <mode>', 'selector | text | url').requiredOption('--value <value>', 'selector/text/url matcher').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds'))).action(async (options) => invoke('page.wait', { ...targetParams(options), mode: String(options.mode), value: String(options.value), timeoutMs: parsePositiveInt(options.timeoutMs, 'timeout-ms') }, parseRpcPort(options)));
 for (const [name, method] of [['url', 'page.url'], ['title', 'page.title'], ['snapshot', 'page.snapshot'], ['text', 'page.text'], ['dom', 'page.dom'], ['a11y', 'page.accessibilityTree'], ['metrics', 'page.metrics']] as const) {
   const command = addRpcPortOption(addTabOption(page.command(name)));
   if (name === 'snapshot') {
@@ -265,17 +371,17 @@ for (const [name, method] of [['url', 'page.url'], ['title', 'page.title'], ['sn
     invoke(
       method,
       {
-        tabId: parseTabId(options.tabId),
+        ...targetParams(options),
         includeBase64: options.includeBase64 === true ? true : undefined
       },
       parseRpcPort(options)
     )
   );
 }
-addRpcPortOption(addTabOption(page.command('viewport').option('--width <width>', 'width').option('--height <height>', 'height'))).action(async (options) => invoke('page.viewport', { tabId: parseTabId(options.tabId), width: parsePositiveInt(options.width, 'width'), height: parsePositiveInt(options.height, 'height') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(page.command('viewport').option('--width <width>', 'width').option('--height <height>', 'height'))).action(async (options) => invoke('page.viewport', { ...targetParams(options), width: parsePositiveInt(options.width, 'width'), height: parsePositiveInt(options.height, 'height') }, parseRpcPort(options)));
 
 const debug = program.command('debug').description('Debug utilities');
-addRpcPortOption(addTabOption(debug.command('console').option('--limit <limit>', 'max number of entries', '50'))).action(async (options) => invoke('debug.getConsole', { tabId: parseTabId(options.tabId), limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(debug.command('console').option('--limit <limit>', 'max number of entries', '50'))).action(async (options) => invoke('debug.getConsole', { ...targetParams(options), limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
 addRpcPortOption(
   addTabOption(
     debug
@@ -290,7 +396,7 @@ addRpcPortOption(
   invoke(
     'debug.dumpState',
     {
-      tabId: parseTabId(options.tabId),
+      ...targetParams(options),
       consoleLimit: parsePositiveInt(options.consoleLimit, 'console-limit'),
       networkLimit: parsePositiveInt(options.networkLimit, 'network-limit'),
       includeAccessibility: options.includeA11y === true,
@@ -302,55 +408,55 @@ addRpcPortOption(
 );
 
 const network = program.command('network').description('Network inspection commands');
-addRpcPortOption(addTabOption(network.command('list').option('--limit <limit>', 'result limit', '50').option('--url-includes <text>', 'url substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method'))).action(async (options) => invoke('network.list', { tabId: parseTabId(options.tabId), limit: parsePositiveInt(options.limit, 'limit'), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(network.command('get <id>'))).action(async (id, options) => invoke('network.get', { tabId: parseTabId(options.tabId), id: String(id) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(network.command('wait').option('--url-includes <text>', 'url substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds', '5000'))).action(async (options) => invoke('network.waitFor', { tabId: parseTabId(options.tabId), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined, timeoutMs: parsePositiveInt(options.timeoutMs, 'timeout-ms') }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(network.command('clear'))).action(async (options) => invoke('network.clear', { tabId: parseTabId(options.tabId) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(network.command('list').option('--limit <limit>', 'result limit', '50').option('--url-includes <text>', 'url substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method'))).action(async (options) => invoke('network.list', { ...targetParams(options), limit: parsePositiveInt(options.limit, 'limit'), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(network.command('get <id>'))).action(async (id, options) => invoke('network.get', { ...targetParams(options), id: String(id) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(network.command('wait').option('--url-includes <text>', 'url substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds', '5000'))).action(async (options) => invoke('network.waitFor', { ...targetParams(options), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined, timeoutMs: parsePositiveInt(options.timeoutMs, 'timeout-ms') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(network.command('clear'))).action(async (options) => invoke('network.clear', { ...targetParams(options) }, parseRpcPort(options)));
 
 const context = program.command('context').description('Frame and shadow context commands');
-addRpcPortOption(addTabOption(context.command('enter-frame').option('--frame-path <selector...>', 'frame path selectors'))).action(async (options) => invoke('context.enterFrame', { tabId: parseTabId(options.tabId), framePath: Array.isArray(options.framePath) ? options.framePath.map(String) : undefined }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(context.command('exit-frame').option('--levels <levels>', 'levels to exit'))).action(async (options) => invoke('context.exitFrame', { tabId: parseTabId(options.tabId), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(context.command('enter-shadow').option('--host-selectors <selector...>', 'shadow host selectors'))).action(async (options) => invoke('context.enterShadow', { tabId: parseTabId(options.tabId), hostSelectors: Array.isArray(options.hostSelectors) ? options.hostSelectors.map(String) : undefined }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(context.command('exit-shadow').option('--levels <levels>', 'levels to exit'))).action(async (options) => invoke('context.exitShadow', { tabId: parseTabId(options.tabId), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(context.command('reset'))).action(async (options) => invoke('context.reset', { tabId: parseTabId(options.tabId) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(context.command('enter-frame').option('--frame-path <selector...>', 'frame path selectors'))).action(async (options) => invoke('context.enterFrame', { ...targetParams(options), framePath: Array.isArray(options.framePath) ? options.framePath.map(String) : undefined }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(context.command('exit-frame').option('--levels <levels>', 'levels to exit'))).action(async (options) => invoke('context.exitFrame', { ...targetParams(options), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(context.command('enter-shadow').option('--host-selectors <selector...>', 'shadow host selectors'))).action(async (options) => invoke('context.enterShadow', { ...targetParams(options), hostSelectors: Array.isArray(options.hostSelectors) ? options.hostSelectors.map(String) : undefined }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(context.command('exit-shadow').option('--levels <levels>', 'levels to exit'))).action(async (options) => invoke('context.exitShadow', { ...targetParams(options), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(context.command('reset'))).action(async (options) => invoke('context.reset', { ...targetParams(options) }, parseRpcPort(options)));
 
 const element = program.command('element').description('Element operations');
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('get')))).action(async (options) => invoke('element.get', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('click')))).action(async (options) => invoke('element.click', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('type').requiredOption('--value <value>', 'text to type').option('--clear', 'clear before typing', false)))).action(async (options) => invoke('element.type', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson), text: String(options.value), clear: options.clear === true }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('hover')))).action(async (options) => invoke('element.hover', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('double-click')))).action(async (options) => invoke('element.doubleClick', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('right-click')))).action(async (options) => invoke('element.rightClick', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('select').requiredOption('--value <value...>', 'selected values')))).action(async (options) => invoke('element.select', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson), values: (options.value as string[]).map(String) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('check')))).action(async (options) => invoke('element.check', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('uncheck')))).action(async (options) => invoke('element.uncheck', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('scroll').option('--dx <dx>', 'horizontal delta').option('--dy <dy>', 'vertical delta', '320')))).action(async (options) => invoke('element.scroll', { tabId: parseTabId(options.tabId), locator: hasLocatorOptions(options) ? locatorFromOptions(options, parseJson) : undefined, dx: parseFiniteNumber(options.dx, 'dx'), dy: parseFiniteNumber(options.dy, 'dy') }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('scroll-into-view')))).action(async (options) => invoke('element.scrollIntoView', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('focus')))).action(async (options) => invoke('element.focus', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(addLocatorOptions(element.command('blur')))).action(async (options) => invoke('element.blur', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('get')))).action(async (options) => invoke('element.get', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('click')))).action(async (options) => invoke('element.click', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('type').requiredOption('--value <value>', 'text to type').option('--clear', 'clear before typing', false)))).action(async (options) => invoke('element.type', { ...targetParams(options), locator: locatorFromOptions(options, parseJson), text: String(options.value), clear: options.clear === true }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('hover')))).action(async (options) => invoke('element.hover', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('double-click')))).action(async (options) => invoke('element.doubleClick', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('right-click')))).action(async (options) => invoke('element.rightClick', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('select').requiredOption('--value <value...>', 'selected values')))).action(async (options) => invoke('element.select', { ...targetParams(options), locator: locatorFromOptions(options, parseJson), values: (options.value as string[]).map(String) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('check')))).action(async (options) => invoke('element.check', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('uncheck')))).action(async (options) => invoke('element.uncheck', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('scroll').option('--dx <dx>', 'horizontal delta').option('--dy <dy>', 'vertical delta', '320')))).action(async (options) => invoke('element.scroll', { ...targetParams(options), locator: hasLocatorOptions(options) ? locatorFromOptions(options, parseJson) : undefined, dx: parseFiniteNumber(options.dx, 'dx'), dy: parseFiniteNumber(options.dy, 'dy') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('scroll-into-view')))).action(async (options) => invoke('element.scrollIntoView', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('focus')))).action(async (options) => invoke('element.focus', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(element.command('blur')))).action(async (options) => invoke('element.blur', { ...targetParams(options), locator: locatorFromOptions(options, parseJson) }, parseRpcPort(options)));
 addRpcPortOption(addTabOption(addPrefixedLocatorOptions(addPrefixedLocatorOptions(element.command('drag-drop'), 'from', 'source'), 'to', 'target'))).action(async (options) => {
   const endpoints = dragDropLocatorsFromOptions(options, parseJson);
-  return invoke('element.dragDrop', { tabId: parseTabId(options.tabId), from: endpoints.from, to: endpoints.to }, parseRpcPort(options));
+  return invoke('element.dragDrop', { ...targetParams(options), from: endpoints.from, to: endpoints.to }, parseRpcPort(options));
 });
 
 const keyboard = program.command('keyboard').description('Keyboard commands');
-addRpcPortOption(addTabOption(keyboard.command('press <key>'))).action(async (key, options) => invoke('keyboard.press', { tabId: parseTabId(options.tabId), key: String(key) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(keyboard.command('type <text>').option('--delay-ms <delayMs>', 'delay per character'))).action(async (text, options) => invoke('keyboard.type', { tabId: parseTabId(options.tabId), text: String(text), delayMs: parseNonNegativeInt(options.delayMs, 'delay-ms') }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(keyboard.command('hotkey <keys...>'))).action(async (keys, options) => invoke('keyboard.hotkey', { tabId: parseTabId(options.tabId), keys: (keys as string[]).map(String) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(keyboard.command('press <key>'))).action(async (key, options) => invoke('keyboard.press', { ...targetParams(options), key: String(key) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(keyboard.command('type <text>').option('--delay-ms <delayMs>', 'delay per character'))).action(async (text, options) => invoke('keyboard.type', { ...targetParams(options), text: String(text), delayMs: parseNonNegativeInt(options.delayMs, 'delay-ms') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(keyboard.command('hotkey <keys...>'))).action(async (keys, options) => invoke('keyboard.hotkey', { ...targetParams(options), keys: (keys as string[]).map(String) }, parseRpcPort(options)));
 
 const mouse = program.command('mouse').description('Mouse commands');
-addRpcPortOption(addTabOption(mouse.command('move').requiredOption('--x <x>', 'x').requiredOption('--y <y>', 'y'))).action(async (options) => invoke('mouse.move', { tabId: parseTabId(options.tabId), x: parseFiniteNumber(options.x, 'x', { min: 0 }), y: parseFiniteNumber(options.y, 'y', { min: 0 }) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(mouse.command('click').requiredOption('--x <x>', 'x').requiredOption('--y <y>', 'y').option('--button <button>', 'left|middle|right', 'left'))).action(async (options) => invoke('mouse.click', { tabId: parseTabId(options.tabId), x: parseFiniteNumber(options.x, 'x', { min: 0 }), y: parseFiniteNumber(options.y, 'y', { min: 0 }), button: String(options.button) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(mouse.command('wheel').option('--dx <dx>', 'horizontal delta').option('--dy <dy>', 'vertical delta', '120'))).action(async (options) => invoke('mouse.wheel', { tabId: parseTabId(options.tabId), dx: parseFiniteNumber(options.dx, 'dx'), dy: parseFiniteNumber(options.dy, 'dy') }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(mouse.command('move').requiredOption('--x <x>', 'x').requiredOption('--y <y>', 'y'))).action(async (options) => invoke('mouse.move', { ...targetParams(options), x: parseFiniteNumber(options.x, 'x', { min: 0 }), y: parseFiniteNumber(options.y, 'y', { min: 0 }) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(mouse.command('click').requiredOption('--x <x>', 'x').requiredOption('--y <y>', 'y').option('--button <button>', 'left|middle|right', 'left'))).action(async (options) => invoke('mouse.click', { ...targetParams(options), x: parseFiniteNumber(options.x, 'x', { min: 0 }), y: parseFiniteNumber(options.y, 'y', { min: 0 }), button: String(options.button) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(mouse.command('wheel').option('--dx <dx>', 'horizontal delta').option('--dy <dy>', 'vertical delta', '120'))).action(async (options) => invoke('mouse.wheel', { ...targetParams(options), dx: parseFiniteNumber(options.dx, 'dx'), dy: parseFiniteNumber(options.dy, 'dy') }, parseRpcPort(options)));
 
 const file = program.command('file').description('File input commands');
-addRpcPortOption(addTabOption(addLocatorOptions(file.command('upload').option('--file-path <path...>', 'file path(s)').option('--files <json>', 'file JSON payload')))).action(async (options) => invoke('file.upload', { tabId: parseTabId(options.tabId), locator: locatorFromOptions(options, parseJson), files: uploadFilesFromOptions(options) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(addLocatorOptions(file.command('upload').option('--file-path <path...>', 'file path(s)').option('--files <json>', 'file JSON payload')))).action(async (options) => invoke('file.upload', { ...targetParams(options), locator: locatorFromOptions(options, parseJson), files: uploadFilesFromOptions(options) }, parseRpcPort(options)));
 
 const memory = program.command('memory').description('Agent-centered memory commands');
 const capture = memory.command('capture').description('Capture lifecycle');
-addRpcPortOption(addTabOption(capture.command('begin').requiredOption('--goal <goal>', 'capture goal').option('--label <label...>', 'labels', []))).action(async (options) => invoke('memory.capture.begin', { goal: String(options.goal), tabId: parseTabId(options.tabId), labels: (options.label as string[]).map(String) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(capture.command('mark').requiredOption('--label <label>', 'mark label').option('--role <role>', 'checkpoint|route|procedure|target-page|note').option('--note <note>', 'note'))).action(async (options) => invoke('memory.capture.mark', { tabId: parseTabId(options.tabId), label: String(options.label), role: options.role ? String(options.role) : undefined, note: options.note ? String(options.note) : undefined }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(capture.command('end').option('--outcome <outcome>', 'completed|failed|abandoned', 'completed'))).action(async (options) => invoke('memory.capture.end', { tabId: parseTabId(options.tabId), outcome: String(options.outcome) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(capture.command('begin').requiredOption('--goal <goal>', 'capture goal').option('--label <label...>', 'labels', []))).action(async (options) => invoke('memory.capture.begin', { goal: String(options.goal), ...targetParams(options), labels: (options.label as string[]).map(String) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(capture.command('mark').requiredOption('--label <label>', 'mark label').option('--role <role>', 'checkpoint|route|procedure|target-page|note').option('--note <note>', 'note'))).action(async (options) => invoke('memory.capture.mark', { ...targetParams(options), label: String(options.label), role: options.role ? String(options.role) : undefined, note: options.note ? String(options.note) : undefined }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(capture.command('end').option('--outcome <outcome>', 'completed|failed|abandoned', 'completed'))).action(async (options) => invoke('memory.capture.end', { ...targetParams(options), outcome: String(options.outcome) }, parseRpcPort(options)));
 
 const draft = memory.command('draft').description('Draft memory review');
 addRpcPortOption(draft.command('list').option('--capture-session-id <id>', 'capture session id').option('--kind <kind>', 'route|procedure|composite').option('--status <status>', 'draft|discarded|promoted').option('--limit <limit>', 'result limit', '50')).action(async (options) => invoke('memory.drafts.list', { captureSessionId: options.captureSessionId ? String(options.captureSessionId) : undefined, kind: options.kind ? String(options.kind) : undefined, status: options.status ? String(options.status) : undefined, limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
@@ -373,22 +479,22 @@ addRpcPortOption(
     {
       goal: String(options.goal),
       kind: options.kind ? String(options.kind) : undefined,
-      tabId: parseTabId(options.tabId),
+      ...targetParams(options),
       url: options.url ? String(options.url) : undefined,
       limit: parsePositiveInt(options.limit, 'limit')
     },
     parseRpcPort(options)
   )
 );
-  addRpcPortOption(addTabOption(memory.command('explain <id>').option('--revision-id <id>', 'specific revision').option('--url <url>', 'explicit page url context'))).action(async (id, options) => invoke('memory.memories.explain', { id: String(id), revisionId: options.revisionId ? String(options.revisionId) : undefined, tabId: parseTabId(options.tabId), url: options.url ? String(options.url) : undefined }, parseRpcPort(options)));
+  addRpcPortOption(addTabOption(memory.command('explain <id>').option('--revision-id <id>', 'specific revision').option('--url <url>', 'explicit page url context'))).action(async (id, options) => invoke('memory.memories.explain', { id: String(id), revisionId: options.revisionId ? String(options.revisionId) : undefined, ...targetParams(options), url: options.url ? String(options.url) : undefined }, parseRpcPort(options)));
 addRpcPortOption(addTabOption(memory.command('show <id>').option('--include-revisions', 'include revisions', false))).action(async (id, options) => invoke('memory.memories.get', { id: String(id), includeRevisions: options.includeRevisions === true }, parseRpcPort(options)));
 addRpcPortOption(memory.command('deprecate <id>').option('--reason <reason>', 'deprecation reason')).action(async (id, options) => invoke('memory.memories.deprecate', { id: String(id), reason: options.reason ? String(options.reason) : undefined }, parseRpcPort(options)));
 addRpcPortOption(memory.command('delete <id>')).action(async (id, options) => invoke('memory.memories.delete', { id: String(id) }, parseRpcPort(options)));
 
 const plan = memory.command('plan').description('Execution plan commands');
-addRpcPortOption(addTabOption(plan.command('create').option('--memory-id <id>', 'single memory id').option('--revision-id <id>', 'single revision id').option('--route-memory-id <id>', 'route memory id').option('--route-revision-id <id>', 'route revision id').option('--procedure-memory-id <id>', 'procedure memory id').option('--procedure-revision-id <id>', 'procedure revision id').option('--mode <mode>', 'dry-run|assist|auto', 'assist').option('--param <kv...>', 'bound parameters key=value', []))).action(async (options) => invoke('memory.plans.create', { memoryId: options.memoryId ? String(options.memoryId) : undefined, revisionId: options.revisionId ? String(options.revisionId) : undefined, routeMemoryId: options.routeMemoryId ? String(options.routeMemoryId) : undefined, routeRevisionId: options.routeRevisionId ? String(options.routeRevisionId) : undefined, procedureMemoryId: options.procedureMemoryId ? String(options.procedureMemoryId) : undefined, procedureRevisionId: options.procedureRevisionId ? String(options.procedureRevisionId) : undefined, tabId: parseTabId(options.tabId), mode: String(options.mode), parameters: parseKv((options.param as string[]) ?? []) }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(plan.command('create').option('--memory-id <id>', 'single memory id').option('--revision-id <id>', 'single revision id').option('--route-memory-id <id>', 'route memory id').option('--route-revision-id <id>', 'route revision id').option('--procedure-memory-id <id>', 'procedure memory id').option('--procedure-revision-id <id>', 'procedure revision id').option('--mode <mode>', 'dry-run|assist|auto', 'assist').option('--param <kv...>', 'bound parameters key=value', []))).action(async (options) => invoke('memory.plans.create', { memoryId: options.memoryId ? String(options.memoryId) : undefined, revisionId: options.revisionId ? String(options.revisionId) : undefined, routeMemoryId: options.routeMemoryId ? String(options.routeMemoryId) : undefined, routeRevisionId: options.routeRevisionId ? String(options.routeRevisionId) : undefined, procedureMemoryId: options.procedureMemoryId ? String(options.procedureMemoryId) : undefined, procedureRevisionId: options.procedureRevisionId ? String(options.procedureRevisionId) : undefined, ...targetParams(options), mode: String(options.mode), parameters: parseKv((options.param as string[]) ?? []) }, parseRpcPort(options)));
 addRpcPortOption(plan.command('show <id>')).action(async (id, options) => invoke('memory.plans.get', { id: String(id) }, parseRpcPort(options)));
-addRpcPortOption(addTabOption(memory.command('execute <id>').option('--mode <mode>', 'dry-run|assist|auto'))).action(async (id, options) => invoke('memory.plans.execute', { id: String(id), tabId: parseTabId(options.tabId), mode: options.mode ? String(options.mode) : undefined }, parseRpcPort(options)));
+addRpcPortOption(addTabOption(memory.command('execute <id>').option('--mode <mode>', 'dry-run|assist|auto'))).action(async (id, options) => invoke('memory.plans.execute', { id: String(id), ...targetParams(options), mode: options.mode ? String(options.mode) : undefined }, parseRpcPort(options)));
 
 const run = memory.command('run').description('Execution run history');
 addRpcPortOption(run.command('list').option('--memory-id <id>', 'filter by memory').option('--plan-id <id>', 'filter by plan').option('--status <status>', 'completed|blocked|failed').option('--limit <limit>', 'result limit', '50')).action(async (options) => invoke('memory.runs.list', { memoryId: options.memoryId ? String(options.memoryId) : undefined, planId: options.planId ? String(options.planId) : undefined, status: options.status ? String(options.status) : undefined, limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));

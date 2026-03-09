@@ -76,6 +76,7 @@ Key methods:
 
 Primary method groups:
 - `tabs.*`
+- `workspace.*`
 - `page.*`
 - `element.*`
 - `keyboard.*`
@@ -86,6 +87,8 @@ Primary method groups:
 - `debug.*`
 
 Important behavior:
+- default browser and memory targeting resolves in this order: explicit `tabId`, explicit `workspaceId`, current tab in an existing default workspace, browser active tab if no workspace exists
+- the workspace is a dedicated browser window plus a dedicated tab group inside that window
 - actions and reads share the same effective frame/shadow context
 - `page.url`, `page.title`, DOM summaries, debug state, and memory fingerprints use the active document for the current context
 - in frame context that document can differ from the top-level tab; use `session.info.activeTab` when you need top-level tab metadata
@@ -94,6 +97,25 @@ Important behavior:
 - `page.snapshot` returns image and element-map artifacts for agent inspection
 - `debug.console` and `debug.dumpState.console` are best-effort for page-origin logs and should be treated as advisory, not a full browser-devtools stream
 - `network.*` prefers page-level fetch/XHR capture, but can fall back to `resource` timing entries with `status: 0` when richer interception is unavailable
+
+Workspace methods:
+- `workspace.ensure`
+- `workspace.info`
+- `workspace.openTab`
+- `workspace.listTabs`
+- `workspace.getActiveTab`
+- `workspace.setActiveTab`
+- `workspace.focus`
+- `workspace.reset`
+- `workspace.close`
+
+Workspace semantics:
+- `workspace.ensure` creates or repairs the dedicated window, tab group, primary tab, and tracked tab set
+- `workspace.openTab` opens a tab in the workspace window and adds it to the workspace tab group
+- `workspace.getActiveTab` and `workspace.setActiveTab` manage the workspace current tab that default commands will use
+- `workspace.focus` is the explicit command that brings the workspace window to the front
+- default operations should not rely on "whatever tab is currently active" once the workspace exists
+- ordinary omitted-target commands do not create the workspace; explicit workspace methods do
 
 ## Memory Surface
 
@@ -156,3 +178,4 @@ Runs and patches:
 - `bak page snapshot` accepts `--include-base64`
 - `bak debug dump-state` accepts `--include-snapshot` and `--include-snapshot-base64`
 - `bak memory explain` accepts `--url` when applicability should be evaluated against an explicit page context without relying on the live tab
+- `bak workspace ensure|info|open-tab|list-tabs|get-active-tab|set-active-tab|focus|reset|close` expose the workspace lifecycle directly in the CLI

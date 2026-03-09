@@ -11,30 +11,52 @@ function must<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
-const HOME_URL = 'http://127.0.0.1:4173/';
-const SPA_URL = 'http://127.0.0.1:4173/spa.html';
-const NETWORK_URL = 'http://127.0.0.1:4173/network.html';
-
-function captureAndPromoteSpaRoute(tabId: number, goal: string): { id: string } {
+async function openWorkspacePage(path: string): Promise<void> {
   if (!harness) {
     throw new Error('Harness not initialized');
   }
 
-  runCli(['memory', 'capture', 'begin', '--goal', goal, '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-  runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#goto-spa'], harness.rpcPort, harness.dataDir);
+  const marker = `__workspace=${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const separator = path.includes('?') ? '&' : '?';
+  const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
+  const beforePages = new Set(harness.context.pages());
+  runCli(['workspace', 'open-tab', '--url', url], harness.rpcPort, harness.dataDir);
+  await expect
+    .poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), {
+      timeout: 10_000
+    })
+    .toBe(true);
+  const page = must(
+    harness.context.pages().find((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)),
+    'Expected workspace page'
+  );
+  await expect(page.locator('body')).toContainText('Browser Agent Kit Test Site');
+}
+
+const HOME_URL = 'http://127.0.0.1:4173/';
+const SPA_URL = 'http://127.0.0.1:4173/spa.html';
+const NETWORK_URL = 'http://127.0.0.1:4173/network.html';
+
+function captureAndPromoteSpaRoute(goal: string, targetArgs: string[] = []): { id: string } {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+
+  runCli(['memory', 'capture', 'begin', '--goal', goal, ...targetArgs], harness.rpcPort, harness.dataDir);
+  runCli(['element', 'click', '--css', '#goto-spa', ...targetArgs], harness.rpcPort, harness.dataDir);
   runCli(
-    ['page', 'wait', '--tab-id', String(tabId), '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000'],
+    ['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
-  runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#tab-automation'], harness.rpcPort, harness.dataDir);
+  runCli(['element', 'click', '--css', '#tab-automation', ...targetArgs], harness.rpcPort, harness.dataDir);
   runCli(
-    ['page', 'wait', '--tab-id', String(tabId), '--mode', 'text', '--value', 'Route: automation', '--timeout-ms', '5000'],
+    ['page', 'wait', '--mode', 'text', '--value', 'Route: automation', '--timeout-ms', '5000', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
   const ended = runCli<{ drafts: Array<{ id: string; kind: string }> }>(
-    ['memory', 'capture', 'end', '--tab-id', String(tabId), '--outcome', 'completed'],
+    ['memory', 'capture', 'end', '--outcome', 'completed', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
@@ -51,26 +73,26 @@ function captureAndPromoteSpaRoute(tabId: number, goal: string): { id: string } 
   return { id: promoted.memory.id };
 }
 
-function captureAndPromoteAutomationProcedure(tabId: number, goal: string, taskTitle: string): { id: string } {
+function captureAndPromoteAutomationProcedure(goal: string, taskTitle: string, targetArgs: string[] = []): { id: string } {
   if (!harness) {
     throw new Error('Harness not initialized');
   }
 
-  runCli(['memory', 'capture', 'begin', '--goal', goal, '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
+  runCli(['memory', 'capture', 'begin', '--goal', goal, ...targetArgs], harness.rpcPort, harness.dataDir);
   runCli(
-    ['memory', 'capture', 'mark', '--tab-id', String(tabId), '--label', 'queue automation task', '--role', 'procedure'],
+    ['memory', 'capture', 'mark', '--label', 'queue automation task', '--role', 'procedure', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
-  runCli(['element', 'type', '--tab-id', String(tabId), '--css', '#task-input', '--value', taskTitle, '--clear'], harness.rpcPort, harness.dataDir);
-  runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#queue-btn'], harness.rpcPort, harness.dataDir);
+  runCli(['element', 'type', '--css', '#task-input', '--value', taskTitle, '--clear', ...targetArgs], harness.rpcPort, harness.dataDir);
+  runCli(['element', 'click', '--css', '#queue-btn', ...targetArgs], harness.rpcPort, harness.dataDir);
   runCli(
-    ['page', 'wait', '--tab-id', String(tabId), '--mode', 'text', '--value', `queued ${taskTitle}`, '--timeout-ms', '5000'],
+    ['page', 'wait', '--mode', 'text', '--value', `queued ${taskTitle}`, '--timeout-ms', '5000', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
   const ended = runCli<{ drafts: Array<{ id: string; kind: string }> }>(
-    ['memory', 'capture', 'end', '--tab-id', String(tabId), '--outcome', 'completed'],
+    ['memory', 'capture', 'end', '--outcome', 'completed', ...targetArgs],
     harness.rpcPort,
     harness.dataDir
   );
@@ -105,7 +127,7 @@ test.describe('CLI route memory workflows', () => {
     const { page, tabId } = await harness.openPage('/');
     try {
       const goal = 'return to the automation console';
-      const route = captureAndPromoteSpaRoute(tabId, goal);
+      const route = captureAndPromoteSpaRoute(goal, ['--tab-id', String(tabId)]);
 
       await expect(page).toHaveURL(/\/spa\.html$/);
       await expect(page.locator('#route-label')).toContainText('Route: automation');
@@ -162,6 +184,53 @@ test.describe('CLI route memory workflows', () => {
     }
   });
 
+  test('captures and replays a route memory inside the workspace without interrupting the human tab', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page: humanPage } = await harness.openPage('/form.html');
+    try {
+      const goal = 'return to the automation console through the workspace';
+
+      await openWorkspacePage('/');
+
+      const route = captureAndPromoteSpaRoute(goal);
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+
+      runCli(['page', 'goto', HOME_URL], harness.rpcPort, harness.dataDir);
+
+      const search = runCli<{ candidates: Array<{ memoryId: string; kind: string }> }>(
+        ['memory', 'search', '--goal', goal, '--kind', 'route', '--limit', '5'],
+        harness.rpcPort,
+        harness.dataDir
+      );
+      expect(search.candidates[0]?.memoryId).toBe(route.id);
+
+      const explain = runCli<{ explanation: { status: string } }>(['memory', 'explain', route.id], harness.rpcPort, harness.dataDir);
+      expect(explain.explanation.status).toBe('applicable');
+
+      const plan = runCli<{ plan: { id: string; kind: string } }>(
+        ['memory', 'plan', 'create', '--memory-id', route.id, '--mode', 'auto'],
+        harness.rpcPort,
+        harness.dataDir
+      );
+      expect(plan.plan.kind).toBe('route');
+
+      const run = runCli<{ run: { status: string } }>(['memory', 'execute', plan.plan.id, '--mode', 'auto'], harness.rpcPort, harness.dataDir);
+      expect(run.run.status).toBe('completed');
+
+      const activeWorkspace = await harness.rpcCall<{ tab: { id: number } | null }>('workspace.getActiveTab');
+      const workspaceTabId = must(activeWorkspace.tab?.id, 'Expected workspace tab');
+      const workspaceUrl = await harness.rpcCall<{ url: string }>('page.url', { tabId: workspaceTabId });
+
+      expect(workspaceUrl.url).toBe(SPA_URL);
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+    } finally {
+      await humanPage.close();
+    }
+  });
+
   test('keeps route and procedure memories distinct, then composes them through the CLI to return and finish the task', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
@@ -172,8 +241,8 @@ test.describe('CLI route memory workflows', () => {
       const routeGoal = 'return to the automation console';
       const procedureGoal = 'queue the nightly backup task';
       const taskTitle = 'Nightly backup task';
-      const route = captureAndPromoteSpaRoute(tabId, routeGoal);
-      const procedure = captureAndPromoteAutomationProcedure(tabId, procedureGoal, taskTitle);
+      const route = captureAndPromoteSpaRoute(routeGoal, ['--tab-id', String(tabId)]);
+      const procedure = captureAndPromoteAutomationProcedure(procedureGoal, taskTitle, ['--tab-id', String(tabId)]);
 
       await expect(page.locator('#task-list li')).toContainText(taskTitle);
 
@@ -249,7 +318,7 @@ test.describe('CLI route memory workflows', () => {
     const { page, tabId } = await harness.openPage('/');
     try {
       const goal = 'return to the automation console';
-      const route = captureAndPromoteSpaRoute(tabId, goal);
+      const route = captureAndPromoteSpaRoute(goal, ['--tab-id', String(tabId)]);
 
       runCli(['page', 'goto', NETWORK_URL, '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
       await expect(page).toHaveURL(NETWORK_URL);

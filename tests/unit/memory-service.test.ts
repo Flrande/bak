@@ -13,6 +13,7 @@ import { TraceStore } from '../../packages/cli/src/trace-store.js';
 
 interface DriverRecorder {
   rawRequests: Array<{ method: string; params?: Record<string, unknown> }>;
+  pageGotos: Array<{ url: string; tabId?: number }>;
   clicks: Array<{ locator: Locator; tabId?: number; requiresConfirm?: boolean }>;
   types: Array<{ locator: Locator; text: string; clear?: boolean; tabId?: number; requiresConfirm?: boolean }>;
   elementScrolls: Array<{ locator?: Locator; dx: number; dy: number; tabId?: number }>;
@@ -31,6 +32,13 @@ interface DriverView {
 interface DriverOptions {
   activeUrl?: string;
   activeTitle?: string;
+  activeTabId?: number;
+  workspaceExists?: boolean;
+  workspaceTabId?: number;
+  workspaceActiveTabId?: number;
+  workspaceTabIds?: number[];
+  workspaceWindowId?: number;
+  workspaceGroupId?: number;
   textChunks?: string[];
   domSummary?: { totalElements: number; interactiveElements: number; iframes: number; shadowHosts: number; tagHistogram: Array<{ tag: string; count: number }> };
   snapshotElements?: ElementMapItem[];
@@ -63,6 +71,13 @@ function createConnectionStatus(): DriverConnectionStatus {
 function createDriver(recorder: DriverRecorder, options: DriverOptions = {}): BrowserDriver {
   let activeUrl = options.activeUrl ?? 'https://portal.local/spa';
   let activeTitle = options.activeTitle ?? 'Automation Console';
+  const activeTabId = options.activeTabId ?? 1;
+  const workspaceTabId = options.workspaceTabId ?? activeTabId;
+  let workspaceExists = options.workspaceExists !== false;
+  let workspaceTabIds = [...(options.workspaceTabIds ?? [workspaceTabId])];
+  let workspaceActiveTabId = options.workspaceActiveTabId ?? workspaceTabId;
+  const workspaceWindowId = options.workspaceWindowId ?? 50;
+  const workspaceGroupId = options.workspaceGroupId ?? 70;
   const textChunks = options.textChunks ?? ['Automation Console', 'Queue task'];
   const domSummary = options.domSummary ?? {
     totalElements: 24,
@@ -109,15 +124,50 @@ function createDriver(recorder: DriverRecorder, options: DriverOptions = {}): Br
     };
   };
 
+  const ensureWorkspaceState = (): void => {
+    workspaceExists = true;
+    if (workspaceTabIds.length === 0) {
+      workspaceTabIds = [workspaceTabId];
+    }
+    if (!workspaceTabIds.includes(workspaceActiveTabId)) {
+      workspaceTabIds = [...workspaceTabIds, workspaceActiveTabId];
+    }
+  };
+
+  const workspaceTabs = () =>
+    workspaceTabIds.map((id) => ({
+      id,
+      title: activeTitle,
+      url: activeUrl,
+      active: id === workspaceActiveTabId,
+      windowId: workspaceWindowId,
+      groupId: workspaceGroupId
+    }));
+
+  const workspacePayload = () => ({
+    id: 'default',
+    label: 'bak agent',
+    color: 'blue' as const,
+    windowId: workspaceWindowId,
+    groupId: workspaceGroupId,
+    tabIds: [...workspaceTabIds],
+    activeTabId: workspaceActiveTabId,
+    primaryTabId: workspaceTabIds[0] ?? workspaceActiveTabId,
+    tabs: workspaceTabs()
+  });
+
   return {
     isConnected: () => true,
     connectionStatus: () => createConnectionStatus(),
     sessionPing: async () => ({ ok: true, ts: Date.now() }),
-    tabsList: async () => ({ tabs: [{ id: 1, title: activeTitle, url: activeUrl, active: true }] }),
+    tabsList: async () => ({ tabs: [{ id: activeTabId, title: activeTitle, url: activeUrl, active: true, windowId: 1, groupId: null }] }),
     tabsFocus: async () => ({ ok: true }),
-    tabsNew: async () => ({ tabId: 1 }),
+    tabsGetActive: async () => ({ tab: { id: activeTabId, title: activeTitle, url: activeUrl, active: true, windowId: 1, groupId: null } }),
+    tabsGet: async (tabId: number) => ({ tab: { id: tabId, title: activeTitle, url: activeUrl, active: tabId === activeTabId, windowId: 1, groupId: null } }),
+    tabsNew: async (request = {}) => ({ tabId: request.workspaceId ? workspaceTabId : activeTabId, windowId: request.workspaceId ? workspaceWindowId : 1, groupId: request.workspaceId ? workspaceGroupId : null, workspaceId: request.workspaceId }),
     tabsClose: async () => ({ ok: true }),
-    pageGoto: async (url: string) => {
+    pageGoto: async (url: string, tabId?: number) => {
+      recorder.pageGotos.push({ url, tabId });
       activeUrl = url;
       activeTitle = url.includes('billing') ? 'Billing Settings' : 'Automation Console';
       return { ok: true };
@@ -152,10 +202,52 @@ function createDriver(recorder: DriverRecorder, options: DriverOptions = {}): Br
     },
     debugGetConsole: async () => ({ entries: [{ level: 'info', message: 'console ok', ts: Date.now() }] }),
     userSelectCandidate: async () => ({ selectedEid: snapshotElements[0]?.eid ?? 'eid_fallback' }),
+    workspaceEnsure: async () => ({
+      ...(ensureWorkspaceState(), {}),
+      workspace: workspacePayload(),
+      created: false,
+      repaired: false,
+      repairActions: []
+    }),
+    workspaceInfo: async () => ({
+      workspace: workspaceExists ? workspacePayload() : null
+    }),
+    workspaceOpenTab: async () => ({
+      ...(ensureWorkspaceState(), {}),
+      workspace: workspacePayload(),
+      tab: workspaceTabs().find((tab) => tab.id === workspaceActiveTabId) ?? workspaceTabs()[0]!
+    }),
+    workspaceListTabs: async () => ({
+      ...(ensureWorkspaceState(), {}),
+      workspace: workspacePayload(),
+      tabs: workspaceTabs()
+    }),
+    workspaceGetActiveTab: async () => ({
+      ...(ensureWorkspaceState(), {}),
+      workspace: workspacePayload(),
+      tab: workspaceTabs().find((tab) => tab.id === workspaceActiveTabId) ?? null
+    }),
+    workspaceSetActiveTab: async ({ tabId }) => ({
+      ...(ensureWorkspaceState(), workspaceActiveTabId = tabId, workspaceTabIds = workspaceTabIds.includes(tabId) ? workspaceTabIds : [...workspaceTabIds, tabId], {}),
+      workspace: workspacePayload(),
+      tab: workspaceTabs().find((tab) => tab.id === tabId)!
+    }),
+    workspaceFocus: async () => ({ ...(ensureWorkspaceState(), {}), ok: true, workspace: workspacePayload() }),
+    workspaceReset: async () => ({ ...(ensureWorkspaceState(), {}), workspace: workspacePayload(), created: false, repaired: true, repairActions: ['reset'] }),
+    workspaceClose: async () => {
+      workspaceExists = false;
+      return { ok: true };
+    },
     rawRequest: async (method, params) => {
       recorder.rawRequests.push({ method, params });
       const view = currentView();
       switch (method) {
+        case 'workspace.getActiveTab':
+          ensureWorkspaceState();
+          return {
+            workspace: workspacePayload(),
+            tab: workspaceTabs().find((tab) => tab.id === workspaceActiveTabId) ?? null
+          };
         case 'page.url':
           return { url: view.url ?? activeUrl };
         case 'page.title':
@@ -288,7 +380,7 @@ async function withService<T>(
   pairingStore.createToken();
   const traceStore = new TraceStore(dataDir);
   const store = createMemoryStore({ dataDir });
-  const recorder: DriverRecorder = { rawRequests: [], clicks: [], types: [], elementScrolls: [], snapshots: [] };
+  const recorder: DriverRecorder = { rawRequests: [], pageGotos: [], clicks: [], types: [], elementScrolls: [], snapshots: [] };
   const service = new BakService(createDriver(recorder, options), pairingStore, traceStore, store);
 
   try {
@@ -345,6 +437,124 @@ describe('memory service v3', () => {
       expect(recorder.clicks.length).toBe(beforeSearchClickCount);
       expect(store.listMemories().length).toBe(2);
     });
+  });
+
+  it('resolves omitted browser targets to the workspace tab instead of the active human tab', async () => {
+    await withService(
+      async ({ service, recorder }) => {
+        await service.invoke('page.goto', { url: 'https://portal.local/spa' });
+        await service.invoke('element.click', { locator: { css: '#queue-btn' } });
+        await service.invoke('page.snapshot', { includeBase64: false });
+
+        expect(recorder.pageGotos[0]?.tabId).toBe(42);
+        expect(recorder.clicks[0]?.tabId).toBe(42);
+        expect(recorder.snapshots[0]?.tabId).toBe(42);
+      },
+      {
+        activeTabId: 1,
+        workspaceTabId: 42
+      }
+    );
+  });
+
+  it('falls back to the active browser tab when no workspace exists', async () => {
+    await withService(
+      async ({ service, recorder }) => {
+        await service.invoke('page.title', {});
+        await service.invoke('page.goto', { url: 'https://portal.local/spa' });
+
+        expect(recorder.rawRequests).toEqual(
+          expect.arrayContaining([expect.objectContaining({ method: 'page.title', params: expect.objectContaining({ tabId: 1 }) })])
+        );
+        expect(recorder.pageGotos[0]?.tabId).toBe(1);
+      },
+      {
+        activeTabId: 1,
+        workspaceTabId: 42,
+        workspaceExists: false
+      }
+    );
+  });
+
+  it('keeps explicit tab ids ahead of workspace defaults', async () => {
+    await withService(
+      async ({ service, recorder }) => {
+        await service.invoke('page.goto', { url: 'https://portal.local/spa', tabId: 7 });
+        await service.invoke('element.click', { locator: { css: '#queue-btn' }, tabId: 7 });
+
+        expect(recorder.pageGotos[0]?.tabId).toBe(7);
+        expect(recorder.clicks[0]?.tabId).toBe(7);
+      },
+      {
+        activeTabId: 1,
+        workspaceTabId: 42
+      }
+    );
+  });
+
+  it('switches the workspace current tab and uses it for later default commands', async () => {
+    await withService(
+      async ({ service, recorder }) => {
+        const activeBefore = await service.invoke('workspace.getActiveTab', {});
+        expect(activeBefore.tab?.id).toBe(42);
+
+        const switched = await service.invoke('workspace.setActiveTab', { tabId: 77 });
+        expect(switched.tab.id).toBe(77);
+
+        await service.invoke('page.goto', { url: 'https://portal.local/spa' });
+        await service.invoke('element.click', { locator: { css: '#queue-btn' } });
+
+        expect(recorder.pageGotos[0]?.tabId).toBe(77);
+        expect(recorder.clicks[0]?.tabId).toBe(77);
+      },
+      {
+        activeTabId: 1,
+        workspaceTabId: 42,
+        workspaceTabIds: [42, 77],
+        workspaceActiveTabId: 42
+      }
+    );
+  });
+
+  it('aligns capture, explain, plan, and execute flows to the workspace tab when no tab id is provided', async () => {
+    await withService(
+      async ({ service, store, recorder }) => {
+        const started = await service.invoke('memory.capture.begin', { goal: 'queue task in workspace' });
+        expect(started.captureSession.tabId).toBe(42);
+
+        await service.invoke('memory.capture.mark', { label: 'queue task', role: 'procedure' });
+        await service.invoke('element.type', { locator: { css: '#task-input' }, text: 'Nightly', clear: true });
+        await service.invoke('memory.capture.end', { outcome: 'completed' });
+
+        const { memoryId } = createRevisionFixture(store, {
+          kind: 'route',
+          title: 'Route to automation console',
+          goal: 'open automation console',
+          steps: [{ kind: 'goto', url: 'https://portal.local/spa.html' }],
+          entryUrl: 'https://portal.local/',
+          targetUrl: 'https://portal.local/spa.html'
+        });
+
+        await service.invoke('memory.memories.explain', { id: memoryId });
+        const plan = await service.invoke('memory.plans.create', { memoryId, mode: 'auto' });
+        await service.invoke('memory.plans.execute', { id: plan.plan.id, mode: 'auto' });
+
+        expect(recorder.rawRequests).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ method: 'page.url', params: expect.objectContaining({ tabId: 42 }) }),
+            expect.objectContaining({ method: 'page.dom', params: expect.objectContaining({ tabId: 42 }) }),
+            expect.objectContaining({ method: 'page.text', params: expect.objectContaining({ tabId: 42 }) })
+          ])
+        );
+        expect(recorder.pageGotos.at(-1)?.tabId).toBe(42);
+      },
+      {
+        activeTabId: 1,
+        workspaceTabId: 42,
+        activeUrl: 'https://portal.local/',
+        activeTitle: 'Home'
+      }
+    );
   });
 
   it('prefers a route memory over a procedure memory when searching from the remembered route entry page', async () => {

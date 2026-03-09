@@ -360,11 +360,12 @@ export async function createHarness(): Promise<E2EHarness> {
     const page = await context.newPage();
     await gotoWithRetry(page, 'http://127.0.0.1:4173/form.html', '#name-input');
     await page.bringToFront();
-    const initialActive = (await rpcCallInternal(rpcPort, 'tabs.getActive', {})) as {
-      tab: { id: number } | null;
+    const initialTabs = (await rpcCallInternal(rpcPort, 'tabs.list', {})) as {
+      tabs: Array<{ id: number; url: string }>;
     };
-    if (initialActive.tab?.id) {
-      await waitForTabContentReady(rpcPort, initialActive.tab.id);
+    const initialTab = initialTabs.tabs.find((tab) => tab.url.includes('/form.html'));
+    if (initialTab?.id) {
+      await waitForTabContentReady(rpcPort, initialTab.id);
     }
 
     const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {

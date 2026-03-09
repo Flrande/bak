@@ -100,6 +100,15 @@ const STATIC_METHODS = new Set<MethodName>([
   'tabs.focus',
   'tabs.new',
   'tabs.close',
+  'workspace.ensure',
+  'workspace.info',
+  'workspace.openTab',
+  'workspace.listTabs',
+  'workspace.getActiveTab',
+  'workspace.setActiveTab',
+  'workspace.focus',
+  'workspace.reset',
+  'workspace.close',
   'page.goto',
   'page.back',
   'page.forward',
@@ -158,6 +167,11 @@ interface ActiveCapture {
   captureSessionId: string;
   goal: string;
   tabId?: number;
+}
+
+interface ResolvedTarget {
+  tabId?: number;
+  workspaceId?: string;
 }
 
 export interface ServiceHeartbeatConfig {
@@ -476,7 +490,59 @@ export class BakService {
     }
   }
 
-  private async activeLocation(): Promise<{ domain: string; path: string }> {
+  private async resolveTarget(args: Record<string, unknown>): Promise<ResolvedTarget> {
+    const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+    const workspaceId = typeof args.workspaceId === 'string' && args.workspaceId.trim().length > 0 ? args.workspaceId.trim() : undefined;
+    if (tabId !== undefined) {
+      return { tabId, workspaceId };
+    }
+    if (!this.driver.isConnected()) {
+      return { workspaceId };
+    }
+    if (workspaceId) {
+      const result = await this.driver.workspaceGetActiveTab({ workspaceId });
+      return {
+        tabId: result.tab?.id,
+        workspaceId: result.workspace.id
+      };
+    }
+
+    try {
+      const info = await this.driver.workspaceInfo();
+      const workspaceTabId = info.workspace?.activeTabId ?? info.workspace?.tabs[0]?.id;
+      if (typeof workspaceTabId === 'number' && info.workspace) {
+        return {
+          tabId: workspaceTabId,
+          workspaceId: info.workspace.id
+        };
+      }
+    } catch {
+      // Fall back to the browser active tab when the workspace is absent or unavailable.
+    }
+
+    try {
+      const active = await this.driver.tabsGetActive();
+      return {
+        tabId: active.tab?.id,
+        workspaceId
+      };
+    } catch {
+      return { workspaceId };
+    }
+  }
+
+  private async activeLocation(target?: ResolvedTarget): Promise<{ domain: string; path: string }> {
+    if (typeof target?.tabId === 'number' && this.driver.isConnected()) {
+      try {
+        const current = await this.driver.rawRequest<MethodResult<'page.url'>>('page.url', { tabId: target.tabId });
+        return {
+          domain: getDomain(current.url),
+          path: getPathname(current.url)
+        };
+      } catch {
+        // Fall back to active tab summary below.
+      }
+    }
     const active = await this.activeTabSummary();
     if (!active?.url) {
       return { domain: 'unknown', path: '/' };
@@ -577,9 +643,13 @@ export class BakService {
   }
 
   private async evaluatePolicy(action: PolicyAction, locator: Locator): Promise<{ requiresConfirm: boolean }> {
+    return this.evaluatePolicyForTarget(action, locator);
+  }
+
+  private async evaluatePolicyForTarget(action: PolicyAction, locator: Locator, target?: ResolvedTarget): Promise<{ requiresConfirm: boolean }> {
     const traceId = this.currentTraceId || this.traceStore.newTraceId();
     this.currentTraceId = traceId;
-    const location = await this.activeLocation();
+    const location = await this.activeLocation(target);
     const evaluation = this.policyEngine.evaluateWithAudit({
       action,
       domain: location.domain,
@@ -602,43 +672,56 @@ export class BakService {
   }
 
   private async withPolicyOnDynamicRequest(methodName: MethodName, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const target = await this.resolveTarget(params);
+    const withResolvedTarget: Record<string, unknown> = {
+      ...params,
+      tabId: target.tabId,
+      workspaceId: target.workspaceId
+    };
     const action = POLICY_ACTION_BY_METHOD[methodName];
     if (!action) {
-      return params;
+      return withResolvedTarget;
     }
-    const requiresConfirm = params.requiresConfirm === true;
+    const requiresConfirm = withResolvedTarget.requiresConfirm === true;
     if (methodName === 'element.dragDrop') {
-      const from = params.from as Locator | undefined;
-      const to = params.to as Locator | undefined;
+      const from = withResolvedTarget.from as Locator | undefined;
+      const to = withResolvedTarget.to as Locator | undefined;
       if (!from || !to) {
         throw new RpcError(`${methodName} requires both from and to locators`, -32602, BakErrorCode.E_INVALID_PARAMS);
       }
-      const fromDecision = await this.evaluatePolicy(action, from);
-      const toDecision = await this.evaluatePolicy(action, to);
+      const fromDecision = await this.evaluatePolicyForTarget(action, from, target);
+      const toDecision = await this.evaluatePolicyForTarget(action, to, target);
       return {
-        ...params,
+        ...withResolvedTarget,
         requiresConfirm: requiresConfirm || fromDecision.requiresConfirm || toDecision.requiresConfirm
       };
     }
 
-    const locator = params.locator as Locator | undefined;
+    const locator = withResolvedTarget.locator as Locator | undefined;
     if (!locator) {
       throw new RpcError(`${methodName} requires locator`, -32602, BakErrorCode.E_INVALID_PARAMS);
     }
-    const decision = await this.evaluatePolicy(action, locator);
+    const decision = await this.evaluatePolicyForTarget(action, locator, target);
     return {
-      ...params,
+      ...withResolvedTarget,
       requiresConfirm: requiresConfirm || decision.requiresConfirm
     };
   }
 
-  private async clickWithPolicy(locator: Locator, tabId?: number, requiresConfirm = false): Promise<{ ok: true }> {
-    const policy = await this.evaluatePolicy('element.click', locator);
+  private async clickWithPolicy(locator: Locator, tabId?: number, requiresConfirm = false, target?: ResolvedTarget): Promise<{ ok: true }> {
+    const policy = await this.evaluatePolicyForTarget('element.click', locator, target);
     return this.driver.elementClick(locator, tabId, requiresConfirm || policy.requiresConfirm);
   }
 
-  private async typeWithPolicy(locator: Locator, text: string, clear: boolean, tabId?: number, requiresConfirm = false): Promise<{ ok: true }> {
-    const policy = await this.evaluatePolicy('element.type', locator);
+  private async typeWithPolicy(
+    locator: Locator,
+    text: string,
+    clear: boolean,
+    tabId?: number,
+    requiresConfirm = false,
+    target?: ResolvedTarget
+  ): Promise<{ ok: true }> {
+    const policy = await this.evaluatePolicyForTarget('element.type', locator, target);
     return this.driver.elementType(locator, text, clear, tabId, requiresConfirm || policy.requiresConfirm);
   }
 
@@ -1056,7 +1139,8 @@ export class BakService {
 
   private async buildPlan(args: Record<string, unknown>): Promise<MemoryPlan> {
     const mode = (args.mode as MemoryExecutionMode | undefined) ?? 'assist';
-    const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+    const target = await this.resolveTarget(args);
+    const tabId = target.tabId;
     const currentFingerprint = await this.readCurrentFingerprint(tabId);
 
     const directMemoryId = typeof args.memoryId === 'string' ? args.memoryId : undefined;
@@ -1286,13 +1370,13 @@ export class BakService {
             if (!step.locator) {
               throw new RpcError('click step requires locator', -32602, BakErrorCode.E_INVALID_PARAMS);
             }
-            await this.clickWithPolicy(step.locator, tabId, false);
+            await this.clickWithPolicy(step.locator, tabId, false, { tabId });
             break;
           case 'type':
             if (!step.locator) {
               throw new RpcError('type step requires locator', -32602, BakErrorCode.E_INVALID_PARAMS);
             }
-            await this.typeWithPolicy(step.locator, text ?? '', Boolean(step.clear), tabId, false);
+            await this.typeWithPolicy(step.locator, text ?? '', Boolean(step.clear), tabId, false, { tabId });
             break;
           case 'hover':
             await this.driver.rawRequest('element.hover', { tabId, locator: step.locator });
@@ -1515,17 +1599,104 @@ export class BakService {
         return this.withTrace(method, params, async () => {
           this.ensurePairing();
           this.ensureConnected();
-          return this.driver.tabsNew(args.url as string | undefined) as Promise<MethodResult<TMethod>>;
+          return this.driver.tabsNew({
+            url: typeof args.url === 'string' ? args.url : undefined,
+            active: args.active === true,
+            windowId: typeof args.windowId === 'number' ? args.windowId : undefined,
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined,
+            addToGroup: args.addToGroup === true
+          }) as Promise<MethodResult<TMethod>>;
         }) as Promise<MethodResult<TMethod>>;
       case 'tabs.close':
         this.ensurePairing();
         this.ensureConnected();
         return this.withTrace(method, params, async () => this.driver.tabsClose(Number(args.tabId))) as Promise<MethodResult<TMethod>>;
+      case 'workspace.ensure':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceEnsure({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined,
+            url: typeof args.url === 'string' ? args.url : undefined,
+            focus: args.focus === true
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.info':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceInfo({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.openTab':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceOpenTab({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined,
+            url: typeof args.url === 'string' ? args.url : undefined,
+            active: args.active === true,
+            focus: args.focus === true
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.listTabs':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceListTabs({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.getActiveTab':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceGetActiveTab({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.setActiveTab':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceSetActiveTab({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined,
+            tabId: Number(args.tabId)
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.focus':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceFocus({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.reset':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceReset({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined,
+            url: typeof args.url === 'string' ? args.url : undefined,
+            focus: args.focus === true
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
+      case 'workspace.close':
+        this.ensurePairing();
+        this.ensureConnected();
+        return this.withTrace(method, params, async () =>
+          this.driver.workspaceClose({
+            workspaceId: typeof args.workspaceId === 'string' ? args.workspaceId : undefined
+          }) as Promise<MethodResult<TMethod>>
+        ) as Promise<MethodResult<TMethod>>;
       case 'page.goto':
         this.ensurePairing();
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const url = String(args.url ?? '');
           const result = await this.driver.pageGoto(url, tabId);
           await this.captureStep({ kind: 'goto', url }, tabId);
@@ -1534,15 +1705,24 @@ export class BakService {
       case 'page.back':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(method, params, async () => this.driver.pageBack(args.tabId as number | undefined)) as Promise<MethodResult<TMethod>>;
+        return this.withTrace(method, params, async () => {
+          const target = await this.resolveTarget(args);
+          return this.driver.pageBack(target.tabId) as Promise<MethodResult<TMethod>>;
+        }) as Promise<MethodResult<TMethod>>;
       case 'page.forward':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(method, params, async () => this.driver.pageForward(args.tabId as number | undefined)) as Promise<MethodResult<TMethod>>;
+        return this.withTrace(method, params, async () => {
+          const target = await this.resolveTarget(args);
+          return this.driver.pageForward(target.tabId) as Promise<MethodResult<TMethod>>;
+        }) as Promise<MethodResult<TMethod>>;
       case 'page.reload':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(method, params, async () => this.driver.pageReload(args.tabId as number | undefined)) as Promise<MethodResult<TMethod>>;
+        return this.withTrace(method, params, async () => {
+          const target = await this.resolveTarget(args);
+          return this.driver.pageReload(target.tabId) as Promise<MethodResult<TMethod>>;
+        }) as Promise<MethodResult<TMethod>>;
       case 'page.wait':
         this.ensurePairing();
         this.ensureConnected();
@@ -1550,7 +1730,8 @@ export class BakService {
           const mode = args.mode as 'selector' | 'text' | 'url';
           const value = String(args.value);
           const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined;
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const result = await this.driver.pageWait(mode, value, timeoutMs, tabId);
           await this.captureStep({ kind: 'wait', waitFor: { mode, value, timeoutMs } }, tabId);
           return result as MethodResult<TMethod>;
@@ -1559,7 +1740,8 @@ export class BakService {
         this.ensurePairing();
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const includeBase64 = Boolean(args.includeBase64);
           return (await this.persistPageSnapshot(tabId, includeBase64)) as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
@@ -1568,8 +1750,9 @@ export class BakService {
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
           const locator = args.locator as Locator;
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
-          const result = await this.clickWithPolicy(locator, tabId, args.requiresConfirm === true);
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
+          const result = await this.clickWithPolicy(locator, tabId, args.requiresConfirm === true, target);
           await this.captureStep({ kind: 'click', locator }, tabId);
           return result as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
@@ -1578,10 +1761,11 @@ export class BakService {
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
           const locator = args.locator as Locator;
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const text = String(args.text ?? '');
           const clear = Boolean(args.clear);
-          const result = await this.typeWithPolicy(locator, text, clear, tabId, args.requiresConfirm === true);
+          const result = await this.typeWithPolicy(locator, text, clear, tabId, args.requiresConfirm === true, target);
           await this.captureStep({ kind: 'type', locator, text, clear }, tabId);
           return result as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
@@ -1592,7 +1776,8 @@ export class BakService {
           const locator = (args.locator as Locator | undefined) ?? undefined;
           const dx = Number(args.dx ?? 0);
           const dy = Number(args.dy ?? 320);
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const result = await this.driver.elementScroll(locator, dx, dy, tabId);
           await this.captureStep({ kind: 'elementScroll', locator, dx, dy }, tabId);
           return result as MethodResult<TMethod>;
@@ -1600,12 +1785,16 @@ export class BakService {
       case 'debug.getConsole':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(method, params, async () => this.driver.debugGetConsole(typeof args.limit === 'number' ? args.limit : 50, args.tabId as number | undefined)) as Promise<MethodResult<TMethod>>;
+        return this.withTrace(method, params, async () => {
+          const target = await this.resolveTarget(args);
+          return this.driver.debugGetConsole(typeof args.limit === 'number' ? args.limit : 50, target.tabId) as Promise<MethodResult<TMethod>>;
+        }) as Promise<MethodResult<TMethod>>;
       case 'debug.dumpState':
         this.ensurePairing();
         this.ensureConnected();
         return this.withTrace(method, params, async () => {
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const dump = await this.driver.rawRequest<MethodResult<'debug.dumpState'>>('debug.dumpState', {
             tabId,
             consoleLimit: typeof args.consoleLimit === 'number' ? args.consoleLimit : undefined,
@@ -1634,7 +1823,8 @@ export class BakService {
               captureSessionId: activeCapture.captureSessionId
             });
           }
-          const tabId = typeof args.tabId === 'number' ? args.tabId : undefined;
+          const target = await this.resolveTarget(args);
+          const tabId = target.tabId;
           const startFingerprint = await this.captureCurrentFingerprint(tabId);
           const captureSession = this.memoryStore.createCaptureSession({
             goal,
@@ -1663,11 +1853,12 @@ export class BakService {
           if (!activeCapture) {
             throw new RpcError('Capture session not found', 4004, BakErrorCode.E_NOT_FOUND);
           }
+          const target = await this.resolveTarget(args);
           const event = await this.captureMark(
             label,
             typeof args.note === 'string' ? args.note : undefined,
             args.role as CaptureMarkRole | undefined,
-            typeof args.tabId === 'number' ? args.tabId : activeCapture.tabId
+            target.tabId ?? activeCapture.tabId
           );
           return { event } as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
@@ -1686,7 +1877,8 @@ export class BakService {
           if (!session) {
             throw new RpcError('Capture session not found', 4004, BakErrorCode.E_NOT_FOUND);
           }
-          const endFingerprint = await this.captureCurrentFingerprint(typeof args.tabId === 'number' ? args.tabId : activeCapture.tabId);
+          const target = await this.resolveTarget(args);
+          const endFingerprint = await this.captureCurrentFingerprint(target.tabId ?? activeCapture.tabId);
           const updatedSession = this.memoryStore.updateCaptureSession({
             ...session,
             status: 'ended',
@@ -1778,11 +1970,12 @@ export class BakService {
             throw new RpcError('goal is required', -32602, BakErrorCode.E_INVALID_PARAMS);
           }
           const explicitUrl = typeof args.url === 'string' ? args.url.trim() : '';
+          const target = explicitUrl ? undefined : await this.resolveTarget(args);
           return {
             candidates: await this.searchCandidates(
               goal,
               args.kind as MemoryKind | undefined,
-              explicitUrl ? this.buildFingerprintForUrl(explicitUrl) : typeof args.tabId === 'number' ? await this.readCurrentFingerprint(args.tabId) : undefined,
+              explicitUrl ? this.buildFingerprintForUrl(explicitUrl) : await this.readCurrentFingerprint(target?.tabId),
               args.includeDeprecated === true,
               typeof args.limit === 'number' ? Math.max(1, Math.floor(args.limit)) : undefined
             )
@@ -1800,14 +1993,15 @@ export class BakService {
           } as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
       case 'memory.memories.explain':
-        return this.withTrace(method, params, async () =>
-          (await this.explainMemory(
+        return this.withTrace(method, params, async () => {
+          const target = await this.resolveTarget(args);
+          return (await this.explainMemory(
             String(args.id),
             typeof args.revisionId === 'string' ? args.revisionId : undefined,
-            typeof args.tabId === 'number' ? args.tabId : undefined,
+            target.tabId,
             typeof args.url === 'string' ? args.url : undefined
-          )) as MethodResult<TMethod>
-        ) as Promise<MethodResult<TMethod>>;
+          )) as MethodResult<TMethod>;
+        }) as Promise<MethodResult<TMethod>>;
       case 'memory.memories.deprecate':
         return this.withTrace(method, params, async () => {
           const memory = this.memoryStore.getMemory(String(args.id));
@@ -1848,8 +2042,9 @@ export class BakService {
           if (!plan) {
             throw new RpcError('Plan not found', 4004, BakErrorCode.E_NOT_FOUND);
           }
+          const target = await this.resolveTarget(args);
           return {
-            run: await this.executePlan(plan, (args.mode as MemoryExecutionMode | undefined) ?? plan.mode ?? 'assist', typeof args.tabId === 'number' ? args.tabId : undefined)
+            run: await this.executePlan(plan, (args.mode as MemoryExecutionMode | undefined) ?? plan.mode ?? 'assist', target.tabId)
           } as MethodResult<TMethod>;
         }) as Promise<MethodResult<TMethod>>;
       case 'memory.runs.list':

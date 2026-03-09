@@ -1,6 +1,15 @@
 import type { ConsoleEntry, Locator } from '@flrande/bak-protocol';
 import { isSupportedAutomationUrl } from './url-policy.js';
 import { computeReconnectDelayMs } from './reconnect.js';
+import {
+  DEFAULT_WORKSPACE_ID,
+  type WorkspaceBrowser,
+  type WorkspaceColor,
+  type WorkspaceRecord,
+  type WorkspaceTab,
+  type WorkspaceWindow,
+  WorkspaceManager
+} from './workspace.js';
 
 interface CliRequest {
   id: string;
@@ -35,6 +44,7 @@ const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
 const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
+const STORAGE_KEY_WORKSPACE = 'agentWorkspace';
 const DEFAULT_TAB_LOAD_TIMEOUT_MS = 40_000;
 
 let ws: WebSocket | null = null;
@@ -116,6 +126,184 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   return toError('E_INTERNAL', message);
 }
 
+function toTabInfo(tab: chrome.tabs.Tab): WorkspaceTab {
+  if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
+    throw new Error('Tab is missing runtime identifiers');
+  }
+  return {
+    id: tab.id,
+    title: tab.title ?? '',
+    url: tab.url ?? '',
+    active: Boolean(tab.active),
+    windowId: tab.windowId,
+    groupId: typeof tab.groupId === 'number' && tab.groupId >= 0 ? tab.groupId : null
+  };
+}
+
+async function loadWorkspaceState(): Promise<WorkspaceRecord | null> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_WORKSPACE);
+  const state = stored[STORAGE_KEY_WORKSPACE];
+  if (!state || typeof state !== 'object') {
+    return null;
+  }
+  return state as WorkspaceRecord;
+}
+
+async function saveWorkspaceState(state: WorkspaceRecord | null): Promise<void> {
+  if (state === null) {
+    await chrome.storage.local.remove(STORAGE_KEY_WORKSPACE);
+    return;
+  }
+  await chrome.storage.local.set({ [STORAGE_KEY_WORKSPACE]: state });
+}
+
+const workspaceBrowser: WorkspaceBrowser = {
+  async getTab(tabId) {
+    try {
+      return toTabInfo(await chrome.tabs.get(tabId));
+    } catch {
+      return null;
+    }
+  },
+  async getActiveTab() {
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = tabs[0];
+    if (!tab) {
+      return null;
+    }
+    return toTabInfo(tab);
+  },
+  async listTabs(filter) {
+    const tabs = await chrome.tabs.query(filter?.windowId ? { windowId: filter.windowId } : {});
+    return tabs
+      .filter((tab): tab is chrome.tabs.Tab => typeof tab.id === 'number' && typeof tab.windowId === 'number')
+      .map((tab) => toTabInfo(tab));
+  },
+  async createTab(options) {
+    const createdTab = await chrome.tabs.create({
+      windowId: options.windowId,
+      url: options.url ?? 'about:blank',
+      active: options.active
+    });
+    if (!createdTab) {
+      throw new Error('Tab creation returned no tab');
+    }
+    return toTabInfo(createdTab);
+  },
+  async updateTab(tabId, options) {
+    const updatedTab = await chrome.tabs.update(tabId, {
+      active: options.active,
+      url: options.url
+    });
+    if (!updatedTab) {
+      throw new Error(`Tab update returned no tab for ${tabId}`);
+    }
+    return toTabInfo(updatedTab);
+  },
+  async closeTab(tabId) {
+    await chrome.tabs.remove(tabId);
+  },
+  async getWindow(windowId) {
+    try {
+      const window = await chrome.windows.get(windowId);
+      return {
+        id: window.id!,
+        focused: Boolean(window.focused)
+      } satisfies WorkspaceWindow;
+    } catch {
+      return null;
+    }
+  },
+  async createWindow(options) {
+    const previouslyFocusedWindow =
+      options.focused === true
+        ? null
+        : (await chrome.windows.getAll()).find((window) => window.focused === true && typeof window.id === 'number') ?? null;
+    const previouslyFocusedTab =
+      previouslyFocusedWindow?.id !== undefined
+        ? (await chrome.tabs.query({ windowId: previouslyFocusedWindow.id, active: true })).find((tab) => typeof tab.id === 'number') ?? null
+        : null;
+    const created = await chrome.windows.create({
+      url: options.url ?? 'about:blank',
+      focused: true
+    });
+    if (!created || typeof created.id !== 'number') {
+      throw new Error('Window missing id');
+    }
+    if (options.focused !== true && previouslyFocusedWindow?.id && previouslyFocusedWindow.id !== created.id) {
+      await chrome.windows.update(previouslyFocusedWindow.id, { focused: true });
+      if (typeof previouslyFocusedTab?.id === 'number') {
+        await chrome.tabs.update(previouslyFocusedTab.id, { active: true });
+      }
+    }
+    const finalWindow = await chrome.windows.get(created.id);
+    return {
+      id: finalWindow.id!,
+      focused: Boolean(finalWindow.focused)
+    };
+  },
+  async updateWindow(windowId, options) {
+    const updated = await chrome.windows.update(windowId, {
+      focused: options.focused
+    });
+    if (!updated || typeof updated.id !== 'number') {
+      throw new Error('Window missing id');
+    }
+    return {
+      id: updated.id,
+      focused: Boolean(updated.focused)
+    };
+  },
+  async closeWindow(windowId) {
+    await chrome.windows.remove(windowId);
+  },
+  async getGroup(groupId) {
+    try {
+      const group = await chrome.tabGroups.get(groupId);
+      return {
+        id: group.id,
+        windowId: group.windowId,
+        title: group.title ?? '',
+        color: group.color as WorkspaceColor,
+        collapsed: Boolean(group.collapsed)
+      };
+    } catch {
+      return null;
+    }
+  },
+  async groupTabs(tabIds, groupId) {
+    return await chrome.tabs.group({
+      tabIds: tabIds as [number, ...number[]],
+      groupId
+    });
+  },
+  async updateGroup(groupId, options) {
+    const updated = await chrome.tabGroups.update(groupId, {
+      title: options.title,
+      color: options.color,
+      collapsed: options.collapsed
+    });
+    if (!updated) {
+      throw new Error(`Tab group update returned no group for ${groupId}`);
+    }
+    return {
+      id: updated.id,
+      windowId: updated.windowId,
+      title: updated.title ?? '',
+      color: updated.color as WorkspaceColor,
+      collapsed: Boolean(updated.collapsed)
+    };
+  }
+};
+
+const workspaceManager = new WorkspaceManager(
+  {
+    load: loadWorkspaceState,
+    save: saveWorkspaceState
+  },
+  workspaceBrowser
+);
+
 async function waitForTabComplete(tabId: number, timeoutMs = DEFAULT_TAB_LOAD_TIMEOUT_MS): Promise<void> {
   try {
     const current = await chrome.tabs.get(tabId);
@@ -183,33 +371,55 @@ async function waitForTabComplete(tabId: number, timeoutMs = DEFAULT_TAB_LOAD_TI
   });
 }
 
+async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const currentUrl = tab.url ?? '';
+      const pendingUrl = 'pendingUrl' in tab && typeof tab.pendingUrl === 'string' ? tab.pendingUrl : '';
+      if (currentUrl === expectedUrl || pendingUrl === expectedUrl) {
+        return;
+      }
+    } catch {
+      // Ignore transient lookup failures while the tab is navigating.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`tab url timeout: ${tabId} -> ${expectedUrl}`);
+}
+
 interface WithTabOptions {
   requireSupportedAutomationUrl?: boolean;
 }
 
-async function withTab(tabId?: number, options: WithTabOptions = {}): Promise<chrome.tabs.Tab> {
+async function withTab(target: { tabId?: number; workspaceId?: string } = {}, options: WithTabOptions = {}): Promise<chrome.tabs.Tab> {
   const requireSupportedAutomationUrl = options.requireSupportedAutomationUrl !== false;
   const validate = (tab: chrome.tabs.Tab): chrome.tabs.Tab => {
     if (!tab.id) {
       throw toError('E_NOT_FOUND', 'Tab missing id');
     }
-    if (requireSupportedAutomationUrl && !isSupportedAutomationUrl(tab.url)) {
+    const pendingUrl = 'pendingUrl' in tab && typeof tab.pendingUrl === 'string' ? tab.pendingUrl : '';
+    if (requireSupportedAutomationUrl && !isSupportedAutomationUrl(tab.url) && !isSupportedAutomationUrl(pendingUrl)) {
       throw toError('E_PERMISSION', 'Unsupported tab URL: only http/https pages can be automated', {
-        url: tab.url ?? ''
+        url: tab.url ?? pendingUrl ?? ''
       });
     }
     return tab;
   };
 
-  if (typeof tabId === 'number') {
-    const tab = await chrome.tabs.get(tabId);
+  if (typeof target.tabId === 'number') {
+    const tab = await chrome.tabs.get(target.tabId);
     return validate(tab);
   }
-  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  const tab = tabs[0];
-  if (!tab) {
-    throw toError('E_NOT_FOUND', 'No active tab');
-  }
+
+  const resolved = await workspaceManager.resolveTarget({
+    tabId: target.tabId,
+    workspaceId: typeof target.workspaceId === 'string' ? target.workspaceId : undefined,
+    createIfMissing: false
+  });
+  const tab = await chrome.tabs.get(resolved.tab.id);
   return validate(tab);
 }
 
@@ -241,7 +451,7 @@ async function captureAlignedTabScreenshot(tab: chrome.tabs.Tab): Promise<string
 }
 
 async function sendToContent<TResponse>(tabId: number, message: Record<string, unknown>): Promise<TResponse> {
-  const maxAttempts = 6;
+  const maxAttempts = 10;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const response = await chrome.tabs.sendMessage(tabId, message);
@@ -260,11 +470,55 @@ async function sendToContent<TResponse>(tabId: number, message: Record<string, u
       if (!retriable || attempt >= maxAttempts) {
         throw toError('E_NOT_READY', 'Content script unavailable', { detail });
       }
-      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
     }
   }
 
   throw toError('E_NOT_READY', 'Content script unavailable');
+}
+
+interface FocusContext {
+  windowId: number | null;
+  tabId: number | null;
+}
+
+async function captureFocusContext(): Promise<FocusContext> {
+  const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const activeTab = activeTabs.find((tab) => typeof tab.id === 'number' && typeof tab.windowId === 'number') ?? null;
+  return {
+    windowId: activeTab?.windowId ?? null,
+    tabId: activeTab?.id ?? null
+  };
+}
+
+async function restoreFocusContext(context: FocusContext): Promise<void> {
+  if (context.windowId !== null) {
+    try {
+      await chrome.windows.update(context.windowId, { focused: true });
+    } catch {
+      // Ignore restore errors if the original window no longer exists.
+    }
+  }
+  if (context.tabId !== null) {
+    try {
+      await chrome.tabs.update(context.tabId, { active: true });
+    } catch {
+      // Ignore restore errors if the original tab no longer exists.
+    }
+  }
+}
+
+async function preserveHumanFocus<T>(enabled: boolean, action: () => Promise<T>): Promise<T> {
+  if (!enabled) {
+    return action();
+  }
+
+  const focusContext = await captureFocusContext();
+  try {
+    return await action();
+  } finally {
+    await restoreFocusContext(focusContext);
+  }
 }
 
 function requireRpcEnvelope(
@@ -298,6 +552,10 @@ async function forwardContentRpc(
 
 async function handleRequest(request: CliRequest): Promise<unknown> {
   const params = request.params ?? {};
+  const target = {
+    tabId: typeof params.tabId === 'number' ? params.tabId : undefined,
+    workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined
+  };
 
   const rpcForwardMethods = new Set([
     'page.title',
@@ -345,13 +603,8 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       const tabs = await chrome.tabs.query({});
       return {
         tabs: tabs
-          .filter((tab) => typeof tab.id === 'number')
-          .map((tab) => ({
-            id: tab.id as number,
-            title: tab.title ?? '',
-            url: tab.url ?? '',
-            active: tab.active
-          }))
+          .filter((tab): tab is chrome.tabs.Tab => typeof tab.id === 'number' && typeof tab.windowId === 'number')
+          .map((tab) => toTabInfo(tab))
       };
     }
     case 'tabs.getActive': {
@@ -361,12 +614,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         return { tab: null };
       }
       return {
-        tab: {
-          id: tab.id,
-          title: tab.title ?? '',
-          url: tab.url ?? '',
-          active: Boolean(tab.active)
-        }
+        tab: toTabInfo(tab)
       };
     }
     case 'tabs.get': {
@@ -376,12 +624,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         throw toError('E_NOT_FOUND', 'Tab missing id');
       }
       return {
-        tab: {
-          id: tab.id,
-          title: tab.title ?? '',
-          url: tab.url ?? '',
-          active: Boolean(tab.active)
-        }
+        tab: toTabInfo(tab)
       };
     }
     case 'tabs.focus': {
@@ -390,170 +633,281 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'tabs.new': {
-      const tab = await chrome.tabs.create({ url: (params.url as string | undefined) ?? 'about:blank' });
-      return { tabId: tab.id };
+      if (typeof params.workspaceId === 'string' || params.windowId === undefined) {
+        const opened = await preserveHumanFocus(true, async () => {
+          return await workspaceManager.openTab({
+            workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : DEFAULT_WORKSPACE_ID,
+            url: (params.url as string | undefined) ?? 'about:blank',
+            active: params.active === true,
+            focus: false
+          });
+        });
+        return {
+          tabId: opened.tab.id,
+          windowId: opened.tab.windowId,
+          groupId: opened.workspace.groupId,
+          workspaceId: opened.workspace.id
+        };
+      }
+      const tab = await chrome.tabs.create({
+        url: (params.url as string | undefined) ?? 'about:blank',
+        windowId: typeof params.windowId === 'number' ? params.windowId : undefined,
+        active: params.active === true
+      });
+      if (params.addToGroup === true && typeof tab.id === 'number') {
+        const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+        return {
+          tabId: tab.id,
+          windowId: tab.windowId,
+          groupId
+        };
+      }
+      return {
+        tabId: tab.id,
+        windowId: tab.windowId
+      };
     }
     case 'tabs.close': {
       const tabId = Number(params.tabId);
       await chrome.tabs.remove(tabId);
       return { ok: true };
     }
-    case 'page.goto': {
-      const tab = await withTab(params.tabId as number | undefined, {
-        requireSupportedAutomationUrl: false
+    case 'workspace.ensure': {
+      return preserveHumanFocus(params.focus !== true, async () => {
+        return await workspaceManager.ensureWorkspace({
+          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+          focus: params.focus === true,
+          initialUrl: typeof params.url === 'string' ? params.url : undefined
+        });
       });
-      await chrome.tabs.update(tab.id!, { url: String(params.url ?? 'about:blank') });
-      await waitForTabComplete(tab.id!);
-      return { ok: true };
+    }
+    case 'workspace.info': {
+      return {
+        workspace: await workspaceManager.getWorkspaceInfo(typeof params.workspaceId === 'string' ? params.workspaceId : undefined)
+      };
+    }
+    case 'workspace.openTab': {
+      return await preserveHumanFocus(params.focus !== true, async () => {
+        return await workspaceManager.openTab({
+          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+          url: typeof params.url === 'string' ? params.url : undefined,
+          active: params.active === true,
+          focus: params.focus === true
+        });
+      });
+    }
+    case 'workspace.listTabs': {
+      return await workspaceManager.listTabs(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+    }
+    case 'workspace.getActiveTab': {
+      return await workspaceManager.getActiveTab(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+    }
+    case 'workspace.setActiveTab': {
+      return await workspaceManager.setActiveTab(Number(params.tabId), typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+    }
+    case 'workspace.focus': {
+      return await workspaceManager.focus(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+    }
+    case 'workspace.reset': {
+      return await preserveHumanFocus(params.focus !== true, async () => {
+        return await workspaceManager.reset({
+          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+          focus: params.focus === true,
+          initialUrl: typeof params.url === 'string' ? params.url : undefined
+        });
+      });
+    }
+    case 'workspace.close': {
+      return await workspaceManager.close(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+    }
+    case 'page.goto': {
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target, {
+          requireSupportedAutomationUrl: false
+        });
+        const url = String(params.url ?? 'about:blank');
+        await chrome.tabs.update(tab.id!, { url });
+        await waitForTabUrl(tab.id!, url);
+        await forwardContentRpc(tab.id!, 'page.url', { tabId: tab.id }).catch(() => undefined);
+        await waitForTabComplete(tab.id!, 5_000).catch(() => undefined);
+        return { ok: true };
+      });
     }
     case 'page.back': {
-      const tab = await withTab(params.tabId as number | undefined);
-      await chrome.tabs.goBack(tab.id!);
-      await waitForTabComplete(tab.id!);
-      return { ok: true };
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        await chrome.tabs.goBack(tab.id!);
+        await waitForTabComplete(tab.id!);
+        return { ok: true };
+      });
     }
     case 'page.forward': {
-      const tab = await withTab(params.tabId as number | undefined);
-      await chrome.tabs.goForward(tab.id!);
-      await waitForTabComplete(tab.id!);
-      return { ok: true };
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        await chrome.tabs.goForward(tab.id!);
+        await waitForTabComplete(tab.id!);
+        return { ok: true };
+      });
     }
     case 'page.reload': {
-      const tab = await withTab(params.tabId as number | undefined);
-      await chrome.tabs.reload(tab.id!);
-      await waitForTabComplete(tab.id!);
-      return { ok: true };
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        await chrome.tabs.reload(tab.id!);
+        await waitForTabComplete(tab.id!);
+        return { ok: true };
+      });
     }
     case 'page.viewport': {
-      const tab = await withTab(params.tabId as number | undefined, {
-        requireSupportedAutomationUrl: false
-      });
-      if (typeof tab.windowId !== 'number') {
-        throw toError('E_NOT_FOUND', 'Tab window unavailable');
-      }
-
-      const width = typeof params.width === 'number' ? Math.max(320, Math.floor(params.width)) : undefined;
-      const height = typeof params.height === 'number' ? Math.max(320, Math.floor(params.height)) : undefined;
-      if (width || height) {
-        await chrome.windows.update(tab.windowId, {
-          width,
-          height
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target, {
+          requireSupportedAutomationUrl: false
         });
-      }
+        if (typeof tab.windowId !== 'number') {
+          throw toError('E_NOT_FOUND', 'Tab window unavailable');
+        }
 
-      const viewport = (await forwardContentRpc(tab.id!, 'page.viewport', {})) as {
-        width: number;
-        height: number;
-        devicePixelRatio: number;
-      };
-      const viewWidth = typeof width === 'number' ? width : viewport.width ?? tab.width ?? 0;
-      const viewHeight = typeof height === 'number' ? height : viewport.height ?? tab.height ?? 0;
-      return {
-        width: viewWidth,
-        height: viewHeight,
-        devicePixelRatio: viewport.devicePixelRatio
-      };
+        const width = typeof params.width === 'number' ? Math.max(320, Math.floor(params.width)) : undefined;
+        const height = typeof params.height === 'number' ? Math.max(320, Math.floor(params.height)) : undefined;
+        if (width || height) {
+          await chrome.windows.update(tab.windowId, {
+            width,
+            height
+          });
+        }
+
+        const viewport = (await forwardContentRpc(tab.id!, 'page.viewport', {})) as {
+          width: number;
+          height: number;
+          devicePixelRatio: number;
+        };
+        const viewWidth = typeof width === 'number' ? width : viewport.width ?? tab.width ?? 0;
+        const viewHeight = typeof height === 'number' ? height : viewport.height ?? tab.height ?? 0;
+        return {
+          width: viewWidth,
+          height: viewHeight,
+          devicePixelRatio: viewport.devicePixelRatio
+        };
+      });
     }
     case 'page.snapshot': {
-      const tab = await withTab(params.tabId as number | undefined);
-      if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
-        throw toError('E_NOT_FOUND', 'Tab missing id');
-      }
-      const includeBase64 = params.includeBase64 !== false;
-      const config = await getConfig();
-      const elements = await sendToContent<{ elements: unknown[] }>(tab.id, {
-        type: 'bak.collectElements',
-        debugRichText: config.debugRichText
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
+          throw toError('E_NOT_FOUND', 'Tab missing id');
+        }
+        const includeBase64 = params.includeBase64 !== false;
+        const config = await getConfig();
+        const elements = await sendToContent<{ elements: unknown[] }>(tab.id, {
+          type: 'bak.collectElements',
+          debugRichText: config.debugRichText
+        });
+        const imageData = await captureAlignedTabScreenshot(tab);
+        return {
+          imageBase64: includeBase64 ? imageData.replace(/^data:image\/png;base64,/, '') : '',
+          elements: elements.elements,
+          tabId: tab.id,
+          url: tab.url ?? ''
+        };
       });
-      const imageData = await captureAlignedTabScreenshot(tab);
-      return {
-        imageBase64: includeBase64 ? imageData.replace(/^data:image\/png;base64,/, '') : '',
-        elements: elements.elements,
-        tabId: tab.id,
-        url: tab.url ?? ''
-      };
     }
     case 'element.click': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
-        type: 'bak.performAction',
-        action: 'click',
-        locator: params.locator as Locator,
-        requiresConfirm: params.requiresConfirm === true
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
+          type: 'bak.performAction',
+          action: 'click',
+          locator: params.locator as Locator,
+          requiresConfirm: params.requiresConfirm === true
+        });
+        if (!response.ok) {
+          throw response.error ?? toError('E_INTERNAL', 'element.click failed');
+        }
+        return { ok: true };
       });
-      if (!response.ok) {
-        throw response.error ?? toError('E_INTERNAL', 'element.click failed');
-      }
-      return { ok: true };
     }
     case 'element.type': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
-        type: 'bak.performAction',
-        action: 'type',
-        locator: params.locator as Locator,
-        text: String(params.text ?? ''),
-        clear: Boolean(params.clear),
-        requiresConfirm: params.requiresConfirm === true
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
+          type: 'bak.performAction',
+          action: 'type',
+          locator: params.locator as Locator,
+          text: String(params.text ?? ''),
+          clear: Boolean(params.clear),
+          requiresConfirm: params.requiresConfirm === true
+        });
+        if (!response.ok) {
+          throw response.error ?? toError('E_INTERNAL', 'element.type failed');
+        }
+        return { ok: true };
       });
-      if (!response.ok) {
-        throw response.error ?? toError('E_INTERNAL', 'element.type failed');
-      }
-      return { ok: true };
     }
     case 'element.scroll': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
-        type: 'bak.performAction',
-        action: 'scroll',
-        locator: params.locator as Locator,
-        dx: Number(params.dx ?? 0),
-        dy: Number(params.dy ?? 320)
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
+          type: 'bak.performAction',
+          action: 'scroll',
+          locator: params.locator as Locator,
+          dx: Number(params.dx ?? 0),
+          dy: Number(params.dy ?? 320)
+        });
+        if (!response.ok) {
+          throw response.error ?? toError('E_INTERNAL', 'element.scroll failed');
+        }
+        return { ok: true };
       });
-      if (!response.ok) {
-        throw response.error ?? toError('E_INTERNAL', 'element.scroll failed');
-      }
-      return { ok: true };
     }
     case 'page.wait': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
-        type: 'bak.waitFor',
-        mode: String(params.mode ?? 'selector'),
-        value: String(params.value ?? ''),
-        timeoutMs: Number(params.timeoutMs ?? 5000)
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ ok: boolean; error?: CliResponse['error'] }>(tab.id!, {
+          type: 'bak.waitFor',
+          mode: String(params.mode ?? 'selector'),
+          value: String(params.value ?? ''),
+          timeoutMs: Number(params.timeoutMs ?? 5000)
+        });
+        if (!response.ok) {
+          throw response.error ?? toError('E_TIMEOUT', 'page.wait failed');
+        }
+        return { ok: true };
       });
-      if (!response.ok) {
-        throw response.error ?? toError('E_TIMEOUT', 'page.wait failed');
-      }
-      return { ok: true };
     }
     case 'debug.getConsole': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ entries: ConsoleEntry[] }>(tab.id!, {
-        type: 'bak.getConsole',
-        limit: Number(params.limit ?? 50)
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ entries: ConsoleEntry[] }>(tab.id!, {
+          type: 'bak.getConsole',
+          limit: Number(params.limit ?? 50)
+        });
+        return { entries: response.entries };
       });
-      return { entries: response.entries };
     }
     case 'ui.selectCandidate': {
-      const tab = await withTab(params.tabId as number | undefined);
-      const response = await sendToContent<{ ok: boolean; selectedEid?: string; error?: CliResponse['error'] }>(
-        tab.id!,
-        {
-          type: 'bak.selectCandidate',
-          candidates: params.candidates
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        const response = await sendToContent<{ ok: boolean; selectedEid?: string; error?: CliResponse['error'] }>(
+          tab.id!,
+          {
+            type: 'bak.selectCandidate',
+            candidates: params.candidates
+          }
+        );
+        if (!response.ok || !response.selectedEid) {
+          throw response.error ?? toError('E_NEED_USER_CONFIRM', 'User did not confirm candidate');
         }
-      );
-      if (!response.ok || !response.selectedEid) {
-        throw response.error ?? toError('E_NEED_USER_CONFIRM', 'User did not confirm candidate');
-      }
-      return { selectedEid: response.selectedEid };
+        return { selectedEid: response.selectedEid };
+      });
     }
     default:
       if (rpcForwardMethods.has(request.method)) {
-        const tab = await withTab(params.tabId as number | undefined);
-        return forwardContentRpc(tab.id!, request.method, params);
+        return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+          const tab = await withTab(target);
+          return await forwardContentRpc(tab.id!, request.method, {
+            ...params,
+            tabId: tab.id
+          });
+        });
       }
       throw toError('E_NOT_FOUND', `Unsupported method from CLI bridge: ${request.method}`);
   }
@@ -646,6 +1000,49 @@ async function connectWebSocket(): Promise<void> {
     ws?.close();
   });
 }
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void loadWorkspaceState().then(async (state) => {
+    if (!state || !state.tabIds.includes(tabId)) {
+      return;
+    }
+    const nextTabIds = state.tabIds.filter((id) => id !== tabId);
+    await saveWorkspaceState({
+      ...state,
+      tabIds: nextTabIds,
+      activeTabId: state.activeTabId === tabId ? null : state.activeTabId,
+      primaryTabId: state.primaryTabId === tabId ? null : state.primaryTabId
+    });
+  });
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  void loadWorkspaceState().then(async (state) => {
+    if (!state || state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
+      return;
+    }
+    await saveWorkspaceState({
+      ...state,
+      activeTabId: activeInfo.tabId
+    });
+  });
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  void loadWorkspaceState().then(async (state) => {
+    if (!state || state.windowId !== windowId) {
+      return;
+    }
+    await saveWorkspaceState({
+      ...state,
+      windowId: null,
+      groupId: null,
+      tabIds: [],
+      activeTabId: null,
+      primaryTabId: null
+    });
+  });
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   void setConfig({ port: DEFAULT_PORT, debugRichText: false });

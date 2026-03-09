@@ -25,6 +25,7 @@ bak pair revoke
 
 ```text
 bak tabs list|new|focus|get|close|active
+bak workspace ensure|info|open-tab|list-tabs|get-active-tab|set-active-tab|focus|reset|close
 bak page goto|wait|url|title|snapshot|text|dom|a11y|metrics|viewport
 bak debug console|dump-state
 bak network list|get|wait|clear
@@ -53,6 +54,13 @@ bak memory export
 ```
 
 Notes:
+- `bak workspace ensure` creates or repairs the default agent workspace: a dedicated browser window plus a dedicated tab group
+- `bak workspace open-tab` opens a tab inside that workspace and groups it automatically
+- `bak workspace get-active-tab` shows the workspace current tab used by default browser and memory commands
+- `bak workspace set-active-tab --tab-id <id>` switches that default workspace current tab without focusing the workspace window
+- once the workspace exists, browser and memory commands prefer the workspace current tab unless you pass `--tab-id` or another explicit target
+- ordinary omitted-target browser commands do not create a workspace; if no workspace exists they use the browser's active tab until you run `bak workspace ensure` or `bak workspace open-tab`
+- `bak workspace focus` is the explicit command for bringing the workspace window to the front
 - `bak page url` and `bak page title` report the active document for the current frame/shadow context; use `bak call --method session.info` for top-level tab metadata
 - `bak page snapshot --include-base64` returns inline image bytes in addition to persisted snapshot paths
 - `bak debug dump-state --include-snapshot` attaches a fresh persisted viewport snapshot to the structured dump, and `--include-snapshot-base64` adds inline image bytes when needed
@@ -67,6 +75,9 @@ Notes:
 ```powershell
 bak serve --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
+bak workspace ensure --rpc-ws-port 17374
+bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
+bak workspace get-active-tab --rpc-ws-port 17374
 bak page snapshot --include-base64 --rpc-ws-port 17374
 bak debug dump-state --include-snapshot --rpc-ws-port 17374
 ```
