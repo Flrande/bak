@@ -247,10 +247,12 @@ export class WorkspaceManager {
   }
 
   async openTab(options: WorkspaceOpenTabOptions = {}): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab }> {
+    const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
+    const hadWorkspace = (await this.loadWorkspaceRecord(workspaceId)) !== null;
     const ensured = await this.ensureWorkspace({
-      workspaceId: options.workspaceId,
+      workspaceId,
       focus: false,
-      initialUrl: options.url ?? DEFAULT_WORKSPACE_URL
+      initialUrl: hadWorkspace ? options.url ?? DEFAULT_WORKSPACE_URL : DEFAULT_WORKSPACE_URL
     });
     let state = { ...ensured.workspace, tabIds: [...ensured.workspace.tabIds], tabs: [...ensured.workspace.tabs] };
     if (state.windowId !== null && state.tabs.length === 0) {
@@ -285,7 +287,7 @@ export class WorkspaceManager {
         throw error;
       }
       const repaired = await this.ensureWorkspace({
-        workspaceId: options.workspaceId,
+        workspaceId,
         focus: false,
         initialUrl: desiredUrl
       });
@@ -728,17 +730,32 @@ export class WorkspaceManager {
   }
 
   private async resolveReusablePrimaryTab(workspace: WorkspaceInfo, allowReuse: boolean): Promise<WorkspaceTab | null> {
-    if (!allowReuse || workspace.windowId === null) {
+    if (workspace.windowId === null) {
       return null;
     }
     if (workspace.primaryTabId !== null) {
       const trackedPrimary = workspace.tabs.find((tab) => tab.id === workspace.primaryTabId) ?? (await this.waitForTrackedTab(workspace.primaryTabId, workspace.windowId));
-      if (trackedPrimary) {
+      if (trackedPrimary && (allowReuse || this.isReusableBlankWorkspaceTab(trackedPrimary, workspace))) {
         return trackedPrimary;
       }
     }
     const windowTabs = await this.waitForWindowTabs(workspace.windowId, 750);
-    return windowTabs.length === 1 ? windowTabs[0]! : null;
+    if (windowTabs.length !== 1) {
+      return null;
+    }
+    const candidate = windowTabs[0]!;
+    if (allowReuse || this.isReusableBlankWorkspaceTab(candidate, workspace)) {
+      return candidate;
+    }
+    return null;
+  }
+
+  private isReusableBlankWorkspaceTab(tab: WorkspaceTab, workspace: WorkspaceInfo): boolean {
+    if (workspace.tabIds.length > 1) {
+      return false;
+    }
+    const normalizedUrl = tab.url.trim().toLowerCase();
+    return normalizedUrl === '' || normalizedUrl === DEFAULT_WORKSPACE_URL;
   }
 
   private async waitForWindow(windowId: number, timeoutMs = 750): Promise<WorkspaceWindow | null> {

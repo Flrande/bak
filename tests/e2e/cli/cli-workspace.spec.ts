@@ -67,14 +67,19 @@ test.describe('CLI workspace workflows', () => {
 
     const { page: humanPage } = await harness.openPage('/form.html');
     try {
+      const humanActiveBefore = await harness.rpcCall<{ tab: { windowId: number } | null }>('tabs.getActive');
+      const humanWindowId = must(humanActiveBefore.tab?.windowId, 'Expected active human window');
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
       await expect(humanPage.locator('#name-input')).toBeVisible();
 
       const workspace = await openWorkspacePage('/spa.html');
+      const info = await workspaceInfo();
+      const workspaceWindowId = must(info.workspace?.windowId, 'Expected workspace window id');
       await expect(workspace.page).toHaveURL(/\/spa\.html\?/);
 
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
       await expect(humanPage.locator('#name-input')).toBeVisible();
+      expect(workspaceWindowId).not.toBe(humanWindowId);
 
       const workspaceTabId = await workspaceActiveTabId();
       const workspaceUrl = await harness.rpcCall<{ url: string }>('page.url', { tabId: workspaceTabId });

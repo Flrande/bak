@@ -408,6 +408,18 @@ describe('workspace manager', () => {
     expect(opened.tab.url).toBe('https://workspace.local/first');
   });
 
+  it('reuses a lone blank primary tab after an explicit ensure instead of creating an extra blank tab', async () => {
+    const { manager } = await createManager();
+    const ensured = await manager.ensureWorkspace();
+
+    const opened = await manager.openTab({ url: 'https://workspace.local/after-ensure', active: false, focus: false });
+
+    expect(ensured.workspace.tabIds).toHaveLength(1);
+    expect(opened.workspace.tabIds).toHaveLength(1);
+    expect(opened.workspace.primaryTabId).toBe(opened.tab.id);
+    expect(opened.tab.url).toBe('https://workspace.local/after-ensure');
+  });
+
   it('does not recreate the workspace while reading info or active tab', async () => {
     const { browser, manager } = await createManager();
     const ensured = await manager.ensureWorkspace();
