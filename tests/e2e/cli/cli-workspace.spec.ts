@@ -197,6 +197,28 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
+  test('repeated ensure and open-tab calls reuse the existing workspace window instead of spawning duplicate blank windows', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const first = await openWorkspacePage('/');
+    try {
+      const before = must((await workspaceInfo()).workspace, 'Expected workspace metadata');
+      const openedAgain = await openWorkspacePage('/network.html');
+      const after = must((await workspaceInfo()).workspace, 'Expected workspace metadata');
+      const ensured = runCli<{ workspace: { windowId: number | null; tabIds: number[] } }>(['workspace', 'ensure'], harness.rpcPort, harness.dataDir);
+
+      expect(after.windowId).toBe(before.windowId);
+      expect(ensured.workspace.windowId).toBe(before.windowId);
+      expect(new Set(after.tabs.map((tab) => tab.windowId)).size).toBe(1);
+      expect(after.tabs.some((tab) => tab.url.includes('/network.html'))).toBe(true);
+      await openedAgain.page.close().catch(() => undefined);
+    } finally {
+      await first.page.close().catch(() => undefined);
+    }
+  });
+
   test('repairs missing group and tracked tabs without hijacking unrelated tabs in the workspace window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');

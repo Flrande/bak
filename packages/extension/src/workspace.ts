@@ -119,8 +119,19 @@ export class WorkspaceManager {
     const created = !persisted;
     let state = this.normalizeState(persisted, workspaceId);
 
+    const originalWindowId = state.windowId;
     let window = state.windowId !== null ? await this.waitForWindow(state.windowId) : null;
     let tabs: WorkspaceTab[] = [];
+    if (!window) {
+      const rebound = await this.rebindWorkspaceWindow(state);
+      if (rebound) {
+        window = rebound.window;
+        tabs = rebound.tabs;
+        if (originalWindowId !== rebound.window.id) {
+          repairActions.push('rebound-window');
+        }
+      }
+    }
     if (!window) {
       const createdWindow = await this.browser.createWindow({
         url: initialUrl,
@@ -241,7 +252,15 @@ export class WorkspaceManager {
       focus: false,
       initialUrl: options.url ?? DEFAULT_WORKSPACE_URL
     });
-    let state = { ...ensured.workspace };
+    let state = { ...ensured.workspace, tabIds: [...ensured.workspace.tabIds], tabs: [...ensured.workspace.tabs] };
+    if (state.windowId !== null && state.tabs.length === 0) {
+      const rebound = await this.rebindWorkspaceWindow(state);
+      if (rebound) {
+        state.windowId = rebound.window.id;
+        state.tabs = rebound.tabs;
+        state.tabIds = [...new Set(rebound.tabs.map((tab) => tab.id))];
+      }
+    }
     const active = options.active === true;
     const desiredUrl = options.url ?? DEFAULT_WORKSPACE_URL;
     let reusablePrimaryTab = await this.resolveReusablePrimaryTab(
@@ -559,6 +578,69 @@ export class WorkspaceManager {
       )
     ).filter((tab): tab is WorkspaceTab => tab !== null);
     return tabs;
+  }
+
+  private async readLooseTrackedTabs(tabIds: number[]): Promise<WorkspaceTab[]> {
+    const tabs = (
+      await Promise.all(
+        tabIds.map(async (tabId) => {
+          return await this.browser.getTab(tabId);
+        })
+      )
+    ).filter((tab): tab is WorkspaceTab => tab !== null);
+    return tabs;
+  }
+
+  private collectCandidateTabIds(state: WorkspaceRecord): number[] {
+    return [...new Set(state.tabIds.concat([state.activeTabId, state.primaryTabId].filter((value): value is number => typeof value === 'number')))];
+  }
+
+  private async rebindWorkspaceWindow(state: WorkspaceRecord): Promise<{ window: WorkspaceWindow; tabs: WorkspaceTab[] } | null> {
+    const candidateWindowIds: number[] = [];
+    const pushWindowId = (windowId: number | null | undefined): void => {
+      if (typeof windowId !== 'number') {
+        return;
+      }
+      if (!candidateWindowIds.includes(windowId)) {
+        candidateWindowIds.push(windowId);
+      }
+    };
+
+    const group = state.groupId !== null ? await this.browser.getGroup(state.groupId) : null;
+    pushWindowId(group?.windowId);
+
+    const trackedTabs = await this.readLooseTrackedTabs(this.collectCandidateTabIds(state));
+    for (const tab of trackedTabs) {
+      pushWindowId(tab.windowId);
+    }
+
+    for (const candidateWindowId of candidateWindowIds) {
+      const window = await this.waitForWindow(candidateWindowId);
+      if (!window) {
+        continue;
+      }
+      let tabs = await this.readTrackedTabs(this.collectCandidateTabIds(state), candidateWindowId);
+      if (tabs.length === 0 && group?.id !== null && group?.windowId === candidateWindowId) {
+        const windowTabs = await this.waitForWindowTabs(candidateWindowId, 750);
+        tabs = windowTabs.filter((tab) => tab.groupId === group.id);
+      }
+      if (tabs.length === 0) {
+        tabs = trackedTabs.filter((tab) => tab.windowId === candidateWindowId);
+      }
+      state.windowId = candidateWindowId;
+      if (tabs.length > 0) {
+        state.tabIds = [...new Set(tabs.map((tab) => tab.id))];
+        if (state.primaryTabId === null || !state.tabIds.includes(state.primaryTabId)) {
+          state.primaryTabId = tabs[0]?.id ?? null;
+        }
+        if (state.activeTabId === null || !state.tabIds.includes(state.activeTabId)) {
+          state.activeTabId = tabs.find((tab) => tab.active)?.id ?? state.primaryTabId;
+        }
+      }
+      return { window, tabs };
+    }
+
+    return null;
   }
 
   private async recoverWorkspaceTabs(state: WorkspaceRecord, existingTabs: WorkspaceTab[]): Promise<WorkspaceTab[]> {

@@ -435,4 +435,55 @@ describe('workspace manager', () => {
     expect(browser.windows.size).toBe(1);
     expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([originalWindowId]));
   });
+
+  it('rebinds the workspace to surviving tracked tabs before recreating a missing window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const workspaceWindow = await seedBrowser.createWindow({ url: 'https://workspace.local', focused: false });
+      const workspaceTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === workspaceWindow.id)!;
+      const groupId = await seedBrowser.groupTabs([workspaceTab.id]);
+      await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
+      await seedStorage.save({
+        id: DEFAULT_WORKSPACE_ID,
+        label: 'bak agent',
+        color: 'blue',
+        windowId: 999,
+        groupId,
+        tabIds: [workspaceTab.id],
+        activeTabId: workspaceTab.id,
+        primaryTabId: workspaceTab.id
+      });
+    });
+
+    const ensured = await manager.ensureWorkspace();
+
+    expect(ensured.workspace.windowId).toBe(ensured.workspace.tabs[0]?.windowId);
+    expect(browser.windows.size).toBe(1);
+    expect(ensured.repairActions).toEqual(expect.arrayContaining(['rebound-window']));
+    expect(ensured.repairActions).not.toEqual(expect.arrayContaining(['recreated-window']));
+  });
+
+  it('openTab reuses the rebound workspace window instead of creating a duplicate blank window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const workspaceWindow = await seedBrowser.createWindow({ url: 'https://workspace.local', focused: false });
+      const workspaceTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === workspaceWindow.id)!;
+      const groupId = await seedBrowser.groupTabs([workspaceTab.id]);
+      await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
+      await seedStorage.save({
+        id: DEFAULT_WORKSPACE_ID,
+        label: 'bak agent',
+        color: 'blue',
+        windowId: 999,
+        groupId,
+        tabIds: [workspaceTab.id],
+        activeTabId: workspaceTab.id,
+        primaryTabId: workspaceTab.id
+      });
+    });
+
+    const opened = await manager.openTab({ url: 'https://workspace.local/next', active: false, focus: false });
+
+    expect(browser.windows.size).toBe(1);
+    expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.workspace.windowId]));
+    expect(opened.workspace.tabs.some((tab) => tab.url === 'https://workspace.local/next')).toBe(true);
+  });
 });
