@@ -390,6 +390,42 @@ async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs = 10_
   throw new Error(`tab url timeout: ${tabId} -> ${expectedUrl}`);
 }
 
+async function finalizeOpenedWorkspaceTab(
+  opened: Awaited<ReturnType<WorkspaceManager['openTab']>>,
+  expectedUrl?: string
+): Promise<Awaited<ReturnType<WorkspaceManager['openTab']>>> {
+  if (expectedUrl && expectedUrl !== 'about:blank') {
+    await waitForTabUrl(opened.tab.id, expectedUrl).catch(() => undefined);
+  }
+  let refreshedTab = opened.tab;
+  try {
+    const rawTab = await chrome.tabs.get(opened.tab.id);
+    const pendingUrl = 'pendingUrl' in rawTab && typeof rawTab.pendingUrl === 'string' ? rawTab.pendingUrl : '';
+    const currentUrl = rawTab.url ?? '';
+    const effectiveUrl =
+      currentUrl && currentUrl !== 'about:blank'
+        ? currentUrl
+        : pendingUrl && pendingUrl !== 'about:blank'
+          ? pendingUrl
+          : currentUrl || pendingUrl || opened.tab.url;
+    refreshedTab = {
+      ...toTabInfo(rawTab),
+      url: effectiveUrl
+    };
+  } catch {
+    refreshedTab = (await workspaceBrowser.getTab(opened.tab.id)) ?? opened.tab;
+  }
+  const refreshedWorkspace = (await workspaceManager.getWorkspaceInfo(opened.workspace.id)) ?? {
+    ...opened.workspace,
+    tabs: opened.workspace.tabs.map((tab) => (tab.id === refreshedTab.id ? refreshedTab : tab))
+  };
+
+  return {
+    workspace: refreshedWorkspace,
+    tab: refreshedTab
+  };
+}
+
 interface WithTabOptions {
   requireSupportedAutomationUrl?: boolean;
 }
@@ -634,19 +670,21 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     }
     case 'tabs.new': {
       if (typeof params.workspaceId === 'string' || params.windowId === undefined) {
+        const expectedUrl = (params.url as string | undefined) ?? 'about:blank';
         const opened = await preserveHumanFocus(true, async () => {
           return await workspaceManager.openTab({
             workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : DEFAULT_WORKSPACE_ID,
-            url: (params.url as string | undefined) ?? 'about:blank',
+            url: expectedUrl,
             active: params.active === true,
             focus: false
           });
         });
+        const stabilized = await finalizeOpenedWorkspaceTab(opened, expectedUrl);
         return {
-          tabId: opened.tab.id,
-          windowId: opened.tab.windowId,
-          groupId: opened.workspace.groupId,
-          workspaceId: opened.workspace.id
+          tabId: stabilized.tab.id,
+          windowId: stabilized.tab.windowId,
+          groupId: stabilized.workspace.groupId,
+          workspaceId: stabilized.workspace.id
         };
       }
       const tab = await chrome.tabs.create({
@@ -687,14 +725,16 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       };
     }
     case 'workspace.openTab': {
-      return await preserveHumanFocus(params.focus !== true, async () => {
+      const expectedUrl = typeof params.url === 'string' ? params.url : undefined;
+      const opened = await preserveHumanFocus(params.focus !== true, async () => {
         return await workspaceManager.openTab({
           workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
-          url: typeof params.url === 'string' ? params.url : undefined,
+          url: expectedUrl,
           active: params.active === true,
           focus: params.focus === true
         });
       });
+      return await finalizeOpenedWorkspaceTab(opened, expectedUrl);
     }
     case 'workspace.listTabs': {
       return await workspaceManager.listTabs(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);

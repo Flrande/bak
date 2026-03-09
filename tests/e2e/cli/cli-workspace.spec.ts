@@ -22,7 +22,8 @@ async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: num
   const separator = path.includes('?') ? '&' : '?';
   const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
   const beforePages = new Set(harness.context.pages());
-  const opened = runCli<{ tab: { id: number } }>(['workspace', 'open-tab', '--url', url], harness.rpcPort, harness.dataDir);
+  const opened = runCli<{ tab: { id: number; url: string } }>(['workspace', 'open-tab', '--url', url], harness.rpcPort, harness.dataDir);
+  expect(opened.tab.url).toBe(url);
   await expect.poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), { timeout: 10_000 }).toBe(true);
   const page = must(
     harness.context.pages().find((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)),
