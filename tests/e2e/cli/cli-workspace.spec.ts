@@ -308,6 +308,30 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
+  test('returns a stable workspace open-tab result when the requested URL is canonicalized by the browser', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page: humanPage } = await harness.openPage('/form.html');
+    try {
+      const opened = runCli<{ workspace: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>(
+        ['workspace', 'open-tab', '--url', 'http://127.0.0.1:4173'],
+        harness.rpcPort,
+        harness.dataDir
+      );
+      const info = await workspaceInfo();
+      const workspace = must(info.workspace, 'Expected workspace metadata');
+
+      expect(workspace.windowId).not.toBeNull();
+      expect(opened.tab.windowId).toBe(workspace.windowId);
+      expect(opened.tab.url).toBe('http://127.0.0.1:4173/');
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+    } finally {
+      await humanPage.close().catch(() => undefined);
+    }
+  });
+
   test('clears workspace state on close so later default commands fall back to the human tab', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');

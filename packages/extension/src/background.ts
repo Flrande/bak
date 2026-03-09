@@ -372,13 +372,17 @@ async function waitForTabComplete(tabId: number, timeoutMs = DEFAULT_TAB_LOAD_TI
 }
 
 async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs = 10_000): Promise<void> {
+  const normalizedExpectedUrl = normalizeComparableTabUrl(expectedUrl);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const tab = await chrome.tabs.get(tabId);
       const currentUrl = tab.url ?? '';
       const pendingUrl = 'pendingUrl' in tab && typeof tab.pendingUrl === 'string' ? tab.pendingUrl : '';
-      if (currentUrl === expectedUrl || pendingUrl === expectedUrl) {
+      if (
+        normalizeComparableTabUrl(currentUrl) === normalizedExpectedUrl ||
+        normalizeComparableTabUrl(pendingUrl) === normalizedExpectedUrl
+      ) {
         return;
       }
     } catch {
@@ -388,6 +392,20 @@ async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs = 10_
   }
 
   throw new Error(`tab url timeout: ${tabId} -> ${expectedUrl}`);
+}
+
+function normalizeComparableTabUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) {
+    return raw;
+  }
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = '';
+    return parsed.href;
+  } catch {
+    return raw;
+  }
 }
 
 async function finalizeOpenedWorkspaceTab(

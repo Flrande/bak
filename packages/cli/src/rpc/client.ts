@@ -1,11 +1,24 @@
 import WebSocket from 'ws';
 import { JSON_RPC_VERSION, type JsonRpcResponse } from '@flrande/bak-protocol';
 
+const DEFAULT_RPC_TIMEOUT_MS = 15_000;
+const NAVIGATION_RPC_TIMEOUT_MS = 45_000;
+const NAVIGATION_METHODS = new Set(['page.goto', 'workspace.openTab', 'workspace.ensure', 'workspace.reset']);
+
 function closeSocket(socket: WebSocket): void {
   if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
     return;
   }
   socket.terminate();
+}
+
+export function resolveRpcTimeoutMs(method: string, params: Record<string, unknown>): number {
+  let timeoutMs = NAVIGATION_METHODS.has(method) ? NAVIGATION_RPC_TIMEOUT_MS : DEFAULT_RPC_TIMEOUT_MS;
+  const requested = params.timeoutMs;
+  if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+    timeoutMs = Math.max(timeoutMs, Math.floor(requested) + 10_000);
+  }
+  return timeoutMs;
 }
 
 export async function callRpc(method: string, params: Record<string, unknown>, port: number): Promise<unknown> {
@@ -34,6 +47,7 @@ export async function callRpc(method: string, params: Record<string, unknown>, p
       params
     };
 
+    const timeoutMs = resolveRpcTimeoutMs(method, params);
     const response = await new Promise<JsonRpcResponse>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -41,7 +55,7 @@ export async function callRpc(method: string, params: Record<string, unknown>, p
           closeSocket(socket);
           reject(new Error(`RPC timeout ${method}`));
         });
-      }, 15_000);
+      }, timeoutMs);
 
       const finish = (done: () => void): void => {
         if (settled) {
