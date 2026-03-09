@@ -1,6 +1,6 @@
 # PRIVACY (v1)
 
-This legacy page is kept for compatibility. Prefer [docs/developer/security-privacy.md](./developer/security-privacy.md).
+This legacy page is kept for compatibility. Prefer [docs/developer/security-privacy.md](../developer/security-privacy.md).
 
 ## Default collection behavior
 

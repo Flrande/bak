@@ -1,15 +1,25 @@
 # Agent Prompts
 
-Use these templates after completing [quickstart.md](./quickstart.md).
+## Preferred Path
 
-If your agent receives only a link, always provide:
+If your agent supports Agent Skills, load:
 
-- `https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md`
+- [../../skills/bak-browser-control/SKILL.md](../../skills/bak-browser-control/SKILL.md)
 
-## Shared Rules (Any Agent)
+That skill tells the agent when to use `bak`, how to verify the runtime, how to create or repair the workspace, and when to stop for user action during extension setup.
+
+## URL-Based Bootstrap
+
+If your agent only accepts a guide URL, give it:
 
 ```text
-You can control a real browser through BAK CLI.
+https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md
+```
+
+## Plain Prompt Fallback
+
+```text
+Use BAK CLI for browser work.
 
 Environment:
 - OS: Windows
@@ -17,65 +27,21 @@ Environment:
 - CLI command: bak
 - RPC WebSocket port: 17374
 
-Execution rules:
-1) Use only `bak ...` commands for browser control.
-2) Do not use Playwright/Puppeteer/Selenium directly.
-3) If user gives quickstart raw URL, run that setup first.
-4) Before complex actions, run:
-   bak doctor --port 17373 --rpc-ws-port 17374
-5) If no dedicated subcommand exists, use:
-   bak call --method <method> --params '<json>' --rpc-ws-port 17374
-6) Verify each major action with wait/url/title/snapshot checks.
-7) Report failing command + error before retrying.
+Rules:
+1. Run `bak doctor --port 17373 --rpc-ws-port 17374` before browser work.
+2. If the runtime is not healthy, guide the user through extension setup and wait for confirmation.
+3. Use `bak workspace ensure --rpc-ws-port 17374` before opening agent-owned tabs.
+4. Verify major actions with page wait/url/title/snapshot or debug dump-state.
+5. Use `bak call --method ... --params ...` for protocol methods without first-class CLI commands.
+6. Do not claim success until a verification command confirms the state.
 ```
 
-## Codex Template
-
-```text
-Use BAK CLI to drive the browser.
-
-State checks:
-- bak tabs active --rpc-ws-port 17374
-- bak page title --rpc-ws-port 17374
-- bak page url --rpc-ws-port 17374
-- bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
-
-For missing subcommands, use `bak call`.
-Do not claim success until a verification command confirms it.
-```
-
-## Claude Template
-
-```text
-You are controlling a real browser through BAK.
-Always use PowerShell commands with `bak`.
-
-Workflow:
-1) bak doctor --port 17373 --rpc-ws-port 17374
-2) Navigate/read with page and tabs commands.
-3) Use `bak call --method ...` for full RPC surface.
-4) Verify outcomes with explicit checks (wait/title/url/snapshot).
-5) If blocked, provide one minimal recovery step and continue.
-```
-
-## Cursor Template
-
-```text
-For browser tasks, use terminal commands with BAK CLI:
-- bak <subcommand>
-- bak call --method <method> --params '<json>' --rpc-ws-port 17374
-
-Never use direct browser automation libraries.
-Keep command batches short and verify between steps.
-On errors, include command + stderr.
-```
-
-## Starter Command Set
+## Minimal Command Set
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
-bak tabs list --rpc-ws-port 17374
-bak page goto "https://example.com" --rpc-ws-port 17374
+bak workspace ensure --rpc-ws-port 17374
+bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
 bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374
-bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+bak page snapshot --include-base64 --rpc-ws-port 17374
 ```

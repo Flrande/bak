@@ -2,43 +2,30 @@
 
 ## Major Components
 
-- Extension: content script, background worker, popup pairing UI, overlay interactions
+- Extension: content script, background worker, popup pairing UI, overlay confirmation flow
 - CLI: daemon, RPC server, browser driver abstraction, policy checks, diagnostics, memory service
-- Protocol: shared `v3` request/response types and schema
-- Test app: multi-page browser fixtures for e2e context, debug, and memory coverage
+- Protocol: shared request/response types and schema
+- Test app: browser fixtures that exercise workspace, context, debug, and memory flows
 
 ## Runtime Flow
 
-1. user pairs extension to the local CLI daemon
-2. CLI exposes WebSocket and stdio JSON-RPC
-3. agent issues first-class CLI commands or raw RPC calls
-4. CLI routes browser calls through the extension bridge
+1. the user pairs the extension to the local daemon
+2. the CLI exposes WebSocket and stdio JSON-RPC
+3. the agent issues first-class CLI commands or raw RPC calls
+4. the CLI routes browser calls through the extension bridge
 5. traces, snapshots, and sqlite memory records are written under `.bak-data`
+
+## Workspace And Targeting
+
+- the workspace is the default agent isolation boundary
+- browser and memory commands prefer the current workspace tab once it exists
+- workspace commands are the only path that creates or repairs the dedicated window and tab group
+- reads, actions, and debug output share one context stack
 
 ## Memory Subsystem
 
-The memory subsystem no longer centers on skills.
-
-Instead it uses:
-- explicit capture sessions
-- draft generation for review
-- durable memories with immutable revisions
-- memory search plus explain before planning
-- plan execution with explicit mode
-- explicit patch suggestion review for drift
-
-## Execution Safety
-
-- policy checks still gate high-risk actions
-- `assist` is the default plan execution mode
-- mutating procedure steps pause in assist mode
-- patch application is explicit and revisioned
-
-## Context Alignment
-
-The extension maintains a shared effective context stack for:
-- action APIs
-- read APIs
-- debug APIs
-
-This prevents the agent from acting inside one frame or shadow root while reading from another.
+- capture sessions record candidate route and procedure steps
+- draft review separates capture from durable storage
+- durable memories are revisioned
+- planning and execution are explicit
+- drift is surfaced as patch suggestions instead of silent writeback

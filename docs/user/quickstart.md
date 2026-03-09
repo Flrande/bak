@@ -1,31 +1,17 @@
 # Quickstart
 <!-- BAK_BOOTSTRAP_SCRIPT_URL: https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/agent-bootstrap.ps1 -->
 
-This is the single source of truth for first-time setup.
+This is the fastest current setup path for `bak`.
 
-Packages used in this guide:
+## 1. Agent Bootstrap From This Guide
 
-- `@flrande/bak-cli`
-- `@flrande/bak-extension`
-
-## 0) One Sentence For Your Agent
-
-Paste this sentence:
+If your agent can bootstrap from a guide URL, give it:
 
 ```text
-Read and execute https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md, auto-run the bootstrap script referenced by BAK_BOOTSTRAP_SCRIPT_URL, verify with `bak doctor --port 17373 --rpc-ws-port 17374`, and if extension is not connected explicitly guide the user to complete extension setup in Chrome (`chrome://extensions`) or Edge (`edge://extensions`) with Load unpacked plus popup token/port connect, then wait for confirmation before continuing browser tasks via `bak` CLI.
+https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md
 ```
 
-## 1) Prerequisites
-
-- Node.js 22.x
-- npm
-- Chromium browser (Chrome or Edge)
-- Windows + PowerShell 7
-
-## 2) Agent Bootstrap From This URL
-
-Run this launcher command (or let your agent run it):
+If you want to run the launcher yourself:
 
 ```powershell
 $quickstartUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md'
@@ -35,78 +21,75 @@ Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
 pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 ```
 
-Expected bootstrap output:
+The launcher installs the CLI and extension packages, generates a pairing token, starts the daemon when needed, and writes `.bak-data/bootstrap-result.json`.
 
-- global npm install of CLI + extension packages
-- pairing token (`bak setup` preferred, auto-fallback to `bak pair create` when needed)
-- daemon start status
-- extension `dist` path
-- result JSON at `.bak-data/bootstrap-result.json`
+## 2. Manual Setup
 
-## 3) Load Extension And Pair
+Requirements:
 
-1. Open `chrome://extensions` (or `edge://extensions`).
-2. Enable Developer mode.
+- Windows + PowerShell 7
+- Node.js 22+
+- Chrome or Edge
+
+Install:
+
+```powershell
+npm install -g @flrande/bak-cli @flrande/bak-extension
+```
+
+Create a pairing token:
+
+```powershell
+bak setup
+```
+
+Start the daemon and keep it running:
+
+```powershell
+bak serve --port 17373 --rpc-ws-port 17374
+```
+
+## 3. Load The Extension
+
+1. Open `chrome://extensions` or `edge://extensions`.
+2. Turn on `Developer mode`.
 3. Click `Load unpacked`.
-4. Use extension path:
+4. Load this folder:
 
 ```powershell
 Join-Path (npm root -g) '@flrande\bak-extension\dist'
 ```
 
-5. Open extension popup.
-6. Paste token from bootstrap output.
+5. Open the extension popup.
+6. Paste the token from `bak setup` or the bootstrap result.
 7. Keep port `17373`.
-8. Save/connect.
+8. Click connect.
 
-## 4) Verify Runtime
+## 4. Verify The Runtime
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
 bak tabs list --rpc-ws-port 17374
 ```
 
-Healthy runtime should show:
+A healthy runtime reports:
 
 - `ok: true`
 - `extensionConnected: true`
 
-## 5) First Browser Actions
+## 5. First Browser Action
 
 ```powershell
-bak tabs active --rpc-ws-port 17374
-bak page goto "https://example.com" --rpc-ws-port 17374
+bak workspace ensure --rpc-ws-port 17374
+bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
 bak page title --rpc-ws-port 17374
-bak call --method page.snapshot --params "{}" --rpc-ws-port 17374
+bak page snapshot --include-base64 --rpc-ws-port 17374
 ```
 
-## 6) Compatibility Check (Important)
+## 6. Minimal Fallback
 
-Check your installed CLI supports quickstart commands:
-
-```powershell
-bak --help
-bak serve --help
-```
-
-You should see:
-
-- `setup` command
-- `serve --pair` option
-
-If your installed version is older and lacks these features, use fallback:
+If `bak` is not on `PATH` yet, use:
 
 ```powershell
-bak pair create
-bak serve --port 17373 --rpc-ws-port 17374
-```
-
-Then complete extension pairing from popup and rerun `bak doctor`.
-
-## 7) PATH Fallback
-
-If `bak` is not in PATH:
-
-```powershell
-npx bak doctor --port 17373 --rpc-ws-port 17374
+npx @flrande/bak-cli@latest doctor --port 17373 --rpc-ws-port 17374
 ```

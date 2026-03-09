@@ -1,89 +1,83 @@
 # Memory Guide
 
-The `v3` memory system is explicit and agent-centered.
+`bak` memory is explicit and agent-centered.
 
-When a workspace exists, memory capture, search, explain, plan, and execute default to the workspace current tab instead of the human user's current active tab. This keeps route replay and procedure execution inside the agent workspace unless you pass an explicit browser target. If no workspace exists yet, these flows follow the normal omitted-target browser rule and use the active browser tab until you explicitly create or open the workspace.
+## Memory Kinds
 
-## Durable Memory Kinds
+- `route`: how to get back to a page or feature
+- `procedure`: how to do a task on a page
+- `composite`: an execution composition, usually route + procedure
 
-- `route`: how to reach a page or feature
-- `procedure`: how to perform a task on a page
-- `composite`: an execution composition such as route + procedure
+## Core Rules
 
-## Lifecycle
-
-1. begin a capture session
-2. collect capture events
-3. end capture
-4. inspect generated drafts
-5. promote a draft to a durable memory
-6. search for candidates later
-7. explain applicability before planning
-8. create a plan with explicit parameters
-9. execute the plan in `dry-run`, `assist`, or `auto`
-10. inspect runs and patch suggestions
-11. accept or reject patches explicitly
-
-## Important Rules
-
-- memory is advisory, not automatic
-- only one capture session can be active at a time
+- capture is explicit
+- draft review is explicit
+- promotion is explicit
 - search never executes anything
-- search can use the current tab or an explicit `url` when no live tab context is available
-- if you want repeated path reuse, capture and promote a `route` draft explicitly instead of relying on a `procedure` or `composite` to stand in for navigation
-- the system does not silently create durable memories
-- the system does not silently recall durable memories
-- the system does not silently execute durable memories
-- durable revisions are immutable
-- applying a patch creates a new revision
-- patch review is one-way: an open patch can be applied or rejected once
-- old revisions remain inspectable
-- default execution mode is `assist`
-- captured text stays literal unless it is already templated or clearly sensitive, such as password-like fields
-- captured element steps keep live locator candidates from the page element that was actually used, which gives later patch suggestions more signal than the original raw locator alone
-- memory fingerprints use the active document URL/title for the current context, not always the top-level tab
-- when a workspace exists, route replay and other memory-driven browser actions stay inside the workspace window/tab group by default
-
-## Execution Modes
-
-- `dry-run`: assemble and report the plan without browser mutation
-- `assist`: run conservative steps but pause before mutating procedure steps by default
-- `auto`: execute the full plan
-
-## Applicability
-
-- route memories are checked against the current entry page
-- procedure memories are checked against the page where the task should run
-- composite route + procedure plans check the route entry page and the route-to-procedure handoff, so a procedure is not treated as inapplicable just because you are still on the route entry page
-- direct `composite` memories use that same applicability model when planned by `memoryId`
-- route matching is still heuristic: same-site but wrong-entry pages can surface as `partial` rather than `inapplicable`, so agents should review `entry-page` checks before executing
+- explain and plan happen before execution
+- patches are explicit review items
+- revisions are immutable
+- the current backend is sqlite
+- the default execution mode is `assist`
 
 ## Recommended Route Workflow
 
-1. start a capture on the page where the route begins
-2. drive the browser to the feature or page entry point, including explicit `page wait` steps when the path depends on navigation or async rendering
-3. end capture and promote the `route` draft
-4. later, search with `--kind route`
-5. explain or plan the route against the current starting page before execution
-6. optionally compose that route with a separate `procedure` memory once you arrive at the feature page
+1. Start capture where the route begins.
+2. Drive the browser to the feature or page entry point.
+3. End the capture and inspect drafts.
+4. Promote the route draft.
+5. Later, search with `--kind route`.
+6. Explain or plan the route against the current starting page.
+7. Optionally compose that route with a separate procedure memory.
 
-## Storage
-
-- backend: sqlite only
-- file: `.bak-data/memory.sqlite`
-
-## Example
+## Route Example
 
 ```powershell
-bak memory capture begin --goal "return to the automation console" --rpc-ws-port 17374
-bak element click --css '#goto-spa' --rpc-ws-port 17374
-bak page wait --mode selector --value '#tab-automation' --rpc-ws-port 17374
-bak element click --css '#tab-automation' --rpc-ws-port 17374
-bak page wait --mode text --value 'Route: automation' --rpc-ws-port 17374
+bak memory capture begin --goal "return to billing settings" --rpc-ws-port 17374
+bak element click --css '#open-settings' --rpc-ws-port 17374
+bak page wait --mode text --value 'Billing' --rpc-ws-port 17374
 bak memory capture end --rpc-ws-port 17374
+bak memory draft list --rpc-ws-port 17374
 bak memory draft promote <routeDraftId> --rpc-ws-port 17374
-bak memory search --goal "return to the automation console" --kind route --rpc-ws-port 17374
+bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374
 bak memory explain <routeMemoryId> --url "https://portal.local/" --rpc-ws-port 17374
 bak memory plan create --memory-id <routeMemoryId> --mode assist --rpc-ws-port 17374
 bak memory execute <planId> --rpc-ws-port 17374
 ```
+
+## Procedure Example
+
+```powershell
+bak memory capture begin --goal "queue nightly backup task" --rpc-ws-port 17374
+bak memory capture mark --label "task input ready" --role procedure --rpc-ws-port 17374
+bak element type --css '#task-input' --value 'Nightly backup task' --clear --rpc-ws-port 17374
+bak element click --css '#queue-btn' --rpc-ws-port 17374
+bak page wait --mode text --value 'queued Nightly backup task' --rpc-ws-port 17374
+bak memory capture end --rpc-ws-port 17374
+bak memory draft promote <procedureDraftId> --rpc-ws-port 17374
+```
+
+## Planning And Execution
+
+Use `--memory-id` for a single durable memory:
+
+```powershell
+bak memory plan create --memory-id <memoryId> --mode assist --rpc-ws-port 17374
+```
+
+Use route + procedure when you want explicit composition:
+
+```powershell
+bak memory plan create --route-memory-id <routeMemoryId> --procedure-memory-id <procedureMemoryId> --rpc-ws-port 17374
+```
+
+Execution modes:
+
+- `dry-run`: assemble and report the plan without browser mutation
+- `assist`: run conservatively and pause before risky procedure steps
+- `auto`: execute the full plan
+
+## Storage
+
+- data directory: `.bak-data`
+- memory database: `.bak-data/memory.sqlite`

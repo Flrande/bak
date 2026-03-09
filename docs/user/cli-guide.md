@@ -1,125 +1,99 @@
 # CLI Guide
 
-`bak` is the primary agent-facing interface to the paired browser extension.
+`bak` is the agent-facing entrypoint to the paired browser extension.
 
-## Runtime Commands
+## Start Every Session
 
-```text
-bak setup
-bak serve
-bak doctor
-bak export
-bak gc
-bak call
+```powershell
+bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
-## Pairing Commands
+Then create or repair the agent workspace:
 
-```text
-bak pair create
-bak pair status
-bak pair revoke
+```powershell
+bak workspace ensure --rpc-ws-port 17374
+bak workspace info --rpc-ws-port 17374
 ```
 
-## First-Class Browser Commands
+## Open And Target Pages
 
-```text
-bak tabs list|new|focus|get|close|active
-bak workspace ensure|info|open-tab|list-tabs|get-active-tab|set-active-tab|focus|reset|close
-bak page goto|wait|url|title|snapshot|text|dom|a11y|metrics|viewport
-bak debug console|dump-state
-bak network list|get|wait|clear
-bak context enter-frame|exit-frame|enter-shadow|exit-shadow|reset
-bak element get|click|type|hover|double-click|right-click|select|check|uncheck|scroll|scroll-into-view|focus|blur|drag-drop
-bak keyboard press|type|hotkey
-bak mouse move|click|wheel
-bak file upload
+Use workspace commands for agent-owned tabs:
+
+```powershell
+bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
+bak workspace get-active-tab --rpc-ws-port 17374
+bak workspace set-active-tab --tab-id 123 --rpc-ws-port 17374
 ```
 
-## First-Class Memory Commands
+Navigate and wait:
 
-```text
-bak memory capture begin|mark|end
-bak memory draft list|show|promote|discard
-bak memory search
-bak memory explain
-bak memory show
-bak memory deprecate
-bak memory delete
-bak memory plan create|show
-bak memory execute
-bak memory run list|show
-bak memory patch list|show|apply|reject
-bak memory export
+```powershell
+bak page goto "https://example.com" --rpc-ws-port 17374
+bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374
+bak page title --rpc-ws-port 17374
+bak page url --rpc-ws-port 17374
 ```
 
-Notes:
-- `bak workspace ensure` creates or repairs the default agent workspace: a dedicated browser window plus a dedicated tab group
-- `bak workspace open-tab` opens a tab inside that workspace and groups it automatically
-- `bak workspace get-active-tab` shows the workspace current tab used by default browser and memory commands
-- `bak workspace set-active-tab --tab-id <id>` switches that default workspace current tab without focusing the workspace window
-- once the workspace exists, browser and memory commands prefer the workspace current tab unless you pass `--tab-id` or another explicit target
-- ordinary omitted-target browser commands do not create a workspace; if no workspace exists they use the browser's active tab until you run `bak workspace ensure` or `bak workspace open-tab`
-- `bak workspace focus` is the explicit command for bringing the workspace window to the front
-- `bak page url` and `bak page title` report the active document for the current frame/shadow context; use `bak call --method session.info` for top-level tab metadata
-- `bak page snapshot --include-base64` returns inline image bytes in addition to persisted snapshot paths
-- `bak debug dump-state --include-snapshot` attaches a fresh persisted viewport snapshot to the structured dump, and `--include-snapshot-base64` adds inline image bytes when needed
-- `bak debug console` is structured but best-effort for page-origin logs; use it as advisory agent context rather than as a guaranteed browser-devtools mirror
-- `bak network list|get|wait|clear` is best-effort for page requests: when page-level interception cannot attach response metadata, entries fall back to `kind: "resource"` with `status: 0`
-- `bak element drag-drop` requires explicit `--from-*` and `--to-*` locators
-- `bak element scroll` and `bak mouse wheel` accept negative deltas
-- `bak mouse move` and `bak mouse click` accept zero coordinates
+## Read And Debug
+
+```powershell
+bak page snapshot --include-base64 --rpc-ws-port 17374
+bak page text --rpc-ws-port 17374
+bak page dom --rpc-ws-port 17374
+bak page a11y --rpc-ws-port 17374
+bak debug console --limit 20 --rpc-ws-port 17374
+bak debug dump-state --include-snapshot --rpc-ws-port 17374
+bak network list --limit 20 --rpc-ws-port 17374
+```
+
+## Interact With Elements
+
+`bak` accepts either `--locator <json>` or individual locator fields such as `--css`, `--role`, `--name`, and `--text`.
+
+```powershell
+bak element click --css "#submit" --rpc-ws-port 17374
+bak element type --css "#email" --value "me@example.com" --clear --rpc-ws-port 17374
+bak element select --css "#role-select" --value admin --rpc-ws-port 17374
+bak element scroll --css "#list" --dy 320 --rpc-ws-port 17374
+bak element drag-drop --from-css "#drag-source" --to-css "#drop-target" --rpc-ws-port 17374
+```
+
+Keyboard, mouse, and file upload stay on the same target tab:
+
+```powershell
+bak keyboard hotkey Control L --rpc-ws-port 17374
+bak mouse click --x 200 --y 120 --rpc-ws-port 17374
+bak file upload --css "#file-input" --file-path .\report.pdf --rpc-ws-port 17374
+```
+
+## Frames And Shadow DOM
+
+```powershell
+bak context enter-frame --frame-path "#demo-frame" --rpc-ws-port 17374
+bak context enter-shadow --host-selectors "#shadow-host" --rpc-ws-port 17374
+bak page title --rpc-ws-port 17374
+bak context reset --rpc-ws-port 17374
+```
+
+## Protocol-Only Methods
+
+Use `bak call` when the protocol exposes a method without a first-class CLI command.
+
+Examples:
+
+```powershell
+bak call --method page.reload --params "{}" --rpc-ws-port 17374
+bak call --method page.back --params "{}" --rpc-ws-port 17374
+bak call --method page.scrollTo --params '{"x":0,"y":640}' --rpc-ws-port 17374
+```
 
 ## Daily Flow
 
 ```powershell
-bak serve --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
 bak workspace ensure --rpc-ws-port 17374
 bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
-bak workspace get-active-tab --rpc-ws-port 17374
-bak page snapshot --include-base64 --rpc-ws-port 17374
+bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374
+bak element click --css "a" --rpc-ws-port 17374
 bak debug dump-state --include-snapshot --rpc-ws-port 17374
 ```
-
-## Route Memory Example
-
-```powershell
-bak memory capture begin --goal "return to the automation console" --rpc-ws-port 17374
-bak element click --css '#goto-spa' --rpc-ws-port 17374
-bak page wait --mode selector --value '#tab-automation' --rpc-ws-port 17374
-bak element click --css '#tab-automation' --rpc-ws-port 17374
-bak page wait --mode text --value 'Route: automation' --rpc-ws-port 17374
-bak memory capture end --rpc-ws-port 17374
-bak memory draft list --rpc-ws-port 17374
-bak memory draft promote <routeDraftId> --rpc-ws-port 17374
-bak memory search --goal "return to the automation console" --kind route --rpc-ws-port 17374
-bak memory explain <routeMemoryId> --url "https://portal.local/" --rpc-ws-port 17374
-bak memory plan create --memory-id <routeMemoryId> --mode assist --rpc-ws-port 17374
-bak memory execute <planId> --rpc-ws-port 17374
-```
-
-## Procedure Composition Example
-
-```powershell
-bak memory capture begin --goal "queue nightly backup task" --rpc-ws-port 17374
-bak memory capture mark --label "start automation task" --role procedure --rpc-ws-port 17374
-bak element type --css '#task-input' --value 'Nightly backup task' --clear --rpc-ws-port 17374
-bak element click --css '#queue-btn' --rpc-ws-port 17374
-bak page wait --mode text --value 'queued Nightly backup task' --rpc-ws-port 17374
-bak memory capture end --rpc-ws-port 17374
-bak memory draft promote <procedureDraftId> --rpc-ws-port 17374
-bak memory plan create --route-memory-id <routeMemoryId> --procedure-memory-id <procedureMemoryId> --mode auto --rpc-ws-port 17374
-bak memory execute <planId> --rpc-ws-port 17374
-```
-
-All first-class commands print machine-friendly JSON.
-
-Notes:
-- capture is single-active, so start a new capture only after ending the current one
-- `bak memory search` accepts `--url` when you want ranking against an explicit page context instead of the live tab
-- `bak memory explain` also accepts `--url` when you want applicability against an explicit page context without relying on the live tab
-- route memories are first-class: when the goal is “get back to the feature,” search with `--kind route` instead of relying on a procedure or composite to stand in for navigation
-- direct `composite` memories planned by `--memory-id` use the same route-entry and handoff checks as `--route-memory-id` plus `--procedure-memory-id`
-- captured text inputs stay literal unless they were already templated or clearly sensitive
-- captured element steps keep live locator candidates from the element that was actually used, which gives later patch suggestions more signal than the original raw locator alone

@@ -1,23 +1,20 @@
 # Reference Docs
 
-This section indexes generated artifacts and low-change reference material.
+This section points to low-change reference material and generated reports.
 
 ## Canonical References
 
-- Protocol v2 matrix: [docs/PROTOCOL_V2.md](../PROTOCOL_V2.md)
-- Package-level docs index: [docs/README.md](../README.md)
+- Protocol and CLI/RPC surface: [../PROTOCOL.md](../PROTOCOL.md)
+- Product behavior and architecture: [../TECH_SPEC.md](../TECH_SPEC.md)
+- Contributor overview: [../developer/README.md](../developer/README.md)
 
 ## Generated Reports
 
-- Capability matrix: [docs/CAPABILITY_MATRIX.md](../CAPABILITY_MATRIX.md)
-- E2E execution matrix: [docs/E2E_MATRIX.md](../E2E_MATRIX.md)
-- Release capability report: [docs/RELEASE_CAPABILITY_REPORT.md](../RELEASE_CAPABILITY_REPORT.md)
+- Capability matrix: [../CAPABILITY_MATRIX.md](../CAPABILITY_MATRIX.md)
+- E2E execution matrix: [../E2E_MATRIX.md](../E2E_MATRIX.md)
+- Release capability report: [../RELEASE_CAPABILITY_REPORT.md](../RELEASE_CAPABILITY_REPORT.md)
 
-## Legacy Compatibility Docs
+## Source Artifacts
 
-- Legacy protocol baseline: [docs/PROTOCOL.md](../PROTOCOL.md)
-- [docs/TECH_SPEC.md](../TECH_SPEC.md)
-- [docs/OPS_RUNBOOK.md](../OPS_RUNBOOK.md)
-- [docs/SECURITY.md](../SECURITY.md)
-- [docs/PRIVACY.md](../PRIVACY.md)
-- [docs/RELEASE.md](../RELEASE.md)
+- Protocol schema: `packages/protocol/schemas/protocol.schema.json`
+- Protocol types: `packages/protocol/src/types.ts`

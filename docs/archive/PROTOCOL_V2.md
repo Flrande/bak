@@ -6,7 +6,7 @@ It is retained only as a historical reference point for the removed skill-centri
 
 Current state:
 - active protocol: `v3`
-- active docs: [PROTOCOL.md](./PROTOCOL.md)
+- active docs: [PROTOCOL.md](../PROTOCOL.md)
 - active memory model: capture sessions, drafts, durable memories, immutable revisions, plans, runs, and patch suggestions
 
 The repository does not preserve backward-compatible `v2` memory behavior.

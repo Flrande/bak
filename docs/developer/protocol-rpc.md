@@ -3,43 +3,34 @@
 ## Transport
 
 - JSON-RPC 2.0
-- CLI daemon supports:
-  - stdio JSON-RPC
-  - WebSocket JSON-RPC: `ws://127.0.0.1:<rpcPort>/rpc`
-- Extension bridge endpoint:
-  - `ws://127.0.0.1:<port>/extension?token=<pairToken>`
+- stdio JSON-RPC from the daemon
+- WebSocket JSON-RPC at `ws://127.0.0.1:<rpcPort>/rpc`
+- extension bridge at `ws://127.0.0.1:<port>/extension?token=<pairToken>`
 
 ## Canonical Definitions
 
-- Method/type source: `packages/protocol/src/types.ts`
-- JSON schema: `packages/protocol/schemas/protocol.schema.json`
-- Full v2 capability matrix: [docs/PROTOCOL_V2.md](../PROTOCOL_V2.md)
-- Legacy baseline notes: [docs/PROTOCOL.md](../PROTOCOL.md)
+- protocol types: `packages/protocol/src/types.ts`
+- protocol schema: `packages/protocol/schemas/protocol.schema.json`
+- CLI builder: `packages/cli/src/program.ts`
 
-## Error Codes
+## CLI Vs RPC
 
-- `E_NOT_PAIRED`
-- `E_PERMISSION`
-- `E_NOT_FOUND`
-- `E_NEED_USER_CONFIRM`
-- `E_TIMEOUT`
-- `E_INVALID_PARAMS`
-- `E_INTERNAL`
-- `E_NOT_READY`
+The CLI is intentionally task-oriented. The protocol is broader.
 
-## CLI Surface Vs RPC Surface
+Use first-class CLI commands for common workflows such as:
 
-- `packages/cli/src/bin.ts` exposes high-frequency workflows as explicit subcommands.
-- Long-tail methods remain available through:
+- workspace creation and tab targeting
+- page reads and snapshots
+- element actions
+- explicit memory workflows
+
+Use `bak call` when the protocol has a method without a dedicated CLI command.
 
 ```powershell
-node packages/cli/dist/bin.js call --method <method.name> --params '<json>'
+bak call --method page.reload --params "{}" --rpc-ws-port 17374
 ```
 
-This keeps CLI usability and protocol completeness decoupled.
+## Health And Compatibility
 
-## Versioning And Compatibility
-
-- v2 is additive over v1 (concurrent clients are supported).
-- New fields/methods should not break existing request/response shapes.
-- Protocol changes must update both TS types and schema artifacts.
+- `session.info` reports protocol version, compatible versions, extension connection state, active tab summary, context stack, and memory backend status
+- `bak doctor` surfaces protocol and version drift as warnings instead of silent failures

@@ -2,19 +2,18 @@
 
 ## Local Operations
 
-Core checks:
+Build artifacts before using the packaged CLI directly:
 
 ```powershell
 pnpm build
-node packages/cli/dist/bin.js doctor
+node packages/cli/dist/bin.js doctor --port 17373 --rpc-ws-port 17374
 ```
 
 Useful runtime commands:
 
 ```powershell
-node packages/cli/dist/bin.js pair
 node packages/cli/dist/bin.js pair status
-node packages/cli/dist/bin.js export --out ./.bak-data/diag.zip
+node packages/cli/dist/bin.js export --out .\.bak-data\diag.zip
 node packages/cli/dist/bin.js gc
 ```
 
@@ -35,22 +34,13 @@ Full regression run:
 pnpm -w test:e2e:full
 ```
 
-## Capability And E2E Artifacts
+## Generated Artifacts
 
-- Capability map: `docs/CAPABILITY_MATRIX.md`
+- capability matrix: `docs/CAPABILITY_MATRIX.md`
 - E2E matrix: `docs/E2E_MATRIX.md`
-- Release gate summary: `docs/RELEASE_CAPABILITY_REPORT.md`
+- release gate summary: `docs/RELEASE_CAPABILITY_REPORT.md`
 
-Important semantics:
+Keep these output paths stable because scripts write to them directly:
 
-- `CaseMapped=true` means case IDs are mapped, not that CI has executed/passed them.
-- `ReleaseGate=fail` means real e2e execution requirements are not satisfied.
-
-## Generated File Paths (Do Not Move)
-
-These paths are consumed by scripts:
-
-- `scripts/e2e/generate-matrix.ps1` -> `docs/E2E_MATRIX.md`
-- `scripts/release/generate-capability-report.ps1` -> `docs/RELEASE_CAPABILITY_REPORT.md`
-
-Keep those output paths stable.
+- `scripts/e2e/generate-matrix.ps1`
+- `scripts/release/generate-capability-report.ps1`

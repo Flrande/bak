@@ -2,11 +2,11 @@
 
 ## Security Defaults
 
-- Extension bridge is localhost-only.
-- Pair token is required for extension connection.
-- High-risk actions can require explicit user confirmation.
-- Policy engine can allow/deny/requireConfirm per domain/path/action.
-- Unsupported browser-internal URLs are blocked by runtime policy.
+- the extension bridge is localhost-only
+- a pairing token is required for extension connection
+- high-risk actions can require explicit user confirmation
+- unsupported browser-internal URLs are blocked by runtime policy
+- the policy engine can allow, deny, or require confirmation by domain, path, and action
 
 Policy file:
 
@@ -15,19 +15,16 @@ Policy file:
 
 ## Privacy Defaults
 
-- Snapshot extraction avoids raw `input.value` collection for element naming.
-- Traces and snapshot metadata are redacted before persistence.
-- `bak export` excludes raw snapshot image folders unless `--include-snapshots`.
-- Memory recording redacts typed input by default.
+- snapshot extraction avoids raw `input.value` collection for element naming
+- traces and snapshot metadata are redacted before persistence
+- `bak export` excludes raw snapshot image folders unless `--include-snapshots`
+- memory capture is explicit and durable memories are created only after draft promotion
+- typed input is redacted in traces by default
 
 ## Operational Guidance
 
-- Keep `.bak-data` out of source control.
-- Rotate pairing token regularly (`bak pair`).
-- Use short retention windows and run `bak gc`.
-- Enable richer debug capture only for explicit troubleshooting windows.
-
-## Detailed References
-
-- [docs/SECURITY.md](../SECURITY.md)
-- [docs/PRIVACY.md](../PRIVACY.md)
+- keep `.bak-data` out of source control
+- rotate pairing tokens when reconnecting a browser profile
+- use short retention windows and run `bak gc`
+- enable richer debug capture only for active troubleshooting sessions
+- export raw snapshots only when they are actually needed for diagnosis

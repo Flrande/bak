@@ -1,14 +1,13 @@
 # User Docs
 
-Use these guides after installing the extension and starting the CLI daemon.
+Follow these pages in order when you are new to `bak`:
 
-- [quickstart.md](./quickstart.md)
-- [cli-guide.md](./cli-guide.md)
-- [memory-guide.md](./memory-guide.md)
-- [troubleshooting.md](./troubleshooting.md)
+1. [quickstart.md](./quickstart.md)
+2. [cli-guide.md](./cli-guide.md)
+3. [memory-guide.md](./memory-guide.md)
+4. [troubleshooting.md](./troubleshooting.md)
+
+For agent-specific setup and prompt handoff:
+
 - [agent-prompts.md](./agent-prompts.md)
-
-Mental model:
-- `bak` exposes first-class browser commands for agents
-- reads and actions share the same browser context
-- memory must be captured, reviewed, promoted, searched, explained, planned, and executed explicitly
+- [../../skills/bak-browser-control/SKILL.md](../../skills/bak-browser-control/SKILL.md)

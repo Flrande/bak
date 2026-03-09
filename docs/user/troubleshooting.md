@@ -1,92 +1,77 @@
 # Troubleshooting
 
-## First Check
+## Start With Doctor
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
-`doctor` reports:
+Check:
 
-- blocking checks in `summary.errorChecks`
-- non-blocking checks in `summary.warningChecks`
+- `summary.errorChecks` for blocking problems
+- `summary.warningChecks` for advisory issues
 
-## Common Problems
-
-### Extension Not Connected
+## Extension Not Connected
 
 Symptoms:
 
-- `extensionConnected=false`
+- `extensionConnected: false`
 - `E_NOT_READY` or `E_NOT_PAIRED`
 
 Actions:
 
-1. Run `bak pair status`.
-2. Rotate token with `bak pair`.
-3. Reconnect in extension popup with port `17373`.
-4. Confirm daemon is running.
+1. Confirm `bak serve --port 17373 --rpc-ws-port 17374` is still running.
+2. Open the extension popup and reconnect with the current token and port `17373`.
+3. If needed, mint a fresh token with `bak setup`.
+4. Run `bak doctor` again.
 
-### RPC Not Reachable
-
-Symptoms:
-
-- RPC connection errors on `ws://127.0.0.1:<rpcPort>/rpc`
-
-Actions:
-
-1. Restart daemon with explicit ports.
-2. Use the same `--rpc-ws-port` on all commands.
-
-### Old CLI Version Missing `setup` Or `serve --pair`
+## RPC Not Reachable
 
 Symptoms:
 
-- `unknown command 'setup'`
-- `error: unknown option '--pair'`
+- commands fail to connect to `ws://127.0.0.1:<rpcPort>/rpc`
 
 Actions:
 
-1. Update package to latest release.
-2. Temporary fallback:
+1. Restart the daemon with explicit ports.
+2. Pass the same `--rpc-ws-port` on every CLI command.
+3. Re-run `bak doctor`.
+
+## Wrong Tab Or Workspace Target
+
+Symptoms:
+
+- commands run against the wrong page
+- page reads do not match what the agent expects
+
+Actions:
+
+1. Inspect the workspace with `bak workspace info --rpc-ws-port 17374`.
+2. Check the current workspace tab with `bak workspace get-active-tab --rpc-ws-port 17374`.
+3. Set the intended workspace tab with `bak workspace set-active-tab --tab-id <id> --rpc-ws-port 17374`.
+4. If the workspace is missing or broken, run `bak workspace ensure --rpc-ws-port 17374`.
+
+## Frame Or Shadow Context Confusion
+
+Symptoms:
+
+- `bak page title` or `bak page url` shows a child document
+- an element lookup succeeds in one step and fails in the next
+
+Actions:
+
+1. Reset the context with `bak context reset --rpc-ws-port 17374`.
+2. Re-enter the frame or shadow root intentionally.
+3. Verify with `bak debug dump-state --include-snapshot --rpc-ws-port 17374`.
+
+## Need Shareable Diagnostics
 
 ```powershell
-bak pair
-bak serve --port 17373 --rpc-ws-port 17374
+bak export --out .\.bak-data\diag.zip
 ```
 
-### Heartbeat Stale / Session Disconnected
-
-Symptoms:
-
-- `heartbeatStale=true`
-- stale connection warnings
-
-Actions:
-
-1. Refresh active tab and retry `bak page url`.
-2. Restart extension and daemon if state remains stale.
-
-### Memory Backend Fallback
-
-Symptoms:
-
-- requested backend is `sqlite`, runtime backend is `json`
-
-Actions:
-
-1. Check Node runtime is 22.x.
-2. Run `bak memory export --backend sqlite` and inspect fallback details.
-3. Continue with JSON backend until prerequisites are fixed.
-
-### Need Shareable Diagnostics
+Include raw snapshots only when they are necessary:
 
 ```powershell
-bak export --out ./.bak-data/diag.zip
-```
-
-Include snapshot images only when required:
-
-```powershell
-bak export --include-snapshots --out ./.bak-data/diag-with-images.zip
+bak export --include-snapshots --out .\.bak-data\diag-with-images.zip
 ```
