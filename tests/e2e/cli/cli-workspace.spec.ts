@@ -304,6 +304,31 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
+  test('clears workspace state on close so later default commands fall back to the human tab', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page: humanPage } = await harness.openPage('/form.html');
+    const opened = await openWorkspacePage('/spa.html');
+    try {
+      const before = must((await workspaceInfo()).workspace, 'Expected workspace metadata before close');
+      expect(before.windowId).not.toBeNull();
+
+      const closed = runCli<{ ok: boolean }>(['workspace', 'close'], harness.rpcPort, harness.dataDir);
+      expect(closed.ok).toBe(true);
+
+      await expect.poll(async () => (await workspaceInfo()).workspace, { timeout: 10_000 }).toBeNull();
+
+      const current = runCli<{ url: string }>(['page', 'url'], harness.rpcPort, harness.dataDir);
+      expect(current.url).toMatch(/\/form\.html\?/);
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+    } finally {
+      await humanPage.close().catch(() => undefined);
+      await opened.page.close().catch(() => undefined);
+    }
+  });
+
   test('recreates the workspace window after the dedicated window is closed', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');

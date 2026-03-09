@@ -421,13 +421,15 @@ export class WorkspaceManager {
       await this.storage.save(null);
       return { ok: true };
     }
+    // Clear persisted state before closing the window so tab/window removal
+    // listeners cannot race and resurrect an empty workspace record.
+    await this.storage.save(null);
     if (state.windowId !== null) {
       const existingWindow = await this.browser.getWindow(state.windowId);
       if (existingWindow) {
         await this.browser.closeWindow(state.windowId);
       }
     }
-    await this.storage.save(null);
     return { ok: true };
   }
 

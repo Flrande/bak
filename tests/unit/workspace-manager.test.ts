@@ -498,4 +498,14 @@ describe('workspace manager', () => {
     expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.workspace.windowId]));
     expect(opened.workspace.tabs.some((tab) => tab.url === 'https://workspace.local/next')).toBe(true);
   });
+
+  it('clears persisted workspace state when closed', async () => {
+    const { storage, manager } = await createManager();
+    await manager.ensureWorkspace();
+
+    await manager.close();
+
+    await expect(storage.load()).resolves.toBeNull();
+    await expect(manager.getWorkspaceInfo()).resolves.toBeNull();
+  });
 });
