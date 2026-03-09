@@ -21,6 +21,7 @@ class FakeBrowser implements WorkspaceBrowser {
   readonly windows = new Map<number, WorkspaceWindow>();
   readonly groups = new Map<number, { id: number; windowId: number; title: string; color: WorkspaceColor; collapsed: boolean }>();
   activeTabId: number | null = null;
+  readonly transientWindowMisses = new Map<number, number>();
 
   async getTab(tabId: number): Promise<WorkspaceTab | null> {
     return this.tabs.get(tabId) ?? null;
@@ -96,7 +97,16 @@ class FakeBrowser implements WorkspaceBrowser {
   }
 
   async getWindow(windowId: number): Promise<WorkspaceWindow | null> {
+    const remainingMisses = this.transientWindowMisses.get(windowId) ?? 0;
+    if (remainingMisses > 0) {
+      this.transientWindowMisses.set(windowId, remainingMisses - 1);
+      return null;
+    }
     return this.windows.get(windowId) ?? null;
+  }
+
+  failWindowLookups(windowId: number, count: number): void {
+    this.transientWindowMisses.set(windowId, count);
   }
 
   async createWindow(options: { url?: string; focused?: boolean }): Promise<WorkspaceWindow> {
@@ -396,5 +406,33 @@ describe('workspace manager', () => {
     expect(opened.workspace.tabIds).toHaveLength(1);
     expect(opened.workspace.primaryTabId).toBe(opened.tab.id);
     expect(opened.tab.url).toBe('https://workspace.local/first');
+  });
+
+  it('does not recreate the workspace while reading info or active tab', async () => {
+    const { browser, manager } = await createManager();
+    const ensured = await manager.ensureWorkspace();
+    const originalWindowId = ensured.workspace.windowId;
+
+    const info = await manager.getWorkspaceInfo();
+    const active = await manager.getActiveTab();
+
+    expect(info?.windowId).toBe(originalWindowId);
+    expect(active.workspace.windowId).toBe(originalWindowId);
+    expect(browser.windows.size).toBe(1);
+    expect(info?.tabs).toHaveLength(1);
+    expect(active.tab?.id).toBe(ensured.workspace.activeTabId);
+  });
+
+  it('does not recreate the workspace window when window lookup is temporarily unavailable', async () => {
+    const { browser, manager } = await createManager();
+    const ensured = await manager.ensureWorkspace();
+    const originalWindowId = ensured.workspace.windowId!;
+    browser.failWindowLookups(originalWindowId, 3);
+
+    const opened = await manager.openTab({ url: 'https://workspace.local/resilient', active: false, focus: false });
+
+    expect(opened.workspace.windowId).toBe(originalWindowId);
+    expect(browser.windows.size).toBe(1);
+    expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([originalWindowId]));
   });
 });

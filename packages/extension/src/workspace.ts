@@ -108,12 +108,7 @@ export class WorkspaceManager {
   }
 
   async getWorkspaceInfo(workspaceId = DEFAULT_WORKSPACE_ID): Promise<WorkspaceInfo | null> {
-    const state = await this.loadWorkspaceRecord(workspaceId);
-    if (!state) {
-      return null;
-    }
-    const repaired = await this.ensureWorkspace({ workspaceId, focus: false, initialUrl: DEFAULT_WORKSPACE_URL });
-    return repaired.workspace;
+    return this.inspectWorkspace(workspaceId);
   }
 
   async ensureWorkspace(options: WorkspaceEnsureOptions = {}): Promise<WorkspaceEnsureResult> {
@@ -124,7 +119,7 @@ export class WorkspaceManager {
     const created = !persisted;
     let state = this.normalizeState(persisted, workspaceId);
 
-    let window = state.windowId !== null ? await this.browser.getWindow(state.windowId) : null;
+    let window = state.windowId !== null ? await this.waitForWindow(state.windowId) : null;
     let tabs: WorkspaceTab[] = [];
     if (!window) {
       const createdWindow = await this.browser.createWindow({
@@ -212,6 +207,12 @@ export class WorkspaceManager {
     if (activeTab && !tabs.some((tab) => tab.id === activeTab.id)) {
       tabs = [...tabs, activeTab];
     }
+    if (tabs.length === 0 && state.primaryTabId !== null) {
+      const primaryTab = await this.waitForTrackedTab(state.primaryTabId, state.windowId);
+      if (primaryTab) {
+        tabs = [primaryTab];
+      }
+    }
     state.tabIds = [...new Set(tabs.map((tab) => tab.id))];
 
     if (options.focus === true && state.activeTabId !== null) {
@@ -240,26 +241,48 @@ export class WorkspaceManager {
       focus: false,
       initialUrl: options.url ?? DEFAULT_WORKSPACE_URL
     });
-    const state = { ...ensured.workspace };
+    let state = { ...ensured.workspace };
     const active = options.active === true;
     const desiredUrl = options.url ?? DEFAULT_WORKSPACE_URL;
-    const reusablePrimaryTab =
-      (ensured.created || ensured.repairActions.includes('recreated-window') || ensured.repairActions.includes('created-primary-tab')) &&
-      state.tabs.length === 1 &&
-      state.primaryTabId !== null
-        ? state.tabs.find((tab) => tab.id === state.primaryTabId) ?? null
-        : null;
+    let reusablePrimaryTab = await this.resolveReusablePrimaryTab(
+      state,
+      ensured.created || ensured.repairActions.includes('recreated-window') || ensured.repairActions.includes('created-primary-tab')
+    );
 
-    const createdTab = reusablePrimaryTab
-      ? await this.browser.updateTab(reusablePrimaryTab.id, {
-          url: desiredUrl,
-          active
-        })
-      : await this.createWorkspaceTab({
-          windowId: state.windowId,
-          url: desiredUrl,
-          active
-        });
+    let createdTab: WorkspaceTab;
+    try {
+      createdTab = reusablePrimaryTab
+        ? await this.browser.updateTab(reusablePrimaryTab.id, {
+            url: desiredUrl,
+            active
+          })
+        : await this.createWorkspaceTab({
+            windowId: state.windowId,
+            url: desiredUrl,
+            active
+          });
+    } catch (error) {
+      if (!this.isMissingWindowError(error)) {
+        throw error;
+      }
+      const repaired = await this.ensureWorkspace({
+        workspaceId: options.workspaceId,
+        focus: false,
+        initialUrl: desiredUrl
+      });
+      state = { ...repaired.workspace };
+      reusablePrimaryTab = await this.resolveReusablePrimaryTab(state, true);
+      createdTab = reusablePrimaryTab
+        ? await this.browser.updateTab(reusablePrimaryTab.id, {
+            url: desiredUrl,
+            active
+          })
+        : await this.createWorkspaceTab({
+            windowId: state.windowId,
+            url: desiredUrl,
+            active
+          });
+    }
     const nextTabIds = [...new Set([...state.tabIds, createdTab.id])];
     const groupId = await this.browser.groupTabs([createdTab.id], state.groupId ?? undefined);
     await this.browser.updateGroup(groupId, {
@@ -296,18 +319,31 @@ export class WorkspaceManager {
   }
 
   async listTabs(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ workspace: WorkspaceInfo; tabs: WorkspaceTab[] }> {
-    const ensured = await this.ensureWorkspace({ workspaceId });
+    const ensured = await this.inspectWorkspace(workspaceId);
+    if (!ensured) {
+      throw new Error(`Workspace ${workspaceId} does not exist`);
+    }
     return {
-      workspace: ensured.workspace,
-      tabs: ensured.workspace.tabs
+      workspace: ensured,
+      tabs: ensured.tabs
     };
   }
 
   async getActiveTab(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab | null }> {
-    const ensured = await this.ensureWorkspace({ workspaceId });
+    const ensured = await this.inspectWorkspace(workspaceId);
+    if (!ensured) {
+      const normalizedWorkspaceId = this.normalizeWorkspaceId(workspaceId);
+      return {
+        workspace: {
+          ...this.normalizeState(null, normalizedWorkspaceId),
+          tabs: []
+        },
+        tab: null
+      };
+    }
     return {
-      workspace: ensured.workspace,
-      tab: ensured.workspace.tabs.find((tab) => tab.id === ensured.workspace.activeTabId) ?? null
+      workspace: ensured,
+      tab: ensured.tabs.find((tab) => tab.id === ensured.activeTabId) ?? null
     };
   }
 
@@ -566,13 +602,6 @@ export class WorkspaceManager {
     let lastError: Error | null = null;
 
     while (Date.now() < deadline) {
-      const window = await this.browser.getWindow(options.windowId);
-      if (!window) {
-        lastError = new Error(`No window with id: ${options.windowId}.`);
-        await this.delay(50);
-        continue;
-      }
-
       try {
         return await this.browser.createTab({
           windowId: options.windowId,
@@ -589,6 +618,57 @@ export class WorkspaceManager {
     }
 
     throw lastError ?? new Error(`No window with id: ${options.windowId}.`);
+  }
+
+  private async inspectWorkspace(workspaceId = DEFAULT_WORKSPACE_ID): Promise<WorkspaceInfo | null> {
+    const state = await this.loadWorkspaceRecord(workspaceId);
+    if (!state) {
+      return null;
+    }
+
+    let tabs = await this.readTrackedTabs(state.tabIds, state.windowId);
+    const activeTab = state.activeTabId !== null ? await this.waitForTrackedTab(state.activeTabId, state.windowId, 300) : null;
+    if (activeTab && !tabs.some((tab) => tab.id === activeTab.id)) {
+      tabs = [...tabs, activeTab];
+    }
+    if (tabs.length === 0 && state.primaryTabId !== null) {
+      const primaryTab = await this.waitForTrackedTab(state.primaryTabId, state.windowId, 300);
+      if (primaryTab) {
+        tabs = [primaryTab];
+      }
+    }
+
+    return {
+      ...state,
+      tabIds: [...new Set(state.tabIds.concat(tabs.map((tab) => tab.id)))],
+      tabs
+    };
+  }
+
+  private async resolveReusablePrimaryTab(workspace: WorkspaceInfo, allowReuse: boolean): Promise<WorkspaceTab | null> {
+    if (!allowReuse || workspace.windowId === null) {
+      return null;
+    }
+    if (workspace.primaryTabId !== null) {
+      const trackedPrimary = workspace.tabs.find((tab) => tab.id === workspace.primaryTabId) ?? (await this.waitForTrackedTab(workspace.primaryTabId, workspace.windowId));
+      if (trackedPrimary) {
+        return trackedPrimary;
+      }
+    }
+    const windowTabs = await this.waitForWindowTabs(workspace.windowId, 750);
+    return windowTabs.length === 1 ? windowTabs[0]! : null;
+  }
+
+  private async waitForWindow(windowId: number, timeoutMs = 750): Promise<WorkspaceWindow | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const window = await this.browser.getWindow(windowId);
+      if (window) {
+        return window;
+      }
+      await this.delay(50);
+    }
+    return null;
   }
 
   private async waitForTrackedTab(tabId: number, windowId: number | null, timeoutMs = 1_000): Promise<WorkspaceTab | null> {

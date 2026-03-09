@@ -166,6 +166,37 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
+  test('keeps workspace inspection commands read-only and does not create extra blank tabs or windows', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page: humanPage } = await harness.openPage('/form.html');
+    const opened = await openWorkspacePage('/');
+    try {
+      const beforePages = harness.context.pages().length;
+      const beforeInfo = await workspaceInfo();
+      const beforeWorkspace = must(beforeInfo.workspace, 'Expected workspace metadata');
+
+      const active = runCli<{ tab: { id: number } | null }>(['workspace', 'get-active-tab'], harness.rpcPort, harness.dataDir);
+      const listed = runCli<{ tabs: Array<{ id: number }> }>(['workspace', 'list-tabs'], harness.rpcPort, harness.dataDir);
+      const afterInfo = await workspaceInfo();
+      const afterWorkspace = must(afterInfo.workspace, 'Expected workspace metadata');
+
+      expect(active.tab?.id).toBe(beforeWorkspace.activeTabId);
+      expect(listed.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([...beforeWorkspace.tabIds].sort((a, b) => a - b));
+      expect(afterWorkspace.windowId).toBe(beforeWorkspace.windowId);
+      expect(afterWorkspace.groupId).toBe(beforeWorkspace.groupId);
+      expect(afterWorkspace.tabIds).toEqual(beforeWorkspace.tabIds);
+      expect(harness.context.pages()).toHaveLength(beforePages);
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+      await expect(opened.page).toHaveURL(/\/\?/);
+    } finally {
+      await humanPage.close().catch(() => undefined);
+      await opened.page.close().catch(() => undefined);
+    }
+  });
+
   test('repairs missing group and tracked tabs without hijacking unrelated tabs in the workspace window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
