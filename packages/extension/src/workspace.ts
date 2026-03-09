@@ -79,6 +79,11 @@ export interface WorkspaceBrowser {
   updateGroup(groupId: number, options: { title?: string; color?: WorkspaceColor; collapsed?: boolean }): Promise<WorkspaceGroup>;
 }
 
+interface WorkspaceWindowOwnership {
+  workspaceTabs: WorkspaceTab[];
+  foreignTabs: WorkspaceTab[];
+}
+
 export interface WorkspaceEnsureOptions {
   workspaceId?: string;
   focus?: boolean;
@@ -164,6 +169,17 @@ export class WorkspaceManager {
       repairActions.push('pruned-missing-tabs');
     }
     state.tabIds = tabs.map((tab) => tab.id);
+
+    if (state.windowId !== null) {
+      const ownership = await this.inspectWorkspaceWindowOwnership(state, state.windowId);
+      if (ownership.foreignTabs.length > 0) {
+        const migrated = await this.moveWorkspaceIntoDedicatedWindow(state, ownership, initialUrl);
+        window = migrated.window;
+        tabs = migrated.tabs;
+        state.tabIds = tabs.map((tab) => tab.id);
+        repairActions.push('migrated-dirty-window');
+      }
+    }
 
     if (tabs.length === 0) {
       const primary = await this.createWorkspaceTab({
@@ -267,7 +283,10 @@ export class WorkspaceManager {
     const desiredUrl = options.url ?? DEFAULT_WORKSPACE_URL;
     let reusablePrimaryTab = await this.resolveReusablePrimaryTab(
       state,
-      ensured.created || ensured.repairActions.includes('recreated-window') || ensured.repairActions.includes('created-primary-tab')
+      ensured.created ||
+        ensured.repairActions.includes('recreated-window') ||
+        ensured.repairActions.includes('created-primary-tab') ||
+        ensured.repairActions.includes('migrated-dirty-window')
     );
 
     let createdTab: WorkspaceTab;
@@ -645,6 +664,97 @@ export class WorkspaceManager {
     }
 
     return null;
+  }
+
+  private async inspectWorkspaceWindowOwnership(state: WorkspaceRecord, windowId: number): Promise<WorkspaceWindowOwnership> {
+    const windowTabs = await this.waitForWindowTabs(windowId, 500);
+    const trackedIds = new Set(this.collectCandidateTabIds(state));
+    return {
+      workspaceTabs: windowTabs.filter((tab) => trackedIds.has(tab.id) || (state.groupId !== null && tab.groupId === state.groupId)),
+      foreignTabs: windowTabs.filter((tab) => !trackedIds.has(tab.id) && (state.groupId === null || tab.groupId !== state.groupId))
+    };
+  }
+
+  private async moveWorkspaceIntoDedicatedWindow(
+    state: WorkspaceRecord,
+    ownership: WorkspaceWindowOwnership,
+    initialUrl: string
+  ): Promise<{ window: WorkspaceWindow; tabs: WorkspaceTab[] }> {
+    const sourceTabs = this.orderWorkspaceTabsForMigration(state, ownership.workspaceTabs);
+    const seedUrl = sourceTabs[0]?.url ?? initialUrl;
+    const window = await this.browser.createWindow({
+      url: seedUrl || DEFAULT_WORKSPACE_URL,
+      focused: false
+    });
+    const recreatedTabs = await this.waitForWindowTabs(window.id);
+    const firstTab = recreatedTabs[0] ?? null;
+    const tabIdMap = new Map<number, number>();
+    if (sourceTabs[0] && firstTab) {
+      tabIdMap.set(sourceTabs[0].id, firstTab.id);
+    }
+
+    for (const sourceTab of sourceTabs.slice(1)) {
+      const recreated = await this.createWorkspaceTab({
+        windowId: window.id,
+        url: sourceTab.url,
+        active: false
+      });
+      recreatedTabs.push(recreated);
+      tabIdMap.set(sourceTab.id, recreated.id);
+    }
+
+    const nextPrimaryTabId =
+      (state.primaryTabId !== null ? tabIdMap.get(state.primaryTabId) : undefined) ??
+      firstTab?.id ??
+      recreatedTabs[0]?.id ??
+      null;
+    const nextActiveTabId =
+      (state.activeTabId !== null ? tabIdMap.get(state.activeTabId) : undefined) ?? nextPrimaryTabId ?? recreatedTabs[0]?.id ?? null;
+    if (nextActiveTabId !== null) {
+      await this.browser.updateTab(nextActiveTabId, { active: true });
+    }
+
+    state.windowId = window.id;
+    state.groupId = null;
+    state.tabIds = recreatedTabs.map((tab) => tab.id);
+    state.primaryTabId = nextPrimaryTabId;
+    state.activeTabId = nextActiveTabId;
+
+    for (const workspaceTab of ownership.workspaceTabs) {
+      await this.browser.closeTab(workspaceTab.id);
+    }
+
+    return {
+      window,
+      tabs: await this.readTrackedTabs(state.tabIds, state.windowId)
+    };
+  }
+
+  private orderWorkspaceTabsForMigration(state: WorkspaceRecord, tabs: WorkspaceTab[]): WorkspaceTab[] {
+    const ordered: WorkspaceTab[] = [];
+    const seen = new Set<number>();
+    const pushById = (tabId: number | null): void => {
+      if (typeof tabId !== 'number') {
+        return;
+      }
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || seen.has(tab.id)) {
+        return;
+      }
+      ordered.push(tab);
+      seen.add(tab.id);
+    };
+
+    pushById(state.primaryTabId);
+    pushById(state.activeTabId);
+    for (const tab of tabs) {
+      if (seen.has(tab.id)) {
+        continue;
+      }
+      ordered.push(tab);
+      seen.add(tab.id);
+    }
+    return ordered;
   }
 
   private async recoverWorkspaceTabs(state: WorkspaceRecord, existingTabs: WorkspaceTab[]): Promise<WorkspaceTab[]> {

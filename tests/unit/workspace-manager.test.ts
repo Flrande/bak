@@ -499,6 +499,43 @@ describe('workspace manager', () => {
     expect(opened.workspace.tabs.some((tab) => tab.url === 'https://workspace.local/next')).toBe(true);
   });
 
+  it('rehomes a workspace that was accidentally bound to a user window and preserves unrelated user tabs', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const userWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
+      const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === userWindow.id)!;
+      seedBrowser.activeTabId = humanTab.id;
+      const agentTab = await seedBrowser.createTab({
+        windowId: userWindow.id,
+        url: 'https://workspace.local/orphaned',
+        active: false
+      });
+
+      await seedStorage.save({
+        id: DEFAULT_WORKSPACE_ID,
+        label: 'bak agent',
+        color: 'blue',
+        windowId: userWindow.id,
+        groupId: null,
+        tabIds: [agentTab.id],
+        activeTabId: agentTab.id,
+        primaryTabId: agentTab.id
+      });
+    });
+
+    const humanWindowId = mustActiveWindowId(browser);
+    const orphanedTabId = mustTabIdByUrl(browser, humanWindowId, '/orphaned');
+    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
+
+    const opened = await manager.openTab({ url: 'https://workspace.local/recovered', active: false, focus: false });
+
+    expect(opened.workspace.windowId).not.toBe(humanWindowId);
+    expect(browser.windows.has(humanWindowId)).toBe(true);
+    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore.filter((tabId) => tabId !== orphanedTabId));
+    expect(tabsInWindow(browser, humanWindowId).every((tab) => !tab.url.includes('/orphaned'))).toBe(true);
+    expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.workspace.windowId]));
+    expect(opened.workspace.tabs.some((tab) => tab.url === 'https://workspace.local/recovered')).toBe(true);
+  });
+
   it('clears persisted workspace state when closed', async () => {
     const { storage, manager } = await createManager();
     await manager.ensureWorkspace();
@@ -509,3 +546,27 @@ describe('workspace manager', () => {
     await expect(manager.getWorkspaceInfo()).resolves.toBeNull();
   });
 });
+
+function tabsInWindow(browser: FakeBrowser, windowId: number): WorkspaceTab[] {
+  return [...browser.tabs.values()].filter((tab) => tab.windowId === windowId);
+}
+
+function mustActiveWindowId(browser: FakeBrowser): number {
+  const activeTabId = browser.activeTabId;
+  if (activeTabId === null) {
+    throw new Error('Expected active tab');
+  }
+  const activeTab = browser.tabs.get(activeTabId);
+  if (!activeTab) {
+    throw new Error('Expected active tab to exist');
+  }
+  return activeTab.windowId;
+}
+
+function mustTabIdByUrl(browser: FakeBrowser, windowId: number, urlPart: string): number {
+  const tab = tabsInWindow(browser, windowId).find((candidate) => candidate.url.includes(urlPart));
+  if (!tab) {
+    throw new Error(`Expected tab with url containing ${urlPart}`);
+  }
+  return tab.id;
+}

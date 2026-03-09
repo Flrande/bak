@@ -256,7 +256,10 @@ test.describe('CLI workspace workflows', () => {
       expect(repaired.workspace.groupId).not.toBe(originalGroupId);
       expect(repaired.workspace.tabIds).toHaveLength(1);
       expect(repaired.workspace.tabIds).not.toContain(ungrouped.tabId);
-      expect(repaired.repairActions).toEqual(expect.arrayContaining(['created-primary-tab', 'recreated-group']));
+      expect(repaired.repairActions).toEqual(expect.arrayContaining(['recreated-group']));
+      expect(
+        repaired.repairActions.some((action) => action === 'created-primary-tab' || action === 'migrated-dirty-window')
+      ).toBe(true);
     } finally {
       await opened.page.close().catch(() => undefined);
     }
@@ -355,5 +358,59 @@ test.describe('CLI workspace workflows', () => {
       expect(repaired.workspace.windowId).not.toBe(windowId);
     }
     expect(repaired.workspace.tabIds.length).toBeGreaterThan(0);
+  });
+
+  test('rehomes a stale workspace that was incorrectly bound to the human window', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const humanPage = harness.page;
+    await expect(humanPage).toHaveURL(/\/form\.html$/);
+    const activeBefore = await harness.rpcCall<{ tab: { id: number; windowId: number } | null }>('tabs.getActive');
+    const humanTabId = must(activeBefore.tab?.id, 'Expected active human tab');
+    const humanWindowId = must(activeBefore.tab?.windowId, 'Expected active human window');
+    const marker = `__orphaned=${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const orphanedUrl = `http://127.0.0.1:4173/spa.html?${marker}`;
+    const beforePages = new Set(harness.context.pages());
+    const orphaned = runCli<{ tabId: number }>(
+      ['tabs', 'new', '--window-id', String(humanWindowId), '--url', orphanedUrl],
+      harness.rpcPort,
+      harness.dataDir
+    );
+    await expect
+      .poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), {
+        timeout: 10_000
+      })
+      .toBe(true);
+
+    await harness.setWorkspaceState({
+      id: 'default',
+      label: 'bak agent',
+      color: 'blue',
+      windowId: humanWindowId,
+      groupId: null,
+      tabIds: [orphaned.tabId],
+      activeTabId: orphaned.tabId,
+      primaryTabId: orphaned.tabId
+    });
+
+    const opened = runCli<{ workspace: { windowId: number | null }; tab: { id: number; windowId: number; url: string } }>(
+      ['workspace', 'open-tab', '--url', HOME_URL],
+      harness.rpcPort,
+      harness.dataDir
+    );
+    const info = await workspaceInfo();
+    const workspace = must(info.workspace, 'Expected repaired workspace metadata');
+    const allTabs = await harness.rpcCall<{ tabs: Array<{ id: number; windowId: number; url: string }> }>('tabs.list');
+    const humanWindowTabs = allTabs.tabs.filter((tab) => tab.windowId === humanWindowId);
+
+    expect(workspace.windowId).not.toBe(humanWindowId);
+    expect(opened.workspace.windowId).toBe(workspace.windowId);
+    expect(opened.tab.windowId).toBe(workspace.windowId);
+    expect(humanWindowTabs.some((tab) => tab.id === humanTabId)).toBe(true);
+    expect(humanWindowTabs.some((tab) => tab.id === orphaned.tabId)).toBe(false);
+    expect(humanWindowTabs.every((tab) => !tab.url.includes(marker))).toBe(true);
+    await expect(humanPage).toHaveURL(/\/form\.html$/);
   });
 });

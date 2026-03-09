@@ -98,6 +98,7 @@ export interface E2EHarness {
   assertTraceHas(method: string): void;
   disconnectBridge(): Promise<void>;
   reconnectBridge(): Promise<void>;
+  setWorkspaceState(state: unknown | null): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -474,6 +475,21 @@ export async function createHarness(): Promise<E2EHarness> {
         .toBe(true);
     };
 
+    const setWorkspaceState = async (state: unknown | null): Promise<void> => {
+      await withPopup(async (popup) => {
+        await popup.evaluate(
+          async ({ workspaceState }) => {
+            if (workspaceState === null) {
+              await chrome.storage.local.remove('agentWorkspace');
+              return;
+            }
+            await chrome.storage.local.set({ agentWorkspace: workspaceState });
+          },
+          { workspaceState: state }
+        );
+      });
+    };
+
     const assertTraceHas = (method: string): void => {
       const traceDir = join(dataDir, 'traces');
       const traceFiles = existsSync(traceDir)
@@ -520,6 +536,7 @@ export async function createHarness(): Promise<E2EHarness> {
       assertTraceHas,
       disconnectBridge,
       reconnectBridge,
+      setWorkspaceState,
       dispose
     };
   } catch (error) {
