@@ -1019,7 +1019,7 @@ async function connectWebSocket(): Promise<void> {
     ws?.send(JSON.stringify({
       type: 'hello',
       role: 'extension',
-      version: '0.3.8',
+      version: '0.4.0',
       ts: Date.now()
     }));
   });

@@ -52,9 +52,9 @@ describe('doctor session.info health assessment', () => {
   it('detects aligned cli/extension versions', () => {
     const check = assessVersionCompatibility(
       {
-        extensionVersion: '0.3.8'
+        extensionVersion: '0.4.0'
       },
-      '0.3.8'
+      '0.4.0'
     );
 
     expect(check.ok).toBe(true);
@@ -64,9 +64,9 @@ describe('doctor session.info health assessment', () => {
   it('flags version drift', () => {
     const check = assessVersionCompatibility(
       {
-        extensionVersion: '0.3.7'
+        extensionVersion: '0.3.8'
       },
-      '0.3.8'
+      '0.4.0'
     );
 
     expect(check.ok).toBe(false);
@@ -75,7 +75,7 @@ describe('doctor session.info health assessment', () => {
   });
 
   it('warns when extension version is missing', () => {
-    const check = assessVersionCompatibility({}, '0.3.8');
+    const check = assessVersionCompatibility({}, '0.4.0');
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('missing');
@@ -87,7 +87,7 @@ describe('doctor session.info health assessment', () => {
       {
         extensionVersion: 'dev-build'
       },
-      '0.3.8-dev'
+      '0.4.0-dev'
     );
 
     expect(check.ok).toBe(false);
