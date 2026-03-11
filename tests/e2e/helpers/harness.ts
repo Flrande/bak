@@ -20,6 +20,7 @@ interface RpcResponse {
 }
 
 const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'page.reload']);
+const SESSION_METHODS_WITHOUT_SESSION = new Set(['session.create', 'session.list']);
 const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
 const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
 
@@ -170,7 +171,7 @@ async function waitForRpcReady(port: number): Promise<void> {
 }
 
 function isSessionScopedMethod(method: string): boolean {
-  return !method.startsWith('runtime.') && !method.startsWith('session.') && !method.startsWith('tabs.');
+  return !method.startsWith('runtime.') && !method.startsWith('tabs.') && !SESSION_METHODS_WITHOUT_SESSION.has(method);
 }
 
 function withSession(method: string, params: Record<string, unknown>, sessionId: string): Record<string, unknown> {
@@ -448,19 +449,37 @@ export async function createHarness(): Promise<E2EHarness> {
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
       const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
-      const beforePages = new Set(context.pages());
-      const opened = (await rpcCall<{ tab: { id: number; url: string } }>('session.openTab', {
-        url
-      })) as { tab: { id: number; url: string } };
+      const deadline = Date.now() + 45_000;
+      let opened: { tab: { id: number; url: string } } | null = null;
+      let lastError: unknown;
+      while (Date.now() < deadline) {
+        try {
+          await rpcCall('session.ensure');
+          opened = (await rpcCall<{ tab: { id: number; url: string } }>('session.openTab', {
+            url
+          })) as { tab: { id: number; url: string } };
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = error;
+          if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+      if (!opened) {
+        throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'openPage failed'));
+      }
 
       await expect
         .poll(
-          () => context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)),
+          () => context.pages().some((candidate) => candidate.url().includes(marker)),
           { timeout: 10_000 }
         )
         .toBe(true);
 
-      const target = context.pages().find((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker));
+      const target = context.pages().find((candidate) => candidate.url().includes(marker));
       if (!target) {
         throw new Error(`workspace page not found for ${url}`);
       }
