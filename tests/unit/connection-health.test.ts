@@ -8,7 +8,7 @@ describe('connection health', () => {
       {
         state: 'connected',
         reason: null,
-      extensionVersion: '0.4.0',
+      extensionVersion: '0.5.0',
         lastSeenTs: 9_900,
         lastRequestTs: 9_800,
         lastResponseTs: 9_850,
@@ -38,7 +38,7 @@ describe('connection health', () => {
       {
         state: 'connected',
         reason: null,
-      extensionVersion: '0.4.0',
+      extensionVersion: '0.5.0',
         lastSeenTs: 12_000,
         lastRequestTs: 12_000,
         lastResponseTs: 12_000,
@@ -99,7 +99,7 @@ describe('connection health', () => {
       {
         state: 'connected',
         reason: null,
-      extensionVersion: '0.4.0',
+      extensionVersion: '0.5.0',
         lastSeenTs: 19_500,
         lastRequestTs: 19_400,
         lastResponseTs: 19_450,
