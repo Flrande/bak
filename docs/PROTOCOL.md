@@ -67,7 +67,8 @@ Failure:
 
 - runtime health and compatibility come from `runtime.info`
 - agent-owned commands are session-scoped and require an explicit `sessionId`
-- the workspace is a dedicated browser window plus a dedicated tab group owned by one session
+- each session owns a dedicated browser window plus a dedicated tab group through an internal browser binding
+- `workspace` is an internal implementation detail and is not part of the public `MethodMap`
 - page, element, debug, network, keyboard, mouse, file, and context commands use the session current tab unless `tabId` overrides it
 - actions, reads, and debug output share the same effective frame and shadow context
 - `page.url`, `page.title`, DOM summaries, and debug state use the active document for the current context
