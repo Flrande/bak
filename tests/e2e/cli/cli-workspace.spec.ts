@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { runCli } from '../helpers/cli';
+import { runCli, runCliFailure } from '../helpers/cli';
 import { createHarness, type E2EHarness } from '../helpers/harness';
 
 const HOME_URL = 'http://127.0.0.1:4173/';
@@ -14,6 +14,20 @@ function must<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
+function runHarnessCli<T = unknown>(args: string[]): T {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+  return runCli(args, harness.rpcPort, harness.dataDir, harness.sessionId);
+}
+
+function runHarnessCliFailure(args: string[]): string {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+  return runCliFailure(args, harness.rpcPort, harness.dataDir, harness.sessionId);
+}
+
 async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: number; url: string }> {
   if (!harness) {
     throw new Error('Harness not initialized');
@@ -22,7 +36,7 @@ async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: num
   const separator = path.includes('?') ? '&' : '?';
   const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
   const beforePages = new Set(harness.context.pages());
-  const opened = runCli<{ tab: { id: number; url: string } }>(['workspace', 'open-tab', '--url', url], harness.rpcPort, harness.dataDir);
+  const opened = runHarnessCli<{ tab: { id: number; url: string } }>(['session', 'open-tab', '--url', url]);
   expect(opened.tab.url).toBe(url);
   await expect.poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), { timeout: 10_000 }).toBe(true);
   const page = must(
@@ -36,19 +50,19 @@ async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: num
   };
 }
 
-async function workspaceActiveTabId(): Promise<number> {
+async function sessionActiveTabId(): Promise<number> {
   if (!harness) {
     throw new Error('Harness not initialized');
   }
-  const active = await harness.rpcCall<{ tab: { id: number } | null }>('workspace.getActiveTab');
-  return must(active.tab?.id, 'Expected an active workspace tab');
+  const active = await harness.rpcCall<{ tab: { id: number } | null }>('session.getActiveTab');
+  return must(active.tab?.id, 'Expected an active session tab');
 }
 
-async function workspaceInfo(): Promise<{ workspace: { windowId: number | null; groupId: number | null; tabIds: number[]; activeTabId: number | null; tabs: Array<{ id: number; url: string; groupId?: number | null; windowId?: number }> } | null }> {
+async function sessionBrowserState(): Promise<{ browser: { windowId: number | null; groupId: number | null; tabIds: number[]; activeTabId: number | null; tabs: Array<{ id: number; url: string; groupId?: number | null; windowId?: number }> } | null }> {
   if (!harness) {
     throw new Error('Harness not initialized');
   }
-  return harness.rpcCall('workspace.info');
+  return harness.rpcCall('session.listTabs');
 }
 
 test.describe('CLI workspace workflows', () => {
@@ -66,7 +80,7 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
       const humanActiveBefore = await harness.rpcCall<{ tab: { windowId: number } | null }>('tabs.getActive');
       const humanWindowId = must(humanActiveBefore.tab?.windowId, 'Expected active human window');
@@ -74,15 +88,15 @@ test.describe('CLI workspace workflows', () => {
       await expect(humanPage.locator('#name-input')).toBeVisible();
 
       const workspace = await openWorkspacePage('/spa.html');
-      const info = await workspaceInfo();
-      const workspaceWindowId = must(info.workspace?.windowId, 'Expected workspace window id');
+      const info = await sessionBrowserState();
+      const workspaceWindowId = must(info.browser?.windowId, 'Expected workspace window id');
       await expect(workspace.page).toHaveURL(/\/spa\.html\?/);
 
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
       await expect(humanPage.locator('#name-input')).toBeVisible();
       expect(workspaceWindowId).not.toBe(humanWindowId);
 
-      const workspaceTabId = await workspaceActiveTabId();
+      const workspaceTabId = await sessionActiveTabId();
       const workspaceUrl = await harness.rpcCall<{ url: string }>('page.url', { tabId: workspaceTabId });
 
       expect(workspaceUrl.url).toMatch(/\/spa\.html(\?|$)/);
@@ -91,25 +105,24 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
-  test('uses the active browser tab without creating a workspace when no workspace exists', async () => {
+  test('keeps workspace inspection commands read-only before the first workspace tab exists', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
-      const beforeInfo = await workspaceInfo();
+      const beforeInfo = runHarnessCli<{ browser: null }>(['session', 'list-tabs']);
+      const beforeActive = runHarnessCli<{ tab: null }>(['session', 'get-active-tab']);
       const beforePageCount = harness.context.pages().length;
-      expect(beforeInfo.workspace).toBeNull();
-
-      const current = runCli<{ url: string }>(['page', 'url'], harness.rpcPort, harness.dataDir);
-
-      expect(current.url).toMatch(/\/form\.html\?/);
+      expect(beforeInfo.browser).toBeNull();
+      expect(beforeActive.tab).toBeNull();
+      expect(runHarnessCliFailure(['page', 'url'])).toContain('Session has no active tab');
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
       expect(harness.context.pages()).toHaveLength(beforePageCount);
 
-      const afterInfo = await workspaceInfo();
-      expect(afterInfo.workspace).toBeNull();
+      const afterInfo = runHarnessCli<{ browser: null }>(['session', 'list-tabs']);
+      expect(afterInfo.browser).toBeNull();
     } finally {
       await humanPage.close();
     }
@@ -120,14 +133,14 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
       await openWorkspacePage('/');
 
-      runCli(['page', 'goto', SPA_URL], harness.rpcPort, harness.dataDir);
-      runCli(['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['page', 'goto', SPA_URL]);
+      runHarnessCli(['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000']);
 
-      const workspaceTabId = await workspaceActiveTabId();
+      const workspaceTabId = await sessionActiveTabId();
       const workspaceUrl = await harness.rpcCall<{ url: string }>('page.url', { tabId: workspaceTabId });
 
       expect(workspaceUrl.url).toBe(SPA_URL);
@@ -142,25 +155,21 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     const first = await openWorkspacePage('/network.html');
     const second = await openWorkspacePage('/');
     try {
-      const currentBefore = runCli<{ tab: { id: number } | null }>(['workspace', 'get-active-tab'], harness.rpcPort, harness.dataDir);
+      const currentBefore = runHarnessCli<{ tab: { id: number } | null }>(['session', 'get-active-tab']);
       expect(currentBefore.tab?.id).toBe(second.tabId);
 
-      const switched = runCli<{ tab: { id: number } }>(
-        ['workspace', 'set-active-tab', '--tab-id', String(first.tabId)],
-        harness.rpcPort,
-        harness.dataDir
-      );
+      const switched = runHarnessCli<{ tab: { id: number } }>(['session', 'set-active-tab', '--tab-id', String(first.tabId)]);
       expect(switched.tab.id).toBe(first.tabId);
 
-      const currentAfter = runCli<{ tab: { id: number } | null }>(['workspace', 'get-active-tab'], harness.rpcPort, harness.dataDir);
+      const currentAfter = runHarnessCli<{ tab: { id: number } | null }>(['session', 'get-active-tab']);
       expect(currentAfter.tab?.id).toBe(first.tabId);
 
-      runCli(['page', 'goto', SPA_URL], harness.rpcPort, harness.dataDir);
-      runCli(['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['page', 'goto', SPA_URL]);
+      runHarnessCli(['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000']);
 
       await expect(first.page).toHaveURL(SPA_URL);
       await expect(second.page).toHaveURL(/\/\?/);
@@ -177,17 +186,17 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     const opened = await openWorkspacePage('/');
     try {
       const beforePages = harness.context.pages().length;
-      const beforeInfo = await workspaceInfo();
-      const beforeWorkspace = must(beforeInfo.workspace, 'Expected workspace metadata');
+      const beforeInfo = await sessionBrowserState();
+      const beforeWorkspace = must(beforeInfo.browser, 'Expected session browser metadata');
 
-      const active = runCli<{ tab: { id: number } | null }>(['workspace', 'get-active-tab'], harness.rpcPort, harness.dataDir);
-      const listed = runCli<{ tabs: Array<{ id: number }> }>(['workspace', 'list-tabs'], harness.rpcPort, harness.dataDir);
-      const afterInfo = await workspaceInfo();
-      const afterWorkspace = must(afterInfo.workspace, 'Expected workspace metadata');
+      const active = runHarnessCli<{ tab: { id: number } | null }>(['session', 'get-active-tab']);
+      const listed = runHarnessCli<{ tabs: Array<{ id: number }> }>(['session', 'list-tabs']);
+      const afterInfo = await sessionBrowserState();
+      const afterWorkspace = must(afterInfo.browser, 'Expected session browser metadata');
 
       expect(active.tab?.id).toBe(beforeWorkspace.activeTabId);
       expect(listed.tabs.map((tab) => tab.id).sort((a, b) => a - b)).toEqual([...beforeWorkspace.tabIds].sort((a, b) => a - b));
@@ -210,13 +219,13 @@ test.describe('CLI workspace workflows', () => {
 
     const first = await openWorkspacePage('/');
     try {
-      const before = must((await workspaceInfo()).workspace, 'Expected workspace metadata');
+      const before = must((await sessionBrowserState()).browser, 'Expected session browser metadata');
       const openedAgain = await openWorkspacePage('/network.html');
-      const after = must((await workspaceInfo()).workspace, 'Expected workspace metadata');
-      const ensured = runCli<{ workspace: { windowId: number | null; tabIds: number[] } }>(['workspace', 'ensure'], harness.rpcPort, harness.dataDir);
+      const after = must((await sessionBrowserState()).browser, 'Expected session browser metadata');
+      const ensured = runHarnessCli<{ browser: { windowId: number | null; tabIds: number[] } }>(['session', 'ensure']);
 
       expect(after.windowId).toBe(before.windowId);
-      expect(ensured.workspace.windowId).toBe(before.windowId);
+      expect(ensured.browser.windowId).toBe(before.windowId);
       expect(new Set(after.tabs.map((tab) => tab.windowId)).size).toBe(1);
       expect(after.tabs.some((tab) => tab.url.includes('/network.html'))).toBe(true);
       await openedAgain.page.close().catch(() => undefined);
@@ -232,30 +241,32 @@ test.describe('CLI workspace workflows', () => {
 
     const opened = await openWorkspacePage('/');
     try {
-      const before = await workspaceInfo();
-      const workspace = must(before.workspace, 'Expected workspace metadata');
+      const before = await sessionBrowserState();
+      const workspace = must(before.browser, 'Expected session browser metadata');
       const originalGroupId = must(workspace.groupId, 'Expected original group id');
 
-      const ungrouped = runCli<{ tabId: number }>(
-        ['tabs', 'new', '--window-id', String(workspace.windowId), '--url', 'http://127.0.0.1:4173/network.html'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const tracked = runCli<{ tabs: Array<{ id: number }> }>(['workspace', 'list-tabs'], harness.rpcPort, harness.dataDir);
+      const ungrouped = runHarnessCli<{ tabId: number }>([
+        'tabs',
+        'new',
+        '--window-id',
+        String(workspace.windowId),
+        '--url',
+        'http://127.0.0.1:4173/network.html'
+      ]);
+      const tracked = runHarnessCli<{ tabs: Array<{ id: number }> }>(['session', 'list-tabs']);
       for (const tab of tracked.tabs) {
-        runCli(['tabs', 'close', String(tab.id)], harness.rpcPort, harness.dataDir);
+        runHarnessCli(['tabs', 'close', String(tab.id)]);
       }
 
-      const repaired = runCli<{ workspace: { groupId: number | null; tabIds: number[]; tabs: Array<{ id: number }> }; repaired: boolean; repairActions: string[] }>(
-        ['workspace', 'ensure'],
-        harness.rpcPort,
-        harness.dataDir
-      );
+      const repaired = runHarnessCli<{ browser: { groupId: number | null; tabIds: number[]; tabs: Array<{ id: number }> }; repaired: boolean; repairActions: string[] }>([
+        'session',
+        'ensure'
+      ]);
 
       expect(repaired.repaired).toBe(true);
-      expect(repaired.workspace.groupId).not.toBe(originalGroupId);
-      expect(repaired.workspace.tabIds).toHaveLength(1);
-      expect(repaired.workspace.tabIds).not.toContain(ungrouped.tabId);
+      expect(repaired.browser.groupId).not.toBe(originalGroupId);
+      expect(repaired.browser.tabIds).toHaveLength(1);
+      expect(repaired.browser.tabIds).not.toContain(ungrouped.tabId);
       expect(repaired.repairActions).toEqual(expect.arrayContaining(['recreated-group']));
       expect(
         repaired.repairActions.some((action) => action === 'created-primary-tab' || action === 'migrated-dirty-window')
@@ -270,17 +281,17 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
       await openWorkspacePage('/');
-      runCli(['page', 'goto', SPA_URL], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['page', 'goto', SPA_URL]);
 
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
 
-      runCli(['workspace', 'focus'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['session', 'focus']);
 
       const afterFocus = await harness.rpcCall<{ tab: { id: number } | null }>('tabs.getActive');
-      expect(afterFocus.tab?.id).toBe(await workspaceActiveTabId());
+      expect(afterFocus.tab?.id).toBe(await sessionActiveTabId());
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
     } finally {
       await humanPage.close();
@@ -295,8 +306,8 @@ test.describe('CLI workspace workflows', () => {
     const first = await openWorkspacePage('/');
     const second = await openWorkspacePage('/spa.html');
     try {
-      const info = await workspaceInfo();
-      const workspace = must(info.workspace, 'Expected workspace metadata');
+      const info = await sessionBrowserState();
+      const workspace = must(info.browser, 'Expected session browser metadata');
       const groupId = must(workspace.groupId, 'Expected workspace group id');
 
       expect(workspace.tabs.length).toBeGreaterThanOrEqual(2);
@@ -313,15 +324,16 @@ test.describe('CLI workspace workflows', () => {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
-      const opened = runCli<{ workspace: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>(
-        ['workspace', 'open-tab', '--url', 'http://127.0.0.1:4173'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const info = await workspaceInfo();
-      const workspace = must(info.workspace, 'Expected workspace metadata');
+      const opened = runHarnessCli<{ browser: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>([
+        'session',
+        'open-tab',
+        '--url',
+        'http://127.0.0.1:4173'
+      ]);
+      const info = await sessionBrowserState();
+      const workspace = must(info.browser, 'Expected session browser metadata');
 
       expect(workspace.windowId).not.toBeNull();
       expect(opened.tab.windowId).toBe(workspace.windowId);
@@ -332,24 +344,21 @@ test.describe('CLI workspace workflows', () => {
     }
   });
 
-  test('clears workspace state on close so later default commands fall back to the human tab', async () => {
+  test('session.close tears down the dedicated browser state and invalidates later session-scoped commands', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
 
-    const { page: humanPage } = await harness.openPage('/form.html');
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
     const opened = await openWorkspacePage('/spa.html');
     try {
-      const before = must((await workspaceInfo()).workspace, 'Expected workspace metadata before close');
+      const before = must((await sessionBrowserState()).browser, 'Expected session browser metadata before close');
       expect(before.windowId).not.toBeNull();
 
-      const closed = runCli<{ ok: boolean }>(['workspace', 'close'], harness.rpcPort, harness.dataDir);
-      expect(closed.ok).toBe(true);
+      const closed = runHarnessCli<{ closed: boolean }>(['session', 'close']);
+      expect(closed.closed).toBe(true);
 
-      await expect.poll(async () => (await workspaceInfo()).workspace, { timeout: 10_000 }).toBeNull();
-
-      const current = runCli<{ url: string }>(['page', 'url'], harness.rpcPort, harness.dataDir);
-      expect(current.url).toMatch(/\/form\.html\?/);
+      expect(runHarnessCliFailure(['page', 'url'])).toContain('Session not found');
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
     } finally {
       await humanPage.close().catch(() => undefined);
@@ -363,25 +372,24 @@ test.describe('CLI workspace workflows', () => {
     }
 
     const opened = await openWorkspacePage('/');
-    const before = await workspaceInfo();
-    const windowId = before.workspace?.windowId;
-    const tracked = runCli<{ tabs: Array<{ id: number }> }>(['workspace', 'list-tabs'], harness.rpcPort, harness.dataDir);
+    const before = await sessionBrowserState();
+    const windowId = before.browser?.windowId;
+    const tracked = runHarnessCli<{ tabs: Array<{ id: number }> }>(['session', 'list-tabs']);
     for (const tab of tracked.tabs) {
-      runCli(['tabs', 'close', String(tab.id)], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['tabs', 'close', String(tab.id)]);
     }
 
-    const repaired = runCli<{ workspace: { windowId: number | null; tabIds: number[] }; repaired: boolean; repairActions: string[] }>(
-      ['workspace', 'ensure'],
-      harness.rpcPort,
-      harness.dataDir
-    );
+    const repaired = runHarnessCli<{ browser: { windowId: number | null; tabIds: number[] }; repaired: boolean; repairActions: string[] }>([
+      'session',
+      'ensure'
+    ]);
 
     expect(repaired.repaired).toBe(true);
-    expect(repaired.workspace.windowId).not.toBeNull();
+    expect(repaired.browser.windowId).not.toBeNull();
     if (windowId !== null && windowId !== undefined) {
-      expect(repaired.workspace.windowId).not.toBe(windowId);
+      expect(repaired.browser.windowId).not.toBe(windowId);
     }
-    expect(repaired.workspace.tabIds.length).toBeGreaterThan(0);
+    expect(repaired.browser.tabIds.length).toBeGreaterThan(0);
   });
 
   test('rehomes a stale workspace that was incorrectly bound to the human window', async () => {
@@ -397,11 +405,7 @@ test.describe('CLI workspace workflows', () => {
     const marker = `__orphaned=${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const orphanedUrl = `http://127.0.0.1:4173/spa.html?${marker}`;
     const beforePages = new Set(harness.context.pages());
-    const orphaned = runCli<{ tabId: number }>(
-      ['tabs', 'new', '--window-id', String(humanWindowId), '--url', orphanedUrl],
-      harness.rpcPort,
-      harness.dataDir
-    );
+    const orphaned = runHarnessCli<{ tabId: number }>(['tabs', 'new', '--window-id', String(humanWindowId), '--url', orphanedUrl]);
     await expect
       .poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), {
         timeout: 10_000
@@ -409,7 +413,7 @@ test.describe('CLI workspace workflows', () => {
       .toBe(true);
 
     await harness.setWorkspaceState({
-      id: 'default',
+      id: harness.bindingId,
       label: 'bak agent',
       color: 'blue',
       windowId: humanWindowId,
@@ -419,18 +423,19 @@ test.describe('CLI workspace workflows', () => {
       primaryTabId: orphaned.tabId
     });
 
-    const opened = runCli<{ workspace: { windowId: number | null }; tab: { id: number; windowId: number; url: string } }>(
-      ['workspace', 'open-tab', '--url', HOME_URL],
-      harness.rpcPort,
-      harness.dataDir
-    );
-    const info = await workspaceInfo();
-    const workspace = must(info.workspace, 'Expected repaired workspace metadata');
+    const opened = runHarnessCli<{ browser: { windowId: number | null }; tab: { id: number; windowId: number; url: string } }>([
+      'session',
+      'open-tab',
+      '--url',
+      HOME_URL
+    ]);
+    const info = await sessionBrowserState();
+    const workspace = must(info.browser, 'Expected repaired session browser metadata');
     const allTabs = await harness.rpcCall<{ tabs: Array<{ id: number; windowId: number; url: string }> }>('tabs.list');
     const humanWindowTabs = allTabs.tabs.filter((tab) => tab.windowId === humanWindowId);
 
     expect(workspace.windowId).not.toBe(humanWindowId);
-    expect(opened.workspace.windowId).toBe(workspace.windowId);
+    expect(opened.browser.windowId).toBe(workspace.windowId);
     expect(opened.tab.windowId).toBe(workspace.windowId);
     expect(humanWindowTabs.some((tab) => tab.id === humanTabId)).toBe(true);
     expect(humanWindowTabs.some((tab) => tab.id === orphaned.tabId)).toBe(false);

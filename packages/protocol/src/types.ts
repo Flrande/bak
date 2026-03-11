@@ -14,8 +14,8 @@ export const BakErrorCode = {
 export type BakErrorCodeValue = (typeof BakErrorCode)[keyof typeof BakErrorCode];
 
 export const JSON_RPC_VERSION = '2.0' as const;
-export const PROTOCOL_VERSION = 'v4' as const;
-export const COMPATIBLE_PROTOCOL_VERSIONS = ['v4'] as const;
+export const PROTOCOL_VERSION = 'v5' as const;
+export const COMPATIBLE_PROTOCOL_VERSIONS = ['v5'] as const;
 
 export type CompatibleProtocolVersion = (typeof COMPATIBLE_PROTOCOL_VERSIONS)[number];
 
@@ -189,8 +189,7 @@ export interface PolicyAuditEntry extends PolicyDecision {
   };
 }
 
-interface SessionInfoResult {
-  sessionId: string | null;
+export interface RuntimeInfoResult {
   paired: boolean;
   extensionConnected: boolean;
   connectionState: 'connecting' | 'connected' | 'disconnected';
@@ -198,15 +197,6 @@ interface SessionInfoResult {
   protocolVersion: typeof PROTOCOL_VERSION;
   compatibleProtocolVersions: CompatibleProtocolVersion[];
   extensionVersion: string | null;
-  activeTab: {
-    id: number;
-    title: string;
-    url: string;
-  } | null;
-  context: {
-    frameDepth: number;
-    shadowDepth: number;
-  };
   heartbeatStale: boolean;
   heartbeatAgeMs: number | null;
   staleAfterMs: number;
@@ -219,6 +209,31 @@ interface SessionInfoResult {
   bridgeTotalTimeouts: number;
   bridgeTotalNotReady: number;
   capabilityCount: number;
+  activeSessionCount: number;
+}
+
+export interface SessionContextSnapshot {
+  tabId: number | null;
+  framePath: string[];
+  shadowPath: string[];
+}
+
+export interface SessionDescriptor {
+  sessionId: string;
+  clientName?: string;
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export interface SessionSummary extends SessionDescriptor {
+  activeTab: TabInfo | null;
+  currentContext: SessionContextSnapshot;
+}
+
+export interface SessionInfoResult {
+  session: SessionDescriptor;
+  activeTab: TabInfo | null;
+  currentContext: SessionContextSnapshot;
 }
 
 export interface TabInfo {
@@ -230,10 +245,7 @@ export interface TabInfo {
   groupId?: number | null;
 }
 
-export interface WorkspaceInfo {
-  id: string;
-  label: string;
-  color: string;
+export interface SessionBrowserState {
   windowId: number | null;
   groupId: number | null;
   tabIds: number[];
@@ -243,72 +255,77 @@ export interface WorkspaceInfo {
 }
 
 export interface MethodMap {
+  'runtime.info': {
+    params: {};
+    result: RuntimeInfoResult;
+  };
   'session.create': {
     params: { clientName?: string; protocolVersion?: CompatibleProtocolVersion };
-    result: { sessionId: string; protocolVersion: typeof PROTOCOL_VERSION; compatibleProtocolVersions: CompatibleProtocolVersion[] };
+    result: {
+      sessionId: string;
+      clientName?: string;
+      createdAt: string;
+      protocolVersion: typeof PROTOCOL_VERSION;
+      compatibleProtocolVersions: CompatibleProtocolVersion[];
+    };
   };
-  'session.close': { params: { sessionId?: string }; result: { closed: true } };
+  'session.list': {
+    params: {};
+    result: { sessions: SessionSummary[] };
+  };
+  'session.close': { params: { sessionId: string }; result: { closed: true } };
   'session.info': {
-    params: { sessionId?: string };
+    params: { sessionId: string };
     result: SessionInfoResult;
+  };
+  'session.ensure': {
+    params: { sessionId: string; url?: string; focus?: boolean };
+    result: { browser: SessionBrowserState; created: boolean; repaired: boolean; repairActions: string[] };
+  };
+  'session.openTab': {
+    params: { sessionId: string; url?: string; active?: boolean; focus?: boolean };
+    result: { browser: SessionBrowserState; tab: TabInfo };
+  };
+  'session.listTabs': {
+    params: { sessionId: string };
+    result: { browser: SessionBrowserState | null; tabs: TabInfo[] };
+  };
+  'session.getActiveTab': {
+    params: { sessionId: string };
+    result: { browser: SessionBrowserState | null; tab: TabInfo | null };
+  };
+  'session.setActiveTab': {
+    params: { sessionId: string; tabId: number };
+    result: { browser: SessionBrowserState; tab: TabInfo };
+  };
+  'session.focus': {
+    params: { sessionId: string };
+    result: { ok: true; browser: SessionBrowserState };
+  };
+  'session.reset': {
+    params: { sessionId: string; url?: string; focus?: boolean };
+    result: { browser: SessionBrowserState; created: boolean; repaired: boolean; repairActions: string[] };
   };
 
   'tabs.list': {
-    params: { sessionId?: string };
+    params: {};
     result: { tabs: TabInfo[] };
   };
   'tabs.focus': { params: { tabId: number }; result: { ok: true } };
   'tabs.new': {
-    params: { url?: string; active?: boolean; windowId?: number; workspaceId?: string; addToGroup?: boolean };
-    result: { tabId: number; windowId?: number; groupId?: number | null; workspaceId?: string };
+    params: { url?: string; active?: boolean; windowId?: number; addToGroup?: boolean };
+    result: { tabId: number; windowId?: number; groupId?: number | null };
   };
   'tabs.close': { params: { tabId: number }; result: { ok: true } };
-  'tabs.getActive': { params: { sessionId?: string }; result: { tab: TabInfo | null } };
+  'tabs.getActive': { params: {}; result: { tab: TabInfo | null } };
   'tabs.get': { params: { tabId: number }; result: { tab: TabInfo } };
 
-  'workspace.ensure': {
-    params: { workspaceId?: string; url?: string; focus?: boolean };
-    result: { workspace: WorkspaceInfo; created: boolean; repaired: boolean; repairActions: string[] };
-  };
-  'workspace.info': {
-    params: { workspaceId?: string };
-    result: { workspace: WorkspaceInfo | null };
-  };
-  'workspace.openTab': {
-    params: { workspaceId?: string; url?: string; active?: boolean; focus?: boolean };
-    result: { workspace: WorkspaceInfo; tab: TabInfo };
-  };
-  'workspace.listTabs': {
-    params: { workspaceId?: string };
-    result: { workspace: WorkspaceInfo; tabs: TabInfo[] };
-  };
-  'workspace.getActiveTab': {
-    params: { workspaceId?: string };
-    result: { workspace: WorkspaceInfo; tab: TabInfo | null };
-  };
-  'workspace.setActiveTab': {
-    params: { workspaceId?: string; tabId: number };
-    result: { workspace: WorkspaceInfo; tab: TabInfo };
-  };
-  'workspace.focus': {
-    params: { workspaceId?: string };
-    result: { ok: true; workspace: WorkspaceInfo };
-  };
-  'workspace.reset': {
-    params: { workspaceId?: string; url?: string; focus?: boolean };
-    result: { workspace: WorkspaceInfo; created: boolean; repaired: boolean; repairActions: string[] };
-  };
-  'workspace.close': {
-    params: { workspaceId?: string };
-    result: { ok: true };
-  };
-
-  'page.goto': { params: { url: string; tabId?: number; workspaceId?: string }; result: { ok: true } };
-  'page.back': { params: { tabId?: number; workspaceId?: string }; result: { ok: true } };
-  'page.forward': { params: { tabId?: number; workspaceId?: string }; result: { ok: true } };
-  'page.reload': { params: { tabId?: number; workspaceId?: string }; result: { ok: true } };
+  'page.goto': { params: { sessionId: string; url: string; tabId?: number }; result: { ok: true } };
+  'page.back': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
+  'page.forward': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
+  'page.reload': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
   'page.snapshot': {
-    params: { tabId?: number; workspaceId?: string; includeBase64?: boolean };
+    params: { sessionId: string; tabId?: number; includeBase64?: boolean };
     result: {
       traceId: string;
       imagePath: string;
@@ -319,71 +336,71 @@ export interface MethodMap {
   };
   'page.wait': {
     params: {
+      sessionId: string;
       tabId?: number;
-      workspaceId?: string;
       mode: 'selector' | 'text' | 'url';
       value: string;
       timeoutMs?: number;
     };
     result: { ok: true };
   };
-  'page.title': { params: { tabId?: number; workspaceId?: string }; result: { title: string } };
-  'page.url': { params: { tabId?: number; workspaceId?: string }; result: { url: string } };
+  'page.title': { params: { sessionId: string; tabId?: number }; result: { title: string } };
+  'page.url': { params: { sessionId: string; tabId?: number }; result: { url: string } };
   'page.text': {
-    params: { tabId?: number; workspaceId?: string; maxChunks?: number; chunkSize?: number };
+    params: { sessionId: string; tabId?: number; maxChunks?: number; chunkSize?: number };
     result: { chunks: PageTextChunk[] };
   };
   'page.dom': {
-    params: { tabId?: number; workspaceId?: string };
+    params: { sessionId: string; tabId?: number };
     result: { summary: PageDomSummary };
   };
   'page.accessibilityTree': {
-    params: { tabId?: number; workspaceId?: string; limit?: number };
+    params: { sessionId: string; tabId?: number; limit?: number };
     result: { nodes: AccessibilityNode[] };
   };
   'page.scrollTo': {
-    params: { tabId?: number; workspaceId?: string; x?: number; y?: number; behavior?: 'auto' | 'smooth' };
+    params: { sessionId: string; tabId?: number; x?: number; y?: number; behavior?: 'auto' | 'smooth' };
     result: { ok: true; x: number; y: number };
   };
   'page.viewport': {
-    params: { tabId?: number; workspaceId?: string; width?: number; height?: number };
+    params: { sessionId: string; tabId?: number; width?: number; height?: number };
     result: { width: number; height: number; devicePixelRatio: number };
   };
   'page.metrics': {
-    params: { tabId?: number; workspaceId?: string };
+    params: { sessionId: string; tabId?: number };
     result: PageMetrics;
   };
 
-  'element.click': { params: { tabId?: number; workspaceId?: string; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
+  'element.click': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
   'element.type': {
-    params: { tabId?: number; workspaceId?: string; locator: Locator; text: string; clear?: boolean; requiresConfirm?: boolean };
+    params: { sessionId: string; tabId?: number; locator: Locator; text: string; clear?: boolean; requiresConfirm?: boolean };
     result: { ok: true };
   };
   'element.scroll': {
-    params: { tabId?: number; workspaceId?: string; locator?: Locator; dx?: number; dy?: number };
+    params: { sessionId: string; tabId?: number; locator?: Locator; dx?: number; dy?: number };
     result: { ok: true };
   };
-  'element.hover': { params: { tabId?: number; workspaceId?: string; locator: Locator }; result: { ok: true } };
-  'element.doubleClick': { params: { tabId?: number; workspaceId?: string; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
-  'element.rightClick': { params: { tabId?: number; workspaceId?: string; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
+  'element.hover': { params: { sessionId: string; tabId?: number; locator: Locator }; result: { ok: true } };
+  'element.doubleClick': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
+  'element.rightClick': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
   'element.dragDrop': {
-    params: { tabId?: number; workspaceId?: string; from: Locator; to: Locator; requiresConfirm?: boolean };
+    params: { sessionId: string; tabId?: number; from: Locator; to: Locator; requiresConfirm?: boolean };
     result: { ok: true };
   };
   'element.select': {
-    params: { tabId?: number; workspaceId?: string; locator: Locator; values: string[]; requiresConfirm?: boolean };
+    params: { sessionId: string; tabId?: number; locator: Locator; values: string[]; requiresConfirm?: boolean };
     result: { ok: true };
   };
-  'element.check': { params: { tabId?: number; workspaceId?: string; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
-  'element.uncheck': { params: { tabId?: number; workspaceId?: string; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
+  'element.check': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
+  'element.uncheck': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
   'element.scrollIntoView': {
-    params: { tabId?: number; workspaceId?: string; locator: Locator; behavior?: 'auto' | 'smooth' };
+    params: { sessionId: string; tabId?: number; locator: Locator; behavior?: 'auto' | 'smooth' };
     result: { ok: true };
   };
-  'element.focus': { params: { tabId?: number; workspaceId?: string; locator: Locator }; result: { ok: true } };
-  'element.blur': { params: { tabId?: number; workspaceId?: string; locator: Locator }; result: { ok: true } };
+  'element.focus': { params: { sessionId: string; tabId?: number; locator: Locator }; result: { ok: true } };
+  'element.blur': { params: { sessionId: string; tabId?: number; locator: Locator }; result: { ok: true } };
   'element.get': {
-    params: { tabId?: number; workspaceId?: string; locator: Locator };
+    params: { sessionId: string; tabId?: number; locator: Locator };
     result: {
       element: ElementMapItem;
       value?: string;
@@ -392,44 +409,52 @@ export interface MethodMap {
     };
   };
 
-  'keyboard.press': { params: { tabId?: number; workspaceId?: string; key: string }; result: { ok: true } };
-  'keyboard.type': { params: { tabId?: number; workspaceId?: string; text: string; delayMs?: number }; result: { ok: true } };
-  'keyboard.hotkey': { params: { tabId?: number; workspaceId?: string; keys: string[] }; result: { ok: true } };
+  'keyboard.press': { params: { sessionId: string; tabId?: number; key: string }; result: { ok: true } };
+  'keyboard.type': { params: { sessionId: string; tabId?: number; text: string; delayMs?: number }; result: { ok: true } };
+  'keyboard.hotkey': { params: { sessionId: string; tabId?: number; keys: string[] }; result: { ok: true } };
 
-  'mouse.move': { params: { tabId?: number; workspaceId?: string; x: number; y: number }; result: { ok: true } };
-  'mouse.click': { params: { tabId?: number; workspaceId?: string; x: number; y: number; button?: 'left' | 'middle' | 'right' }; result: { ok: true } };
-  'mouse.wheel': { params: { tabId?: number; workspaceId?: string; dx?: number; dy?: number }; result: { ok: true } };
+  'mouse.move': { params: { sessionId: string; tabId?: number; x: number; y: number }; result: { ok: true } };
+  'mouse.click': { params: { sessionId: string; tabId?: number; x: number; y: number; button?: 'left' | 'middle' | 'right' }; result: { ok: true } };
+  'mouse.wheel': { params: { sessionId: string; tabId?: number; dx?: number; dy?: number }; result: { ok: true } };
 
   'file.upload': {
-    params: { tabId?: number; workspaceId?: string; locator: Locator; files: UploadFilePayload[]; requiresConfirm?: boolean };
+    params: { sessionId: string; tabId?: number; locator: Locator; files: UploadFilePayload[]; requiresConfirm?: boolean };
     result: { ok: true; fileCount: number };
   };
 
+  'context.get': {
+    params: { sessionId: string; tabId?: number };
+    result: SessionContextSnapshot;
+  };
+  'context.set': {
+    params: { sessionId: string; tabId?: number; framePath?: string[]; shadowPath?: string[] };
+    result: SessionContextSnapshot & { ok: true; frameDepth: number; shadowDepth: number };
+  };
   'context.enterFrame': {
-    params: { tabId?: number; workspaceId?: string; framePath?: string[]; locator?: Locator; reset?: boolean };
+    params: { sessionId: string; tabId?: number; framePath?: string[]; locator?: Locator; reset?: boolean };
     result: { ok: true; frameDepth: number; framePath: string[] };
   };
   'context.exitFrame': {
-    params: { tabId?: number; workspaceId?: string; levels?: number; reset?: boolean };
+    params: { sessionId: string; tabId?: number; levels?: number; reset?: boolean };
     result: { ok: true; frameDepth: number; framePath: string[] };
   };
   'context.enterShadow': {
-    params: { tabId?: number; workspaceId?: string; hostSelectors?: string[]; locator?: Locator; reset?: boolean };
+    params: { sessionId: string; tabId?: number; hostSelectors?: string[]; locator?: Locator; reset?: boolean };
     result: { ok: true; shadowDepth: number; shadowPath: string[] };
   };
   'context.exitShadow': {
-    params: { tabId?: number; workspaceId?: string; levels?: number; reset?: boolean };
+    params: { sessionId: string; tabId?: number; levels?: number; reset?: boolean };
     result: { ok: true; shadowDepth: number; shadowPath: string[] };
   };
   'context.reset': {
-    params: { tabId?: number; workspaceId?: string };
-    result: { ok: true; frameDepth: number; shadowDepth: number };
+    params: { sessionId: string; tabId?: number };
+    result: SessionContextSnapshot & { ok: true; frameDepth: number; shadowDepth: number };
   };
 
   'network.list': {
     params: {
+      sessionId: string;
       tabId?: number;
-      workspaceId?: string;
       limit?: number;
       urlIncludes?: string;
       status?: number;
@@ -438,13 +463,13 @@ export interface MethodMap {
     result: { entries: NetworkEntry[] };
   };
   'network.get': {
-    params: { tabId?: number; workspaceId?: string; id: string };
+    params: { sessionId: string; tabId?: number; id: string };
     result: { entry: NetworkEntry };
   };
   'network.waitFor': {
     params: {
+      sessionId: string;
       tabId?: number;
-      workspaceId?: string;
       urlIncludes?: string;
       status?: number;
       method?: string;
@@ -453,15 +478,15 @@ export interface MethodMap {
     result: { entry: NetworkEntry };
   };
   'network.clear': {
-    params: { tabId?: number; workspaceId?: string };
+    params: { sessionId: string; tabId?: number };
     result: { ok: true };
   };
 
-  'debug.getConsole': { params: { tabId?: number; workspaceId?: string; limit?: number }; result: { entries: ConsoleEntry[] } };
+  'debug.getConsole': { params: { sessionId: string; tabId?: number; limit?: number }; result: { entries: ConsoleEntry[] } };
   'debug.dumpState': {
     params: {
+      sessionId: string;
       tabId?: number;
-      workspaceId?: string;
       consoleLimit?: number;
       networkLimit?: number;
       includeAccessibility?: boolean;

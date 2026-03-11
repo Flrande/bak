@@ -1,6 +1,6 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-08 19:06:02 +08:00
+- GeneratedAt: 2026-03-11 14:59:05 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
 | Method | Success Case | Failure Case | CaseMapped | CI Status |
@@ -11,7 +11,9 @@
 | context.enterShadow | M002-S | M002-F | true | NotRun |
 | context.exitFrame | M003-S | M003-F | true | NotRun |
 | context.exitShadow | M004-S | M004-F | true | NotRun |
+| context.get | - | - | false | MissingCaseId |
 | context.reset | M005-S | M005-F | true | NotRun |
+| context.set | - | - | false | MissingCaseId |
 | debug.dumpState | M006-S | M006-F | true | NotRun |
 | debug.getConsole | M007-S | M007-F | true | NotRun |
 | element.blur | M008-S | M008-F | true | NotRun |
@@ -53,9 +55,18 @@
 | page.url | M065-S | M065-F | true | NotRun |
 | page.viewport | M066-S | M066-F | true | NotRun |
 | page.wait | M067-S | M067-F | true | NotRun |
+| runtime.info | M070-S | M070-F | true | NotRun |
 | session.close | M068-S | M068-F | true | NotRun |
 | session.create | M069-S | M069-F | true | NotRun |
-| session.info | M070-S | M070-F | true | NotRun |
+| session.ensure | - | - | false | MissingCaseId |
+| session.focus | - | - | false | MissingCaseId |
+| session.getActiveTab | - | - | false | MissingCaseId |
+| session.info | - | - | false | MissingCaseId |
+| session.list | - | - | false | MissingCaseId |
+| session.listTabs | - | - | false | MissingCaseId |
+| session.openTab | - | - | false | MissingCaseId |
+| session.reset | - | - | false | MissingCaseId |
+| session.setActiveTab | - | - | false | MissingCaseId |
 | tabs.close | M071-S | M071-F | true | NotRun |
 | tabs.focus | M072-S | M072-F | true | NotRun |
 | tabs.get | M073-S | M073-F | true | NotRun |
@@ -63,6 +74,6 @@
 | tabs.list | M075-S | M075-F | true | NotRun |
 | tabs.new | M076-S | M076-F | true | NotRun |
 
-Total methods: 55
-Missing mappings: 0
+Total methods: 66
+Missing mappings: 11
 

@@ -18,9 +18,8 @@ Checks:
 - dataDir writable
 - pairing token presence
 - bridge/rpc port availability
-- `session.info` reachability
+- `runtime.info` reachability
 - extension connection health (`connected/disconnected`, `heartbeatStale`, `heartbeatAgeMs`)
-- active tab telemetry availability (`activeTabTelemetry`, non-blocking warning)
 - protocol compatibility between daemon and rpc payload (`protocolCompatibility`, non-blocking warning)
 - extension runtime version reported by bridge handshake (`extensionVersion`)
 - cli/extension version compatibility drift check (`versionCompatibility`, `severity=warn` and non-blocking)

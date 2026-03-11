@@ -18,22 +18,22 @@ describe('cli help output', () => {
 
     expect(help).toContain('Drive a real Chromium browser for an agent');
     expect(help).toContain('Use bak call when the protocol exposes a method');
-    expect(help).toContain('bak workspace ensure --rpc-ws-port 17374');
+    expect(help).toContain('bak session ensure --session-id session_123 --rpc-ws-port 17374');
   });
 
-  it('documents workspace behavior and current-tab targeting', () => {
-    const help = runHelp(['workspace', '--help']);
+  it('documents session browser helpers and current-tab targeting', () => {
+    const help = runHelp(['session', '--help']);
 
-    expect(help).toContain('Manage the dedicated agent workspace window');
-    expect(help).toContain('workspace ensure creates or repairs the agent-owned browser window');
-    expect(help).toContain('bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374');
+    expect(help).toContain('Manage multi-agent sessions and their dedicated browser state');
+    expect(help).toContain('Each session owns one dedicated browser binding');
+    expect(help).toContain('bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374');
   });
 
-  it('documents workspace ensure as the explicit repair entrypoint', () => {
-    const help = runHelp(['workspace', 'ensure', '--help']);
+  it('documents session ensure as the explicit repair entrypoint', () => {
+    const help = runHelp(['session', 'ensure', '--help']);
 
-    expect(help).toContain('Create or repair the workspace window, group, and tracked tabs');
-    expect(help).toContain('bak workspace ensure --url "https://example.com" --focus --rpc-ws-port 17374');
+    expect(help).toContain('Create or repair the dedicated browser window');
+    expect(help).toContain('bak session ensure --session-id session_123 --url "https://example.com" --focus --rpc-ws-port 17374');
   });
 
   it('documents page help and protocol-only navigation fallback', () => {

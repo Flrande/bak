@@ -80,10 +80,12 @@ A healthy runtime reports:
 ## 5. First Browser Action
 
 ```powershell
-bak workspace ensure --rpc-ws-port 17374
-bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
-bak page title --rpc-ws-port 17374
-bak page snapshot --include-base64 --rpc-ws-port 17374
+$session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
+$sessionId = $session.sessionId
+bak session ensure --session-id $sessionId --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak page title --session-id $sessionId --rpc-ws-port 17374
+bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 ```
 
 ## 6. Minimal Fallback

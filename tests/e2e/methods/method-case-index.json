@@ -239,10 +239,10 @@
     "failureCaseId": "M069-F",
     "suite": "session"
   },
-  "session.info": {
+  "runtime.info": {
     "successCaseId": "M070-S",
     "failureCaseId": "M070-F",
-    "suite": "session"
+    "suite": "runtime"
   },
   "tabs.close": {
     "successCaseId": "M071-S",

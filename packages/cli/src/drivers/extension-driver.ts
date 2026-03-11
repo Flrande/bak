@@ -1,10 +1,21 @@
-import type { ConsoleEntry, ElementMapItem, Locator, MethodParams, MethodResult } from '@flrande/bak-protocol';
-import type { BrowserDriver, BrowserTab, DriverConnectionStatus, SnapshotResult } from './browser-driver.js';
+import type { ConsoleEntry, ElementMapItem, Locator, MethodResult } from '@flrande/bak-protocol';
+import type {
+  BrowserDriver,
+  BrowserTab,
+  DriverConnectionStatus,
+  SessionBindingActiveTabResult,
+  SessionBindingEnsureResult,
+  SessionBindingFocusResult,
+  SessionBindingListTabsResult,
+  SessionBindingOpenTabResult,
+  SnapshotResult
+} from './browser-driver.js';
 import type { ExtensionBridge } from './extension-bridge.js';
 
 const BRIDGE_TIMEOUT_GRACE_MS = 1_500;
 const BRIDGE_TIMEOUT_MIN_MS = 1_000;
 const NAVIGATION_BRIDGE_TIMEOUT_MS = 30_000;
+const WORKSPACE_BRIDGE_TIMEOUT_MS = 30_000;
 
 function normalizeTimeoutMs(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
@@ -77,7 +88,7 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('tabs.get', { tabId });
   }
 
-  tabsNew(options: MethodParams<'tabs.new'> = {}): Promise<MethodResult<'tabs.new'>> {
+  tabsNew(options: { url?: string; active?: boolean; windowId?: number; addToGroup?: boolean } = {}): Promise<MethodResult<'tabs.new'>> {
     return this.bridge.request('tabs.new', options);
   }
 
@@ -135,39 +146,41 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('ui.selectCandidate', { candidates, tabId }, 60_000);
   }
 
-  workspaceEnsure(params: MethodParams<'workspace.ensure'> = {}): Promise<MethodResult<'workspace.ensure'>> {
-    return this.bridge.request('workspace.ensure', params);
+  workspaceEnsure(params: { workspaceId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+    return this.bridge.request('workspace.ensure', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceInfo(params: MethodParams<'workspace.info'> = {}): Promise<MethodResult<'workspace.info'>> {
+  workspaceInfo(params: { workspaceId?: string } = {}): Promise<{ workspace: SessionBindingEnsureResult['workspace'] | null }> {
     return this.bridge.request('workspace.info', params);
   }
 
-  workspaceOpenTab(params: MethodParams<'workspace.openTab'> = {}): Promise<MethodResult<'workspace.openTab'>> {
-    return this.bridge.request('workspace.openTab', params);
+  workspaceOpenTab(
+    params: { workspaceId?: string; url?: string; active?: boolean; focus?: boolean } = {}
+  ): Promise<SessionBindingOpenTabResult> {
+    return this.bridge.request('workspace.openTab', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceListTabs(params: MethodParams<'workspace.listTabs'> = {}): Promise<MethodResult<'workspace.listTabs'>> {
+  workspaceListTabs(params: { workspaceId?: string } = {}): Promise<SessionBindingListTabsResult> {
     return this.bridge.request('workspace.listTabs', params);
   }
 
-  workspaceGetActiveTab(params: MethodParams<'workspace.getActiveTab'> = {}): Promise<MethodResult<'workspace.getActiveTab'>> {
+  workspaceGetActiveTab(params: { workspaceId?: string } = {}): Promise<SessionBindingActiveTabResult> {
     return this.bridge.request('workspace.getActiveTab', params);
   }
 
-  workspaceSetActiveTab(params: MethodParams<'workspace.setActiveTab'>): Promise<MethodResult<'workspace.setActiveTab'>> {
+  workspaceSetActiveTab(params: { workspaceId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
     return this.bridge.request('workspace.setActiveTab', params);
   }
 
-  workspaceFocus(params: MethodParams<'workspace.focus'> = {}): Promise<MethodResult<'workspace.focus'>> {
+  workspaceFocus(params: { workspaceId?: string } = {}): Promise<SessionBindingFocusResult> {
     return this.bridge.request('workspace.focus', params);
   }
 
-  workspaceReset(params: MethodParams<'workspace.reset'> = {}): Promise<MethodResult<'workspace.reset'>> {
-    return this.bridge.request('workspace.reset', params);
+  workspaceReset(params: { workspaceId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+    return this.bridge.request('workspace.reset', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceClose(params: MethodParams<'workspace.close'> = {}): Promise<MethodResult<'workspace.close'>> {
+  workspaceClose(params: { workspaceId?: string } = {}): Promise<{ ok: true }> {
     return this.bridge.request('workspace.close', params);
   }
 
