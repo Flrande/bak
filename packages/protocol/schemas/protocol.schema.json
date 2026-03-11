@@ -6,18 +6,42 @@
   "definitions": {
     "jsonRpcRequest": {
       "type": "object",
-      "required": ["jsonrpc", "method"],
+      "required": [
+        "jsonrpc",
+        "method"
+      ],
       "properties": {
-        "jsonrpc": { "const": "2.0" },
+        "jsonrpc": {
+          "const": "2.0"
+        },
         "id": {
-          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "method": {
           "type": "string",
           "enum": [
+            "runtime.info",
             "session.create",
+            "session.list",
             "session.close",
             "session.info",
+            "session.ensure",
+            "session.openTab",
+            "session.listTabs",
+            "session.getActiveTab",
+            "session.setActiveTab",
+            "session.focus",
+            "session.reset",
             "tabs.list",
             "tabs.focus",
             "tabs.new",
@@ -28,8 +52,8 @@
             "page.back",
             "page.forward",
             "page.reload",
-            "page.wait",
             "page.snapshot",
+            "page.wait",
             "page.title",
             "page.url",
             "page.text",
@@ -59,6 +83,8 @@
             "mouse.click",
             "mouse.wheel",
             "file.upload",
+            "context.get",
+            "context.set",
             "context.enterFrame",
             "context.exitFrame",
             "context.enterShadow",
@@ -78,11 +104,27 @@
     },
     "jsonRpcSuccess": {
       "type": "object",
-      "required": ["jsonrpc", "id", "result"],
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
       "properties": {
-        "jsonrpc": { "const": "2.0" },
+        "jsonrpc": {
+          "const": "2.0"
+        },
         "id": {
-          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "result": {}
       },
@@ -90,18 +132,41 @@
     },
     "jsonRpcFailure": {
       "type": "object",
-      "required": ["jsonrpc", "id", "error"],
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
       "properties": {
-        "jsonrpc": { "const": "2.0" },
+        "jsonrpc": {
+          "const": "2.0"
+        },
         "id": {
-          "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "error": {
           "type": "object",
-          "required": ["code", "message"],
+          "required": [
+            "code",
+            "message"
+          ],
           "properties": {
-            "code": { "type": "number" },
-            "message": { "type": "string" },
+            "code": {
+              "type": "number"
+            },
+            "message": {
+              "type": "string"
+            },
             "data": {
               "type": "object",
               "properties": {
@@ -130,18 +195,34 @@
     "locator": {
       "type": "object",
       "properties": {
-        "eid": { "type": "string" },
-        "role": { "type": "string" },
-        "name": { "type": "string" },
-        "text": { "type": "string" },
-        "css": { "type": "string" },
+        "eid": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "css": {
+          "type": "string"
+        },
         "framePath": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "shadow": {
           "type": "string",
-          "enum": ["auto", "pierce", "none"]
+          "enum": [
+            "auto",
+            "pierce",
+            "none"
+          ]
         },
         "index": {
           "type": "integer",
@@ -152,35 +233,95 @@
     },
     "elementMapItem": {
       "type": "object",
-      "required": ["eid", "tag", "role", "name", "text", "bbox", "selectors", "risk"],
+      "required": [
+        "eid",
+        "tag",
+        "role",
+        "name",
+        "text",
+        "bbox",
+        "selectors",
+        "risk"
+      ],
       "properties": {
-        "eid": { "type": "string" },
-        "tag": { "type": "string" },
-        "role": { "type": ["string", "null"] },
-        "name": { "type": "string" },
-        "text": { "type": "string" },
+        "eid": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
         "bbox": {
           "type": "object",
-          "required": ["x", "y", "width", "height"],
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
           "properties": {
-            "x": { "type": "number" },
-            "y": { "type": "number" },
-            "width": { "type": "number" },
-            "height": { "type": "number" }
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "width": {
+              "type": "number"
+            },
+            "height": {
+              "type": "number"
+            }
           },
           "additionalProperties": false
         },
         "selectors": {
           "type": "object",
-          "required": ["css", "text", "aria"],
+          "required": [
+            "css",
+            "text",
+            "aria"
+          ],
           "properties": {
-            "css": { "type": ["string", "null"] },
-            "text": { "type": ["string", "null"] },
-            "aria": { "type": ["string", "null"] }
+            "css": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "aria": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "risk": { "type": "string", "enum": ["low", "high"] }
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "high"
+          ]
+        }
       },
       "additionalProperties": false
     },
@@ -211,55 +352,152 @@
         "capabilityCount"
       ],
       "properties": {
-        "sessionId": { "type": ["string", "null"] },
-        "paired": { "type": "boolean" },
-        "extensionConnected": { "type": "boolean" },
-        "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
-        "connectionReason": { "type": ["string", "null"] },
-        "protocolVersion": { "type": "string", "const": "v4" },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paired": {
+          "type": "boolean"
+        },
+        "extensionConnected": {
+          "type": "boolean"
+        },
+        "connectionState": {
+          "type": "string",
+          "enum": [
+            "connecting",
+            "connected",
+            "disconnected"
+          ]
+        },
+        "connectionReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protocolVersion": {
+          "type": "string",
+          "const": "v4"
+        },
         "compatibleProtocolVersions": {
           "type": "array",
-          "items": { "type": "string", "enum": ["v4"] }
+          "items": {
+            "type": "string",
+            "enum": [
+              "v4"
+            ]
+          }
         },
-        "extensionVersion": { "type": ["string", "null"] },
+        "extensionVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "activeTab": {
-          "type": ["object", "null"],
-          "required": ["id", "title", "url"],
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "id",
+            "title",
+            "url"
+          ],
           "properties": {
-            "id": { "type": "number" },
-            "title": { "type": "string" },
-            "url": { "type": "string" }
+            "id": {
+              "type": "number"
+            },
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
           },
           "additionalProperties": false
         },
         "context": {
           "type": "object",
-          "required": ["frameDepth", "shadowDepth"],
+          "required": [
+            "frameDepth",
+            "shadowDepth"
+          ],
           "properties": {
-            "frameDepth": { "type": "number" },
-            "shadowDepth": { "type": "number" }
+            "frameDepth": {
+              "type": "number"
+            },
+            "shadowDepth": {
+              "type": "number"
+            }
           },
           "additionalProperties": false
         },
-        "heartbeatStale": { "type": "boolean" },
-        "heartbeatAgeMs": { "type": ["number", "null"] },
-        "staleAfterMs": { "type": "number" },
-        "lastSeenTs": { "type": ["number", "null"] },
-        "lastHeartbeatTs": { "type": ["number", "null"] },
-        "bridgePendingRequests": { "type": "number" },
-        "bridgeLastError": { "type": ["string", "null"] },
-        "bridgeTotalRequests": { "type": "number" },
-        "bridgeTotalFailures": { "type": "number" },
-        "bridgeTotalTimeouts": { "type": "number" },
-        "bridgeTotalNotReady": { "type": "number" },
-        "capabilityCount": { "type": "number" }
+        "heartbeatStale": {
+          "type": "boolean"
+        },
+        "heartbeatAgeMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "staleAfterMs": {
+          "type": "number"
+        },
+        "lastSeenTs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "lastHeartbeatTs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "bridgePendingRequests": {
+          "type": "number"
+        },
+        "bridgeLastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bridgeTotalRequests": {
+          "type": "number"
+        },
+        "bridgeTotalFailures": {
+          "type": "number"
+        },
+        "bridgeTotalTimeouts": {
+          "type": "number"
+        },
+        "bridgeTotalNotReady": {
+          "type": "number"
+        },
+        "capabilityCount": {
+          "type": "number"
+        }
       },
       "additionalProperties": false
     }
   },
   "oneOf": [
-    { "$ref": "#/definitions/jsonRpcRequest" },
-    { "$ref": "#/definitions/jsonRpcSuccess" },
-    { "$ref": "#/definitions/jsonRpcFailure" }
+    {
+      "$ref": "#/definitions/jsonRpcRequest"
+    },
+    {
+      "$ref": "#/definitions/jsonRpcSuccess"
+    },
+    {
+      "$ref": "#/definitions/jsonRpcFailure"
+    }
   ]
 }
+

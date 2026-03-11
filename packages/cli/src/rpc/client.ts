@@ -3,7 +3,7 @@ import { JSON_RPC_VERSION, type JsonRpcResponse } from '@flrande/bak-protocol';
 
 const DEFAULT_RPC_TIMEOUT_MS = 15_000;
 const NAVIGATION_RPC_TIMEOUT_MS = 45_000;
-const NAVIGATION_METHODS = new Set(['page.goto', 'workspace.openTab', 'workspace.ensure', 'workspace.reset']);
+const NAVIGATION_METHODS = new Set(['page.goto', 'session.openTab', 'session.ensure', 'session.reset']);
 
 function closeSocket(socket: WebSocket): void {
   if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {

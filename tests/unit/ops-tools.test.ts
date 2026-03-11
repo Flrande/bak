@@ -74,23 +74,20 @@ describe('ops tools', () => {
 
     expect(report.checks.dataDirWritable.ok).toBe(true);
     expect(report.checks.pairing.ok).toBe(false);
-    expect(report.checks.rpcSessionInfo.ok).toBe(false);
-    expect(report.checks.rpcSessionInfo.severity).toBe('warn');
+    expect(report.checks.rpcRuntimeInfo.ok).toBe(false);
+    expect(report.checks.rpcRuntimeInfo.severity).toBe('warn');
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.severity).toBe('warn');
-    expect(report.checks.activeTabTelemetry.ok).toBe(false);
-    expect(report.checks.activeTabTelemetry.severity).toBe('warn');
     expect(report.checks.protocolCompatibility.ok).toBe(false);
     expect(report.checks.protocolCompatibility.severity).toBe('warn');
     expect(report.checks.versionCompatibility.ok).toBe(false);
     expect(report.checks.versionCompatibility.severity).toBe('warn');
     expect(report.summary.warningChecks).toContain('protocolCompatibility');
     expect(report.summary.warningChecks).toContain('versionCompatibility');
-    expect(report.summary.warningChecks).toContain('activeTabTelemetry');
-    expect(report.summary.warningChecks).toContain('rpcSessionInfo');
+    expect(report.summary.warningChecks).toContain('rpcRuntimeInfo');
     expect(report.summary.warningChecks).toContain('rpcConnectionHealth');
     expect(report.summary.errorChecks).toContain('pairing');
-    expect(report.summary.errorChecks).not.toContain('rpcSessionInfo');
+    expect(report.summary.errorChecks).not.toContain('rpcRuntimeInfo');
     expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(report.ok).toBe(false);
 
@@ -109,16 +106,13 @@ describe('ops tools', () => {
     });
 
     expect(report.checks.pairing.ok).toBe(true);
-    expect(report.checks.rpcSessionInfo.ok).toBe(false);
-    expect(report.checks.rpcSessionInfo.severity).toBeUndefined();
+    expect(report.checks.rpcRuntimeInfo.ok).toBe(false);
+    expect(report.checks.rpcRuntimeInfo.severity).toBeUndefined();
     expect(report.checks.rpcConnectionHealth.ok).toBe(false);
     expect(report.checks.rpcConnectionHealth.severity).toBeUndefined();
-    expect(report.checks.activeTabTelemetry.ok).toBe(false);
-    expect(report.checks.activeTabTelemetry.severity).toBeUndefined();
-    expect(report.summary.errorChecks).toContain('rpcSessionInfo');
+    expect(report.summary.errorChecks).toContain('rpcRuntimeInfo');
     expect(report.summary.errorChecks).toContain('rpcConnectionHealth');
-    expect(report.summary.errorChecks).toContain('activeTabTelemetry');
-    expect(report.summary.warningChecks).not.toContain('rpcSessionInfo');
+    expect(report.summary.warningChecks).not.toContain('rpcRuntimeInfo');
     expect(report.ok).toBe(false);
 
     rmSync(dataDir, { recursive: true, force: true });

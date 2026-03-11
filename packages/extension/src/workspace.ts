@@ -1,4 +1,3 @@
-export const DEFAULT_WORKSPACE_ID = 'default';
 export const DEFAULT_WORKSPACE_LABEL = 'bak agent';
 export const DEFAULT_WORKSPACE_COLOR = 'blue';
 export const DEFAULT_WORKSPACE_URL = 'about:blank';
@@ -59,8 +58,10 @@ export interface WorkspaceTargetResolution {
 }
 
 export interface WorkspaceStorage {
-  load(): Promise<WorkspaceRecord | null>;
-  save(state: WorkspaceRecord | null): Promise<void>;
+  load(workspaceId: string): Promise<WorkspaceRecord | null>;
+  save(state: WorkspaceRecord): Promise<void>;
+  delete(workspaceId: string): Promise<void>;
+  list(): Promise<WorkspaceRecord[]>;
 }
 
 export interface WorkspaceBrowser {
@@ -103,7 +104,7 @@ export interface WorkspaceResolveTargetOptions {
   createIfMissing?: boolean;
 }
 
-export class WorkspaceManager {
+class SessionBindingManager {
   private readonly storage: WorkspaceStorage;
   private readonly browser: WorkspaceBrowser;
 
@@ -112,7 +113,7 @@ export class WorkspaceManager {
     this.browser = browser;
   }
 
-  async getWorkspaceInfo(workspaceId = DEFAULT_WORKSPACE_ID): Promise<WorkspaceInfo | null> {
+  async getWorkspaceInfo(workspaceId: string): Promise<WorkspaceInfo | null> {
     return this.inspectWorkspace(workspaceId);
   }
 
@@ -120,7 +121,7 @@ export class WorkspaceManager {
     const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
     const repairActions: string[] = [];
     const initialUrl = options.initialUrl ?? DEFAULT_WORKSPACE_URL;
-    const persisted = await this.storage.load();
+    const persisted = await this.storage.load(workspaceId);
     const created = !persisted;
     let state = this.normalizeState(persisted, workspaceId);
 
@@ -358,7 +359,7 @@ export class WorkspaceManager {
     };
   }
 
-  async listTabs(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ workspace: WorkspaceInfo; tabs: WorkspaceTab[] }> {
+  async listTabs(workspaceId: string): Promise<{ workspace: WorkspaceInfo; tabs: WorkspaceTab[] }> {
     const ensured = await this.inspectWorkspace(workspaceId);
     if (!ensured) {
       throw new Error(`Workspace ${workspaceId} does not exist`);
@@ -369,7 +370,7 @@ export class WorkspaceManager {
     };
   }
 
-  async getActiveTab(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab | null }> {
+  async getActiveTab(workspaceId: string): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab | null }> {
     const ensured = await this.inspectWorkspace(workspaceId);
     if (!ensured) {
       const normalizedWorkspaceId = this.normalizeWorkspaceId(workspaceId);
@@ -387,7 +388,7 @@ export class WorkspaceManager {
     };
   }
 
-  async setActiveTab(tabId: number, workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab }> {
+  async setActiveTab(tabId: number, workspaceId: string): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab }> {
     const ensured = await this.ensureWorkspace({ workspaceId });
     if (!ensured.workspace.tabIds.includes(tabId)) {
       throw new Error(`Tab ${tabId} does not belong to workspace ${workspaceId}`);
@@ -417,7 +418,7 @@ export class WorkspaceManager {
     };
   }
 
-  async focus(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ ok: true; workspace: WorkspaceInfo }> {
+  async focus(workspaceId: string): Promise<{ ok: true; workspace: WorkspaceInfo }> {
     const ensured = await this.ensureWorkspace({ workspaceId, focus: false });
     if (ensured.workspace.activeTabId !== null) {
       await this.browser.updateTab(ensured.workspace.activeTabId, { active: true });
@@ -430,19 +431,23 @@ export class WorkspaceManager {
   }
 
   async reset(options: WorkspaceEnsureOptions = {}): Promise<WorkspaceEnsureResult> {
-    await this.close(options.workspaceId);
-    return this.ensureWorkspace(options);
+    const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
+    await this.close(workspaceId);
+    return this.ensureWorkspace({
+      ...options,
+      workspaceId
+    });
   }
 
-  async close(workspaceId = DEFAULT_WORKSPACE_ID): Promise<{ ok: true }> {
-    const state = await this.storage.load();
-    if (!state || state.id !== workspaceId) {
-      await this.storage.save(null);
+  async close(workspaceId: string): Promise<{ ok: true }> {
+    const state = await this.loadWorkspaceRecord(workspaceId);
+    if (!state) {
+      await this.storage.delete(workspaceId);
       return { ok: true };
     }
     // Clear persisted state before closing the window so tab/window removal
     // listeners cannot race and resurrect an empty workspace record.
-    await this.storage.save(null);
+    await this.storage.delete(workspaceId);
     if (state.windowId !== null) {
       const existingWindow = await this.browser.getWindow(state.windowId);
       if (existingWindow) {
@@ -477,15 +482,6 @@ export class WorkspaceManager {
       return this.buildWorkspaceResolution(ensured, 'explicit-workspace');
     }
 
-    const existingWorkspace = await this.loadWorkspaceRecord(DEFAULT_WORKSPACE_ID);
-    if (existingWorkspace) {
-      const ensured = await this.ensureWorkspace({
-        workspaceId: existingWorkspace.id,
-        focus: false
-      });
-      return this.buildWorkspaceResolution(ensured, 'default-workspace');
-    }
-
     if (options.createIfMissing !== true) {
       const activeTab = await this.browser.getActiveTab();
       if (!activeTab) {
@@ -501,20 +497,13 @@ export class WorkspaceManager {
       };
     }
 
-    const ensured = await this.ensureWorkspace({
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      focus: false
-    });
-    return this.buildWorkspaceResolution(ensured, 'default-workspace');
+    throw new Error('workspaceId is required when createIfMissing is true');
   }
 
   private normalizeWorkspaceId(workspaceId?: string): string {
     const candidate = workspaceId?.trim();
     if (!candidate) {
-      return DEFAULT_WORKSPACE_ID;
-    }
-    if (candidate !== DEFAULT_WORKSPACE_ID) {
-      throw new Error(`Unsupported workspace id: ${candidate}`);
+      throw new Error('workspaceId is required');
     }
     return candidate;
   }
@@ -532,9 +521,13 @@ export class WorkspaceManager {
     };
   }
 
-  private async loadWorkspaceRecord(workspaceId = DEFAULT_WORKSPACE_ID): Promise<WorkspaceRecord | null> {
+  async listWorkspaceRecords(): Promise<WorkspaceRecord[]> {
+    return await this.storage.list();
+  }
+
+  private async loadWorkspaceRecord(workspaceId: string): Promise<WorkspaceRecord | null> {
     const normalizedWorkspaceId = this.normalizeWorkspaceId(workspaceId);
-    const state = await this.storage.load();
+    const state = await this.storage.load(normalizedWorkspaceId);
     if (!state || state.id !== normalizedWorkspaceId) {
       return null;
     }
@@ -816,7 +809,7 @@ export class WorkspaceManager {
     throw lastError ?? new Error(`No window with id: ${options.windowId}.`);
   }
 
-  private async inspectWorkspace(workspaceId = DEFAULT_WORKSPACE_ID): Promise<WorkspaceInfo | null> {
+  private async inspectWorkspace(workspaceId: string): Promise<WorkspaceInfo | null> {
     const state = await this.loadWorkspaceRecord(workspaceId);
     if (!state) {
       return null;
@@ -915,3 +908,5 @@ export class WorkspaceManager {
     return message.toLowerCase().includes('no window with id');
   }
 }
+
+export { SessionBindingManager, SessionBindingManager as WorkspaceManager };

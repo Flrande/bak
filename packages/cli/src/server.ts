@@ -23,7 +23,6 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
   const service = new BakService(driver, pairingStore, traceStore, {
     intervalMs: heartbeatIntervalMs
   });
-  service.seedSessionIfNeeded();
   service.startHeartbeat();
 
   const rpcServer = new RpcServer(service, rpcWsPort);
@@ -31,6 +30,7 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
 
   const stop = async (): Promise<void> => {
     service.stopHeartbeat();
+    await service.shutdown();
     await rpcServer.stop();
     await bridge.stop();
   };

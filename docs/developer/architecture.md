@@ -15,9 +15,9 @@
 4. the CLI routes browser calls through the extension bridge
 5. traces and snapshots are written under the configured bak data directory (default on Windows: `Join-Path $env:LOCALAPPDATA 'bak'`)
 
-## Workspace And Targeting
+## Session And Targeting
 
-- the workspace is the default agent isolation boundary
-- browser commands prefer the current workspace tab once it exists
-- workspace commands are the only path that creates or repairs the dedicated window and tab group
+- the session is the default agent isolation boundary
+- browser commands prefer the current session tab once it exists
+- session commands are the only public path that creates or repairs the dedicated window and tab group
 - reads, actions, and debug output share one context stack

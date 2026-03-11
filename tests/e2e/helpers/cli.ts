@@ -3,14 +3,41 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cliDistPath, ensureE2ERuntimeFresh } from './runtime';
 
+const SESSION_METADATA_PATH = 'e2e-session.json';
+const DIRECT_SESSION_SCOPED_COMMANDS = new Set(['page', 'element', 'keyboard', 'mouse', 'file', 'context', 'network', 'debug']);
+const SESSION_SUBCOMMANDS_REQUIRING_ID = new Set(['info', 'close', 'ensure', 'open-tab', 'list-tabs', 'get-active-tab', 'set-active-tab', 'focus', 'reset']);
+
 export function cliBinPath(): string {
   const root = resolve(__dirname, '../..', '..');
   ensureE2ERuntimeFresh(root);
   return cliDistPath(root);
 }
 
-export function runCli<T = unknown>(args: string[], rpcPort: number, dataDir: string): T {
-  const output = execFileSync('node', [cliBinPath(), ...args, '--rpc-ws-port', String(rpcPort)], {
+function readHarnessSessionId(dataDir: string): string | undefined {
+  const sessionPath = resolve(dataDir, SESSION_METADATA_PATH);
+  if (!existsSync(sessionPath)) {
+    return undefined;
+  }
+  const parsed = JSON.parse(readFileSync(sessionPath, 'utf8')) as { sessionId?: unknown };
+  return typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0 ? parsed.sessionId : undefined;
+}
+
+function maybeAppendSessionId(args: string[], sessionId?: string): string[] {
+  if (!sessionId || args.includes('--session-id')) {
+    return args;
+  }
+  const root = args[0] ?? '';
+  if (DIRECT_SESSION_SCOPED_COMMANDS.has(root)) {
+    return [...args, '--session-id', sessionId];
+  }
+  if (root !== 'session' || !SESSION_SUBCOMMANDS_REQUIRING_ID.has(args[1] ?? '')) {
+    return args;
+  }
+  return [...args, '--session-id', sessionId];
+}
+
+export function runCli<T = unknown>(args: string[], rpcPort: number, dataDir: string, sessionId?: string): T {
+  const output = execFileSync('node', [cliBinPath(), ...maybeAppendSessionId(args, sessionId ?? readHarnessSessionId(dataDir)), '--rpc-ws-port', String(rpcPort)], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -21,9 +48,9 @@ export function runCli<T = unknown>(args: string[], rpcPort: number, dataDir: st
   return JSON.parse(output) as T;
 }
 
-export function runCliFailure(args: string[], rpcPort: number, dataDir: string): string {
+export function runCliFailure(args: string[], rpcPort: number, dataDir: string, sessionId?: string): string {
   try {
-    runCli(args, rpcPort, dataDir);
+    runCli(args, rpcPort, dataDir, sessionId);
     throw new Error('Expected CLI command to fail');
   } catch (error) {
     const stderr = error instanceof Error && 'stderr' in error ? String((error as { stderr?: string }).stderr ?? '') : '';

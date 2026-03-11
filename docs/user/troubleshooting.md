@@ -37,7 +37,7 @@ Actions:
 2. Pass the same `--rpc-ws-port` on every CLI command.
 3. Re-run `bak doctor`.
 
-## Wrong Tab Or Workspace Target
+## Wrong Tab Or Session Target
 
 Symptoms:
 
@@ -46,10 +46,11 @@ Symptoms:
 
 Actions:
 
-1. Inspect the workspace with `bak workspace info --rpc-ws-port 17374`.
-2. Check the current workspace tab with `bak workspace get-active-tab --rpc-ws-port 17374`.
-3. Set the intended workspace tab with `bak workspace set-active-tab --tab-id <id> --rpc-ws-port 17374`.
-4. If the workspace is missing or broken, run `bak workspace ensure --rpc-ws-port 17374`.
+1. Inspect the session with `bak session info --session-id <sessionId> --rpc-ws-port 17374`.
+2. List tracked session tabs with `bak session list-tabs --session-id <sessionId> --rpc-ws-port 17374`.
+3. Check the current session tab with `bak session get-active-tab --session-id <sessionId> --rpc-ws-port 17374`.
+4. Set the intended session tab with `bak session set-active-tab --session-id <sessionId> --tab-id <id> --rpc-ws-port 17374`.
+5. If the session binding is missing or broken, run `bak session ensure --session-id <sessionId> --rpc-ws-port 17374`.
 
 ## Frame Or Shadow Context Confusion
 
@@ -60,9 +61,11 @@ Symptoms:
 
 Actions:
 
-1. Reset the context with `bak context reset --rpc-ws-port 17374`.
-2. Re-enter the frame or shadow root intentionally.
-3. Verify with `bak debug dump-state --include-snapshot --rpc-ws-port 17374`.
+1. Inspect the saved snapshot with `bak context get --session-id <sessionId> --rpc-ws-port 17374`.
+2. Reset the context with `bak context reset --session-id <sessionId> --rpc-ws-port 17374`.
+3. Re-enter the frame or shadow root intentionally.
+4. If needed, restore an explicit snapshot with `bak context set --session-id <sessionId> --frame-path <selector...> --host-selectors <selector...> --rpc-ws-port 17374`.
+5. Verify with `bak debug dump-state --session-id <sessionId> --include-snapshot --rpc-ws-port 17374`.
 
 ## Need Shareable Diagnostics
 

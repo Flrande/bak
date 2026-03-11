@@ -35,15 +35,14 @@ export interface DoctorResult {
     pairing: DoctorCheck;
     extensionBridgePort: DoctorCheck;
     rpcPort: DoctorCheck;
-    rpcSessionInfo: DoctorCheck;
+    rpcRuntimeInfo: DoctorCheck;
     rpcConnectionHealth: DoctorCheck;
-    activeTabTelemetry: DoctorCheck;
     protocolCompatibility: DoctorCheck;
     versionCompatibility: DoctorCheck;
   };
 }
 
-interface SessionInfoProbe {
+interface RuntimeInfoProbe {
   ok: boolean;
   info?: Record<string, unknown>;
   detail?: string;
@@ -194,9 +193,9 @@ function parseSemver(version: string): { major: number; minor: number; patch: nu
   };
 }
 
-async function probeRpcSessionInfo(rpcWsPort: number): Promise<SessionInfoProbe> {
+async function probeRpcRuntimeInfo(rpcWsPort: number): Promise<RuntimeInfoProbe> {
   try {
-    const info = (await callRpc('session.info', {}, rpcWsPort)) as Record<string, unknown>;
+    const info = (await callRpc('runtime.info', {}, rpcWsPort)) as Record<string, unknown>;
     return {
       ok: true,
       info
@@ -209,11 +208,11 @@ async function probeRpcSessionInfo(rpcWsPort: number): Promise<SessionInfoProbe>
   }
 }
 
-function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
+function checkRpcRuntimeInfoFromProbe(probe: RuntimeInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
-      message: 'rpc session.info unavailable',
+      message: 'rpc runtime.info unavailable',
       severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
         mode,
@@ -223,12 +222,12 @@ function checkRpcSessionInfoFromProbe(probe: SessionInfoProbe, mode: 'preflight'
   }
   return {
     ok: true,
-    message: 'rpc session.info reachable',
+    message: 'rpc runtime.info reachable',
     details: probe.info
   };
 }
 
-export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCheck {
+export function assessRuntimeInfoHealth(info: Record<string, unknown>): DoctorCheck {
   const state = typeof info.connectionState === 'string' ? info.connectionState : 'unknown';
   const reason = typeof info.connectionReason === 'string' ? info.connectionReason : null;
   const extensionConnected = info.extensionConnected === true;
@@ -276,50 +275,6 @@ export function assessSessionInfoHealth(info: Record<string, unknown>): DoctorCh
       heartbeatStale,
       heartbeatAgeMs,
       staleAfterMs
-    }
-  };
-}
-
-export function assessActiveTabTelemetry(info: Record<string, unknown>): DoctorCheck {
-  const extensionConnected = info.extensionConnected === true;
-  const state = typeof info.connectionState === 'string' ? info.connectionState : 'unknown';
-  const activeTab = typeof info.activeTab === 'object' && info.activeTab !== null
-    ? (info.activeTab as Record<string, unknown>)
-    : null;
-
-  if (!extensionConnected || state !== 'connected') {
-    return {
-      ok: true,
-      message: 'active tab telemetry skipped while extension is disconnected',
-      details: {
-        extensionConnected,
-        state,
-        skipped: true
-      }
-    };
-  }
-
-  const hasValidId = typeof activeTab?.id === 'number';
-  const hasValidUrl = typeof activeTab?.url === 'string';
-  if (hasValidId && hasValidUrl) {
-    return {
-      ok: true,
-      message: 'active tab telemetry available',
-      details: {
-        id: activeTab.id,
-        url: activeTab.url
-      }
-    };
-  }
-
-  return {
-    ok: false,
-    message: 'active tab telemetry missing while extension is connected',
-    severity: 'warn',
-    details: {
-      extensionConnected,
-      state,
-      activeTab
     }
   };
 }
@@ -395,7 +350,7 @@ export function assessProtocolCompatibility(info: Record<string, unknown>): Doct
   if (!protocolVersion) {
     return {
       ok: false,
-      message: 'protocol version missing from session.info',
+      message: 'protocol version missing from runtime.info',
       severity: 'warn',
       details: {
         expectedProtocolVersion: PROTOCOL_VERSION
@@ -439,11 +394,11 @@ export function assessProtocolCompatibility(info: Record<string, unknown>): Doct
   };
 }
 
-function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
+function checkProtocolCompatibilityFromProbe(probe: RuntimeInfoProbe, mode: 'preflight' | 'runtime'): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
-      message: 'protocol compatibility unknown (session.info unavailable)',
+      message: 'protocol compatibility unknown (runtime.info unavailable)',
       severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
         expectedProtocolVersion: PROTOCOL_VERSION,
@@ -456,14 +411,14 @@ function checkProtocolCompatibilityFromProbe(probe: SessionInfoProbe, mode: 'pre
 }
 
 function checkVersionCompatibilityFromProbe(
-  probe: SessionInfoProbe,
+  probe: RuntimeInfoProbe,
   cliVersion: string,
   mode: 'preflight' | 'runtime'
 ): DoctorCheck {
   if (!probe.ok || !probe.info) {
     return {
       ok: false,
-      message: 'version compatibility unknown (session.info unavailable)',
+      message: 'version compatibility unknown (runtime.info unavailable)',
       severity: mode === 'preflight' ? 'warn' : undefined,
       details: {
         cliVersion,
@@ -479,9 +434,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const dataDir = options.dataDir ? resolve(options.dataDir) : resolveDataDir();
   const cliVersion = readCliVersion();
   const pairing = checkPairing(dataDir);
-  const sessionInfo = await probeRpcSessionInfo(options.rpcWsPort);
+  const runtimeInfo = await probeRpcRuntimeInfo(options.rpcWsPort);
   const runtimeExpected = pairing.ok;
-  const portMode: 'preflight' | 'runtime' = sessionInfo.ok && sessionInfo.info ? 'runtime' : runtimeExpected ? 'runtime' : 'preflight';
+  const portMode: 'preflight' | 'runtime' = runtimeInfo.ok && runtimeInfo.info ? 'runtime' : runtimeExpected ? 'runtime' : 'preflight';
   const unavailableSeverity: DoctorCheck['severity'] = portMode === 'preflight' ? 'warn' : undefined;
   const [extensionPort, rpcPort] = await Promise.all([
     probePortState(options.port),
@@ -493,31 +448,20 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     pairing,
     extensionBridgePort: assessPortAvailability(options.port, extensionPort.available, portMode, extensionPort.code),
     rpcPort: assessPortAvailability(options.rpcWsPort, rpcPort.available, portMode, rpcPort.code),
-    rpcSessionInfo: checkRpcSessionInfoFromProbe(sessionInfo, portMode),
-    rpcConnectionHealth: sessionInfo.ok && sessionInfo.info
-      ? assessSessionInfoHealth(sessionInfo.info)
+    rpcRuntimeInfo: checkRpcRuntimeInfoFromProbe(runtimeInfo, portMode),
+    rpcConnectionHealth: runtimeInfo.ok && runtimeInfo.info
+      ? assessRuntimeInfoHealth(runtimeInfo.info)
       : {
           ok: false,
-          message: 'rpc connection health unavailable (session.info unavailable)',
+          message: 'rpc connection health unavailable (runtime.info unavailable)',
           severity: unavailableSeverity,
           details: {
             mode: portMode,
-            detail: sessionInfo.detail ?? 'unknown'
+            detail: runtimeInfo.detail ?? 'unknown'
           }
         },
-    activeTabTelemetry: sessionInfo.ok && sessionInfo.info
-      ? assessActiveTabTelemetry(sessionInfo.info)
-      : {
-          ok: false,
-          message: 'active tab telemetry unavailable (session.info unavailable)',
-          severity: unavailableSeverity,
-          details: {
-            mode: portMode,
-            detail: sessionInfo.detail ?? 'unknown'
-          }
-        },
-    protocolCompatibility: checkProtocolCompatibilityFromProbe(sessionInfo, portMode),
-    versionCompatibility: checkVersionCompatibilityFromProbe(sessionInfo, cliVersion, portMode)
+    protocolCompatibility: checkProtocolCompatibilityFromProbe(runtimeInfo, portMode),
+    versionCompatibility: checkVersionCompatibilityFromProbe(runtimeInfo, cliVersion, portMode)
   };
 
   const summary = {

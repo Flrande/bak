@@ -12,7 +12,8 @@ Use this skill when browser work should happen through `bak` instead of a direct
 - Use PowerShell 7 syntax and `bak` commands.
 - Run `bak doctor --port 17373 --rpc-ws-port 17374` before browser work.
 - If the runtime is not healthy, guide the user through setup and wait for confirmation before continuing.
-- Create or repair the agent workspace explicitly with `bak workspace ensure --rpc-ws-port 17374`.
+- Create a session explicitly with `bak session create --client-name <name> --rpc-ws-port 17374`, keep the returned `sessionId`, and use `bak session ensure --session-id <sessionId> --rpc-ws-port 17374`.
+- Pass `--session-id` on session-owned page, element, keyboard, mouse, file, context, network, and debug commands unless an explicit `--tab-id` override is required.
 - Verify each major action with `bak page wait`, `bak page title`, `bak page url`, `bak page snapshot`, or `bak debug dump-state`.
 - Use `bak call` for protocol methods that do not have first-class CLI commands.
 - Keep command batches short and re-check state after navigation or mutation.
@@ -21,8 +22,8 @@ Use this skill when browser work should happen through `bak` instead of a direct
 
 1. Health-check the runtime.
 2. If needed, follow the setup flow in [references/setup.md](./references/setup.md).
-3. Ensure the workspace and open or target the correct tab.
-4. Use page, element, keyboard, mouse, file, context, debug, and network commands as needed.
+3. Create the session, ensure the session binding, and open or target the correct tab inside that session.
+4. Use page, element, keyboard, mouse, file, context, debug, and network commands with the same `sessionId`.
 5. Fall back to [references/commands.md](./references/commands.md) for command recipes and protocol-only examples.
 
 ## When To Stop

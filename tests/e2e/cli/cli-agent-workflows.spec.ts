@@ -13,6 +13,20 @@ function must<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
+function runHarnessCli<T = unknown>(args: string[]): T {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+  return runCli(args, harness.rpcPort, harness.dataDir, harness.sessionId);
+}
+
+function runHarnessCliFailure(args: string[]): string {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+  return runCliFailure(args, harness.rpcPort, harness.dataDir, harness.sessionId);
+}
+
 test.describe('CLI agent workflows', () => {
   test.beforeAll(async () => {
     harness = await createHarness();
@@ -29,20 +43,16 @@ test.describe('CLI agent workflows', () => {
 
     const { page, tabId } = await harness.openPage('/form.html');
     try {
-      runCli(['element', 'type', '--tab-id', String(tabId), '--css', '#name-input', '--value', 'Agent CLI'], harness.rpcPort, harness.dataDir);
-      runCli(
-        ['element', 'type', '--tab-id', String(tabId), '--css', '#email-input', '--value', 'agent@example.com'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      runCli(['element', 'focus', '--tab-id', String(tabId), '--css', '#note-input'], harness.rpcPort, harness.dataDir);
-      runCli(['keyboard', 'type', 'notes via keyboard', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-      runCli(['element', 'select', '--tab-id', String(tabId), '--css', '#role-select', '--value', 'admin'], harness.rpcPort, harness.dataDir);
-      runCli(['element', 'check', '--tab-id', String(tabId), '--css', '#agree-check'], harness.rpcPort, harness.dataDir);
-      runCli(['element', 'uncheck', '--tab-id', String(tabId), '--css', '#agree-check'], harness.rpcPort, harness.dataDir);
-      runCli(['element', 'check', '--tab-id', String(tabId), '--css', '#agree-check'], harness.rpcPort, harness.dataDir);
-      const noteField = runCli<{ value?: string }>(['element', 'get', '--tab-id', String(tabId), '--css', '#note-input'], harness.rpcPort, harness.dataDir);
-      const checkbox = runCli<{ checked?: boolean }>(['element', 'get', '--tab-id', String(tabId), '--css', '#agree-check'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['element', 'type', '--tab-id', String(tabId), '--css', '#name-input', '--value', 'Agent CLI']);
+      runHarnessCli(['element', 'type', '--tab-id', String(tabId), '--css', '#email-input', '--value', 'agent@example.com']);
+      runHarnessCli(['element', 'focus', '--tab-id', String(tabId), '--css', '#note-input']);
+      runHarnessCli(['keyboard', 'type', 'notes via keyboard', '--tab-id', String(tabId)]);
+      runHarnessCli(['element', 'select', '--tab-id', String(tabId), '--css', '#role-select', '--value', 'admin']);
+      runHarnessCli(['element', 'check', '--tab-id', String(tabId), '--css', '#agree-check']);
+      runHarnessCli(['element', 'uncheck', '--tab-id', String(tabId), '--css', '#agree-check']);
+      runHarnessCli(['element', 'check', '--tab-id', String(tabId), '--css', '#agree-check']);
+      const noteField = runHarnessCli<{ value?: string }>(['element', 'get', '--tab-id', String(tabId), '--css', '#note-input']);
+      const checkbox = runHarnessCli<{ checked?: boolean }>(['element', 'get', '--tab-id', String(tabId), '--css', '#agree-check']);
 
       expect(noteField.value).toBe('notes via keyboard');
       expect(checkbox.checked).toBe(true);
@@ -64,27 +74,23 @@ test.describe('CLI agent workflows', () => {
 
     const { page, tabId } = await harness.openPage('/iframe-host.html');
     try {
-      runCli(['context', 'enter-frame', '--tab-id', String(tabId), '--frame-path', '#demo-frame'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['context', 'enter-frame', '--tab-id', String(tabId), '--frame-path', '#demo-frame']);
 
-      const frameUrl = runCli<{ url: string }>(['page', 'url', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-      const frameTitle = runCli<{ title: string }>(['page', 'title', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
+      const frameUrl = runHarnessCli<{ url: string }>(['page', 'url', '--tab-id', String(tabId)]);
+      const frameTitle = runHarnessCli<{ title: string }>(['page', 'title', '--tab-id', String(tabId)]);
       expect(frameUrl.url).toContain('/iframe-child.html');
       expect(frameTitle.title).toContain('Iframe Child');
 
-      runCli(['element', 'type', '--tab-id', String(tabId), '--css', '#frame-input', '--value', 'frame cli'], harness.rpcPort, harness.dataDir);
-      runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#frame-btn'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['element', 'type', '--tab-id', String(tabId), '--css', '#frame-input', '--value', 'frame cli']);
+      runHarnessCli(['element', 'click', '--tab-id', String(tabId), '--css', '#frame-btn']);
       await expect(page.frameLocator('#demo-frame').locator('#frame-result')).toContainText('clicked:frame cli');
 
-      runCli(['context', 'enter-shadow', '--tab-id', String(tabId), '--host-selectors', '#frame-shadow-host'], harness.rpcPort, harness.dataDir);
-      runCli(
-        ['element', 'type', '--tab-id', String(tabId), '--css', '#frame-shadow-input', '--value', 'shadow cli'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#frame-shadow-btn'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['context', 'enter-shadow', '--tab-id', String(tabId), '--host-selectors', '#frame-shadow-host']);
+      runHarnessCli(['element', 'type', '--tab-id', String(tabId), '--css', '#frame-shadow-input', '--value', 'shadow cli']);
+      runHarnessCli(['element', 'click', '--tab-id', String(tabId), '--css', '#frame-shadow-btn']);
       await expect(page.frameLocator('#demo-frame').locator('#frame-result')).toContainText('frame-shadow:shadow cli');
 
-      const dump = runCli<{
+      const dump = runHarnessCli<{
         url: string;
         title: string;
         context: { framePath: string[]; shadowPath: string[] };
@@ -104,8 +110,8 @@ test.describe('CLI agent workflows', () => {
       expect(existsSync(must(dump.snapshot, 'Expected dump snapshot').imagePath)).toBe(true);
       expect(existsSync(dump.snapshot!.elementsPath)).toBe(true);
 
-      runCli(['context', 'reset', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-      const topLevelUrl = runCli<{ url: string }>(['page', 'url', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['context', 'reset', '--tab-id', String(tabId)]);
+      const topLevelUrl = runHarnessCli<{ url: string }>(['page', 'url', '--tab-id', String(tabId)]);
       expect(topLevelUrl.url).toContain('/iframe-host.html');
     } finally {
       await page.close();
@@ -124,11 +130,16 @@ test.describe('CLI agent workflows', () => {
       await page.click('#fetch-fail');
       await expect(page.locator('#network-log')).toContainText('fetch:503:');
 
-      const list = runCli<{ entries: Array<{ id: string; status: number; url: string; kind?: string }> }>(
-        ['network', 'list', '--tab-id', String(tabId), '--limit', '20', '--url-includes', '/api/slow'],
-        harness.rpcPort,
-        harness.dataDir
-      );
+      const list = runHarnessCli<{ entries: Array<{ id: string; status: number; url: string; kind?: string }> }>([
+        'network',
+        'list',
+        '--tab-id',
+        String(tabId),
+        '--limit',
+        '20',
+        '--url-includes',
+        '/api/slow'
+      ]);
       const okEntry = must(
         list.entries.find((entry) => entry.url.includes('status=200')),
         `Expected a 200 request entry in ${JSON.stringify(list.entries)}`
@@ -137,17 +148,22 @@ test.describe('CLI agent workflows', () => {
         list.entries.find((entry) => entry.url.includes('status=503')),
         `Expected a 503 request entry in ${JSON.stringify(list.entries)}`
       );
-      const fetched = runCli<{ entry: { id: string; status: number; url: string; kind?: string } }>(
-        ['network', 'get', failedEntry.id, '--tab-id', String(tabId)],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const consoleEntries = runCli<{ entries: Array<{ level: string; message: string }> }>(
-        ['debug', 'console', '--tab-id', String(tabId), '--limit', '20'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const dump = runCli<{
+      const fetched = runHarnessCli<{ entry: { id: string; status: number; url: string; kind?: string } }>([
+        'network',
+        'get',
+        failedEntry.id,
+        '--tab-id',
+        String(tabId)
+      ]);
+      const consoleEntries = runHarnessCli<{ entries: Array<{ level: string; message: string }> }>([
+        'debug',
+        'console',
+        '--tab-id',
+        String(tabId),
+        '--limit',
+        '20'
+      ]);
+      const dump = runHarnessCli<{
         console: Array<{ level: string; message: string }>;
         network: Array<{ status: number }>;
         snapshot?: { imagePath: string; elementCount: number };
@@ -175,8 +191,8 @@ test.describe('CLI agent workflows', () => {
       expect(Array.isArray(dump.console)).toBe(true);
       expect(existsSync(must(dump.snapshot, 'Expected dump snapshot').imagePath)).toBe(true);
 
-      runCli(['network', 'clear', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-      const cleared = runCli<{ entries: Array<unknown> }>(['network', 'list', '--tab-id', String(tabId), '--limit', '5'], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['network', 'clear', '--tab-id', String(tabId)]);
+      const cleared = runHarnessCli<{ entries: Array<unknown> }>(['network', 'list', '--tab-id', String(tabId), '--limit', '5']);
       expect(cleared.entries).toHaveLength(0);
     } finally {
       await page.close();
@@ -199,16 +215,16 @@ test.describe('CLI agent workflows', () => {
           }
         ]
       });
-      runCli(['file', 'upload', '--tab-id', String(tabId), '--css', '#file-input', '--files', filesJson], harness.rpcPort, harness.dataDir);
+      runHarnessCli(['file', 'upload', '--tab-id', String(tabId), '--css', '#file-input', '--files', filesJson]);
       await expect(page.locator('#upload-result')).toContainText('files:1');
 
-      const snapshot = runCli<{
+      const snapshot = runHarnessCli<{
         imagePath: string;
         elementsPath: string;
         imageBase64?: string;
         elementCount: number;
-      }>(['page', 'snapshot', '--tab-id', String(tabId), '--include-base64'], harness.rpcPort, harness.dataDir);
-      const a11y = runCli<{ nodes: Array<{ role: string }> }>(['page', 'a11y', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
+      }>(['page', 'snapshot', '--tab-id', String(tabId), '--include-base64']);
+      const a11y = runHarnessCli<{ nodes: Array<{ role: string }> }>(['page', 'a11y', '--tab-id', String(tabId)]);
       const elements = readJsonFile<Array<unknown>>(snapshot.elementsPath);
 
       expect(existsSync(snapshot.imagePath)).toBe(true);
@@ -229,7 +245,7 @@ test.describe('CLI agent workflows', () => {
 
     const controlled = await harness.openPage('/controlled.html');
     try {
-      const clickError = runCliFailure(['element', 'click', '--tab-id', String(controlled.tabId), '--css', '#missing-node'], harness.rpcPort, harness.dataDir);
+      const clickError = runHarnessCliFailure(['element', 'click', '--tab-id', String(controlled.tabId), '--css', '#missing-node']);
       expect(clickError).toMatch(/not found/i);
     } finally {
       await controlled.page.close();
@@ -237,11 +253,7 @@ test.describe('CLI agent workflows', () => {
 
     const network = await harness.openPage('/network.html');
     try {
-      const waitError = runCliFailure(
-        ['network', 'wait', '--tab-id', String(network.tabId), '--url-includes', '/never', '--timeout-ms', '250'],
-        harness.rpcPort,
-        harness.dataDir
-      );
+      const waitError = runHarnessCliFailure(['network', 'wait', '--tab-id', String(network.tabId), '--url-includes', '/never', '--timeout-ms', '250']);
       expect(waitError).toMatch(/timeout/i);
     } finally {
       await network.page.close();

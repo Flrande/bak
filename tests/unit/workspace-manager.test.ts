@@ -1,15 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_WORKSPACE_ID, WorkspaceManager, type WorkspaceBrowser, type WorkspaceColor, type WorkspaceRecord, type WorkspaceStorage, type WorkspaceTab, type WorkspaceWindow } from '../../packages/extension/src/workspace.js';
+import {
+  WorkspaceManager,
+  type WorkspaceBrowser,
+  type WorkspaceColor,
+  type WorkspaceRecord,
+  type WorkspaceStorage,
+  type WorkspaceTab,
+  type WorkspaceWindow
+} from '../../packages/extension/src/workspace.js';
+
+const WORKSPACE_ID = 'workspace-agent-a';
+const WORKSPACE_ID_B = 'workspace-agent-b';
+
+function cloneRecord(state: WorkspaceRecord | null): WorkspaceRecord | null {
+  return state ? { ...state, tabIds: [...state.tabIds] } : null;
+}
 
 class MemoryStorage implements WorkspaceStorage {
-  state: WorkspaceRecord | null = null;
+  readonly states = new Map<string, WorkspaceRecord>();
 
-  async load(): Promise<WorkspaceRecord | null> {
-    return this.state ? { ...this.state, tabIds: [...this.state.tabIds] } : null;
+  async load(workspaceId: string): Promise<WorkspaceRecord | null> {
+    return cloneRecord(this.states.get(workspaceId) ?? null);
   }
 
-  async save(state: WorkspaceRecord | null): Promise<void> {
-    this.state = state ? { ...state, tabIds: [...state.tabIds] } : null;
+  async save(state: WorkspaceRecord): Promise<void> {
+    this.states.set(state.id, cloneRecord(state)!);
+  }
+
+  async delete(workspaceId: string): Promise<void> {
+    this.states.delete(workspaceId);
+  }
+
+  async list(): Promise<WorkspaceRecord[]> {
+    return [...this.states.values()].map((state) => cloneRecord(state)!).filter(Boolean);
   }
 }
 
@@ -177,7 +200,10 @@ class FakeBrowser implements WorkspaceBrowser {
     return resolvedGroupId;
   }
 
-  async updateGroup(groupId: number, options: { title?: string; color?: WorkspaceColor; collapsed?: boolean }): Promise<{ id: number; windowId: number; title: string; color: WorkspaceColor; collapsed: boolean }> {
+  async updateGroup(
+    groupId: number,
+    options: { title?: string; color?: WorkspaceColor; collapsed?: boolean }
+  ): Promise<{ id: number; windowId: number; title: string; color: WorkspaceColor; collapsed: boolean }> {
     const group = this.groups.get(groupId);
     if (!group) {
       throw new Error(`missing group ${groupId}`);
@@ -209,9 +235,9 @@ describe('workspace manager', () => {
   it('creates a dedicated window, group, and primary tab on ensure', async () => {
     const { manager } = await createManager();
 
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
-    expect(ensured.workspace.id).toBe(DEFAULT_WORKSPACE_ID);
+    expect(ensured.workspace.id).toBe(WORKSPACE_ID);
     expect(ensured.workspace.windowId).not.toBeNull();
     expect(ensured.workspace.groupId).not.toBeNull();
     expect(ensured.workspace.primaryTabId).not.toBeNull();
@@ -233,10 +259,10 @@ describe('workspace manager', () => {
     expect(resolved.resolution).toBe('browser-active');
     expect(resolved.tab.url).toContain('human.local');
     expect(resolved.createdWorkspace).toBe(false);
-    expect(await storage.load()).toBeNull();
+    await expect(storage.load(WORKSPACE_ID)).resolves.toBeNull();
   });
 
-  it('resolves targets in the required priority order once a workspace exists', async () => {
+  it('resolves explicit workspace targets and leaves implicit routing on the browser active tab', async () => {
     const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
       const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
       const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
@@ -248,7 +274,7 @@ describe('workspace manager', () => {
       await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
       seedBrowser.activeTabId = humanTab.id;
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: workspaceWindow.id,
@@ -259,19 +285,19 @@ describe('workspace manager', () => {
       });
     });
     const humanTabId = browser.activeTabId;
-    const workspaceTabId = storage.state?.activeTabId;
+    const workspaceTabId = (await storage.load(WORKSPACE_ID))?.activeTabId;
 
     const explicitTab = await manager.resolveTarget({ tabId: humanTabId! });
     expect(explicitTab.resolution).toBe('explicit-tab');
     expect(explicitTab.tab.id).toBe(humanTabId);
 
-    const withWorkspace = await manager.resolveTarget({ workspaceId: DEFAULT_WORKSPACE_ID });
+    const withWorkspace = await manager.resolveTarget({ workspaceId: WORKSPACE_ID });
     expect(withWorkspace.resolution).toBe('explicit-workspace');
     expect(withWorkspace.tab.id).toBe(workspaceTabId);
 
-    const defaultWorkspace = await manager.resolveTarget({});
-    expect(defaultWorkspace.resolution).toBe('default-workspace');
-    expect(defaultWorkspace.tab.id).toBe(workspaceTabId);
+    const implicitTarget = await manager.resolveTarget({});
+    expect(implicitTarget.resolution).toBe('browser-active');
+    expect(implicitTarget.tab.id).toBe(humanTabId);
   });
 
   it('creates the workspace when an explicit workspace id is requested', async () => {
@@ -281,38 +307,38 @@ describe('workspace manager', () => {
       seedBrowser.activeTabId = humanTab.id;
     });
 
-    const resolved = await manager.resolveTarget({ workspaceId: DEFAULT_WORKSPACE_ID });
+    const resolved = await manager.resolveTarget({ workspaceId: WORKSPACE_ID });
 
     expect(resolved.resolution).toBe('explicit-workspace');
     expect(resolved.createdWorkspace).toBe(true);
     expect(resolved.workspace?.windowId).not.toBeNull();
-    expect((await storage.load())?.id).toBe(DEFAULT_WORKSPACE_ID);
+    expect((await storage.load(WORKSPACE_ID))?.id).toBe(WORKSPACE_ID);
   });
 
-  it('getActiveTab and setActiveTab update the workspace default target', async () => {
+  it('getActiveTab and setActiveTab update the workspace current tab', async () => {
     const { manager } = await createManager();
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
     const firstTabId = ensured.workspace.primaryTabId!;
-    const second = await manager.openTab({ url: 'https://workspace.local/second', active: false, focus: false });
+    const second = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/second', active: false, focus: false });
 
-    const initiallyActive = await manager.getActiveTab();
+    const initiallyActive = await manager.getActiveTab(WORKSPACE_ID);
     expect(initiallyActive.tab?.id).toBe(second.tab.id);
 
-    const switched = await manager.setActiveTab(firstTabId);
+    const switched = await manager.setActiveTab(firstTabId, WORKSPACE_ID);
     expect(switched.tab.id).toBe(firstTabId);
 
-    const defaultTarget = await manager.resolveTarget({});
-    expect(defaultTarget.resolution).toBe('default-workspace');
-    expect(defaultTarget.tab.id).toBe(firstTabId);
+    const resolved = await manager.resolveTarget({ workspaceId: WORKSPACE_ID });
+    expect(resolved.resolution).toBe('explicit-workspace');
+    expect(resolved.tab.id).toBe(firstTabId);
   });
 
   it('repairs a missing window without adopting unrelated tabs', async () => {
-    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
+    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
       const unrelatedWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
       const unrelatedTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === unrelatedWindow.id)!;
       seedBrowser.activeTabId = unrelatedTab.id;
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: 999,
@@ -323,9 +349,8 @@ describe('workspace manager', () => {
       });
     });
     void browser;
-    void storage;
 
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
     expect(ensured.workspace.windowId).not.toBe(999);
     expect(ensured.workspace.tabIds).toHaveLength(1);
@@ -334,11 +359,11 @@ describe('workspace manager', () => {
   });
 
   it('recreates a missing group and regroups tracked tabs', async () => {
-    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
+    const { manager } = await createManager(async (seedBrowser, seedStorage) => {
       const window = await seedBrowser.createWindow({ url: 'https://workspace.local', focused: false });
       const tab = [...seedBrowser.tabs.values()].find((item) => item.windowId === window.id)!;
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: window.id,
@@ -348,10 +373,8 @@ describe('workspace manager', () => {
         primaryTabId: tab.id
       });
     });
-    void browser;
-    void storage;
 
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
     expect(ensured.workspace.groupId).not.toBe(1234);
     expect(ensured.workspace.tabs[0]?.groupId).toBe(ensured.workspace.groupId);
@@ -359,13 +382,13 @@ describe('workspace manager', () => {
   });
 
   it('recovers workspace tabs from the dedicated group when tracked tab ids are missing', async () => {
-    const { storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
+    const { manager } = await createManager(async (seedBrowser, seedStorage) => {
       const window = await seedBrowser.createWindow({ url: 'https://workspace.local', focused: false });
       const tab = [...seedBrowser.tabs.values()].find((item) => item.windowId === window.id)!;
       const groupId = await seedBrowser.groupTabs([tab.id]);
       await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: window.id,
@@ -375,9 +398,8 @@ describe('workspace manager', () => {
         primaryTabId: null
       });
     });
-    void storage;
 
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
     expect(ensured.workspace.tabIds).toHaveLength(1);
     expect(ensured.workspace.tabs[0]?.groupId).toBe(ensured.workspace.groupId);
@@ -386,11 +408,11 @@ describe('workspace manager', () => {
 
   it('opens new tabs inside the workspace window and group without changing human focus by default', async () => {
     const { browser, manager } = await createManager();
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
     const originalWindowId = ensured.workspace.windowId;
     const originalGroupId = ensured.workspace.groupId;
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/next', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/next', active: false, focus: false });
 
     expect(opened.tab.windowId).toBe(originalWindowId);
     expect(opened.tab.groupId).toBe(originalGroupId);
@@ -401,7 +423,7 @@ describe('workspace manager', () => {
   it('reuses the initial workspace tab for the first open-tab request after creating the workspace', async () => {
     const { manager } = await createManager();
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/first', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/first', active: false, focus: false });
 
     expect(opened.workspace.tabIds).toHaveLength(1);
     expect(opened.workspace.primaryTabId).toBe(opened.tab.id);
@@ -410,9 +432,9 @@ describe('workspace manager', () => {
 
   it('reuses a lone blank primary tab after an explicit ensure instead of creating an extra blank tab', async () => {
     const { manager } = await createManager();
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/after-ensure', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/after-ensure', active: false, focus: false });
 
     expect(ensured.workspace.tabIds).toHaveLength(1);
     expect(opened.workspace.tabIds).toHaveLength(1);
@@ -422,11 +444,11 @@ describe('workspace manager', () => {
 
   it('does not recreate the workspace while reading info or active tab', async () => {
     const { browser, manager } = await createManager();
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
     const originalWindowId = ensured.workspace.windowId;
 
-    const info = await manager.getWorkspaceInfo();
-    const active = await manager.getActiveTab();
+    const info = await manager.getWorkspaceInfo(WORKSPACE_ID);
+    const active = await manager.getActiveTab(WORKSPACE_ID);
 
     expect(info?.windowId).toBe(originalWindowId);
     expect(active.workspace.windowId).toBe(originalWindowId);
@@ -437,11 +459,11 @@ describe('workspace manager', () => {
 
   it('does not recreate the workspace window when window lookup is temporarily unavailable', async () => {
     const { browser, manager } = await createManager();
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
     const originalWindowId = ensured.workspace.windowId!;
     browser.failWindowLookups(originalWindowId, 3);
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/resilient', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/resilient', active: false, focus: false });
 
     expect(opened.workspace.windowId).toBe(originalWindowId);
     expect(browser.windows.size).toBe(1);
@@ -455,7 +477,7 @@ describe('workspace manager', () => {
       const groupId = await seedBrowser.groupTabs([workspaceTab.id]);
       await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: 999,
@@ -466,7 +488,7 @@ describe('workspace manager', () => {
       });
     });
 
-    const ensured = await manager.ensureWorkspace();
+    const ensured = await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
     expect(ensured.workspace.windowId).toBe(ensured.workspace.tabs[0]?.windowId);
     expect(browser.windows.size).toBe(1);
@@ -481,7 +503,7 @@ describe('workspace manager', () => {
       const groupId = await seedBrowser.groupTabs([workspaceTab.id]);
       await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: 999,
@@ -492,7 +514,7 @@ describe('workspace manager', () => {
       });
     });
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/next', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/next', active: false, focus: false });
 
     expect(browser.windows.size).toBe(1);
     expect(new Set(opened.workspace.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.workspace.windowId]));
@@ -511,7 +533,7 @@ describe('workspace manager', () => {
       });
 
       await seedStorage.save({
-        id: DEFAULT_WORKSPACE_ID,
+        id: WORKSPACE_ID,
         label: 'bak agent',
         color: 'blue',
         windowId: userWindow.id,
@@ -526,7 +548,7 @@ describe('workspace manager', () => {
     const orphanedTabId = mustTabIdByUrl(browser, humanWindowId, '/orphaned');
     const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
 
-    const opened = await manager.openTab({ url: 'https://workspace.local/recovered', active: false, focus: false });
+    const opened = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/recovered', active: false, focus: false });
 
     expect(opened.workspace.windowId).not.toBe(humanWindowId);
     expect(browser.windows.has(humanWindowId)).toBe(true);
@@ -536,14 +558,29 @@ describe('workspace manager', () => {
     expect(opened.workspace.tabs.some((tab) => tab.url === 'https://workspace.local/recovered')).toBe(true);
   });
 
+  it('keeps multiple workspaces isolated across storage, windows, and active tabs', async () => {
+    const { storage, manager } = await createManager();
+
+    const first = await manager.openTab({ workspaceId: WORKSPACE_ID, url: 'https://workspace.local/a', active: false, focus: false });
+    const second = await manager.openTab({ workspaceId: WORKSPACE_ID_B, url: 'https://workspace.local/b', active: false, focus: false });
+
+    expect(first.workspace.windowId).not.toBe(second.workspace.windowId);
+    expect(first.workspace.groupId).not.toBe(second.workspace.groupId);
+    expect(first.workspace.activeTabId).toBe(first.tab.id);
+    expect(second.workspace.activeTabId).toBe(second.tab.id);
+    expect((await manager.getActiveTab(WORKSPACE_ID)).tab?.id).toBe(first.tab.id);
+    expect((await manager.getActiveTab(WORKSPACE_ID_B)).tab?.id).toBe(second.tab.id);
+    expect((await storage.list()).map((item) => item.id).sort()).toEqual([WORKSPACE_ID, WORKSPACE_ID_B]);
+  });
+
   it('clears persisted workspace state when closed', async () => {
     const { storage, manager } = await createManager();
-    await manager.ensureWorkspace();
+    await manager.ensureWorkspace({ workspaceId: WORKSPACE_ID });
 
-    await manager.close();
+    await manager.close(WORKSPACE_ID);
 
-    await expect(storage.load()).resolves.toBeNull();
-    await expect(manager.getWorkspaceInfo()).resolves.toBeNull();
+    await expect(storage.load(WORKSPACE_ID)).resolves.toBeNull();
+    await expect(manager.getWorkspaceInfo(WORKSPACE_ID)).resolves.toBeNull();
   });
 });
 

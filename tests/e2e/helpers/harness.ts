@@ -20,6 +20,7 @@ interface RpcResponse {
 }
 
 const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'page.reload']);
+const SESSION_METHODS_WITHOUT_SESSION = new Set(['session.create', 'session.list']);
 const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
 const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
 
@@ -78,12 +79,15 @@ export interface BakErrorResponse extends Error {
 export interface E2EHarness {
   dataDir: string;
   rpcPort: number;
+  sessionId: string;
+  bindingId: string;
   context: BrowserContext;
   page: Page;
   rpcCall<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
   rpcError(method: string, params?: Record<string, unknown>): Promise<{ bakCode: string; message: string }>;
   findTabIdByUrl(urlPart: string): Promise<number>;
   openPage(path: string): Promise<{ page: Page; tabId: number }>;
+  openHumanPage(path: string): Promise<{ page: Page }>;
   assertTraceHas(method: string): void;
   disconnectBridge(): Promise<void>;
   reconnectBridge(): Promise<void>;
@@ -156,7 +160,7 @@ async function waitForRpcReady(port: number): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      await rpcCallInternal(port, 'session.info', {});
+      await rpcCallInternal(port, 'runtime.info', {});
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -166,17 +170,36 @@ async function waitForRpcReady(port: number): Promise<void> {
   throw new Error('RPC not ready');
 }
 
-async function waitForTabContentReady(port: number, tabId: number, timeoutMs = 12_000): Promise<void> {
+function isSessionScopedMethod(method: string): boolean {
+  return !method.startsWith('runtime.') && !method.startsWith('tabs.') && !SESSION_METHODS_WITHOUT_SESSION.has(method);
+}
+
+function withSession(method: string, params: Record<string, unknown>, sessionId: string): Record<string, unknown> {
+  if (!isSessionScopedMethod(method) || typeof params.sessionId === 'string') {
+    return params;
+  }
+  return {
+    ...params,
+    sessionId
+  };
+}
+
+async function waitForTabContentReady(
+  port: number,
+  tabId: number,
+  sessionId: string,
+  timeoutMs = 12_000
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError = 'unknown';
   while (Date.now() < deadline) {
     try {
-      await rpcCallInternal(port, 'page.url', { tabId });
+      await rpcCallInternal(port, 'page.url', { sessionId, tabId });
       return;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = message;
-      if (!message.includes('E_NOT_READY')) {
+      if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -259,6 +282,8 @@ export async function createHarness(): Promise<E2EHarness> {
   let daemon: ChildProcess | undefined;
   let context: BrowserContext | undefined;
   let extensionId = '';
+  let sessionId = '';
+  let bindingId = '';
   const daemonStdout: string[] = [];
   const daemonStderr: string[] = [];
 
@@ -336,7 +361,7 @@ export async function createHarness(): Promise<E2EHarness> {
     await expect
       .poll(
         async () => {
-          const info = (await rpcCallInternal(rpcPort, 'session.info', {})) as {
+          const info = (await rpcCallInternal(rpcPort, 'runtime.info', {})) as {
             extensionConnected: boolean;
             connectionState: string;
             protocolVersion: string;
@@ -347,27 +372,36 @@ export async function createHarness(): Promise<E2EHarness> {
       )
       .toBe(true);
 
+    const createdSession = (await rpcCallInternal(rpcPort, 'session.create', {
+      clientName: 'e2e-harness'
+    })) as {
+      sessionId: string;
+    };
+    sessionId = createdSession.sessionId;
+    bindingId = createdSession.sessionId;
+    writeFileSync(
+      join(dataDir, 'e2e-session.json'),
+      JSON.stringify({
+        sessionId
+      }),
+      'utf8'
+    );
+
     const page = await context.newPage();
     await gotoWithRetry(page, 'http://127.0.0.1:4173/form.html', '#name-input');
     await page.bringToFront();
-    const initialTabs = (await rpcCallInternal(rpcPort, 'tabs.list', {})) as {
-      tabs: Array<{ id: number; url: string }>;
-    };
-    const initialTab = initialTabs.tabs.find((tab) => tab.url.includes('/form.html'));
-    if (initialTab?.id) {
-      await waitForTabContentReady(rpcPort, initialTab.id);
-    }
 
     const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
-      const deadline = Date.now() + 8_000;
+      const deadline = Date.now() + DEFAULT_RPC_TIMEOUT_MS;
       let lastError: unknown;
+      const requestParams = withSession(method, params, sessionId);
       while (Date.now() < deadline) {
         try {
-          return (await rpcCallInternal(rpcPort, method, params)) as T;
+          return (await rpcCallInternal(rpcPort, method, requestParams)) as T;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           lastError = error;
-          if (!message.includes('E_NOT_READY')) {
+          if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
             throw error;
           }
           await new Promise((resolve) => setTimeout(resolve, 200));
@@ -378,7 +412,7 @@ export async function createHarness(): Promise<E2EHarness> {
 
     const rpcError = async (method: string, params: Record<string, unknown> = {}): Promise<{ bakCode: string; message: string }> => {
       try {
-        await rpcCallInternal(rpcPort, method, params);
+        await rpcCallInternal(rpcPort, method, withSession(method, params, sessionId));
         throw new Error(`Expected error for method: ${method}`);
       } catch (error) {
         const fromError = (error as BakErrorResponse).bakCode;
@@ -401,16 +435,56 @@ export async function createHarness(): Promise<E2EHarness> {
       return matched.id;
     };
 
-    const openPage = async (path: string): Promise<{ page: Page; tabId: number }> => {
+    const openHumanPage = async (path: string): Promise<{ page: Page }> => {
       const target = await context.newPage();
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
       const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
       await gotoWithRetry(target, url, 'body');
       await target.bringToFront();
-      const tabId = await findTabIdByUrl(marker);
-      await waitForTabContentReady(rpcPort, tabId);
-      return { page: target, tabId };
+      return { page: target };
+    };
+
+    const openPage = async (path: string): Promise<{ page: Page; tabId: number }> => {
+      const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const separator = path.includes('?') ? '&' : '?';
+      const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
+      const deadline = Date.now() + 45_000;
+      let opened: { tab: { id: number; url: string } } | null = null;
+      let lastError: unknown;
+      while (Date.now() < deadline) {
+        try {
+          await rpcCall('session.ensure');
+          opened = (await rpcCall<{ tab: { id: number; url: string } }>('session.openTab', {
+            url
+          })) as { tab: { id: number; url: string } };
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = error;
+          if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+      if (!opened) {
+        throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'openPage failed'));
+      }
+
+      await expect
+        .poll(
+          () => context.pages().some((candidate) => candidate.url().includes(marker)),
+          { timeout: 10_000 }
+        )
+        .toBe(true);
+
+      const target = context.pages().find((candidate) => candidate.url().includes(marker));
+      if (!target) {
+        throw new Error(`workspace page not found for ${url}`);
+      }
+      await waitForTabContentReady(rpcPort, opened.tab.id, sessionId);
+      return { page: target, tabId: opened.tab.id };
     };
 
     const withPopup = async (action: (popup: Page) => Promise<void>): Promise<void> => {
@@ -433,7 +507,7 @@ export async function createHarness(): Promise<E2EHarness> {
       await expect
         .poll(
           async () => {
-            const info = (await rpcCallInternal(rpcPort, 'session.info', {})) as {
+            const info = (await rpcCallInternal(rpcPort, 'runtime.info', {})) as {
               extensionConnected: boolean;
               connectionState: string;
             };
@@ -453,7 +527,7 @@ export async function createHarness(): Promise<E2EHarness> {
       await expect
         .poll(
           async () => {
-            const info = (await rpcCallInternal(rpcPort, 'session.info', {})) as {
+            const info = (await rpcCallInternal(rpcPort, 'runtime.info', {})) as {
               extensionConnected: boolean;
               connectionState: string;
             };
@@ -467,14 +541,24 @@ export async function createHarness(): Promise<E2EHarness> {
     const setWorkspaceState = async (state: unknown | null): Promise<void> => {
       await withPopup(async (popup) => {
         await popup.evaluate(
-          async ({ workspaceState }) => {
+          async ({ targetWorkspaceId, workspaceState }) => {
+            const stored = (await chrome.storage.local.get('sessionBindings')) as {
+              sessionBindings?: Record<string, unknown>;
+            };
+            const sessionBindings = { ...(stored.sessionBindings ?? {}) };
             if (workspaceState === null) {
-              await chrome.storage.local.remove('agentWorkspace');
+              delete sessionBindings[targetWorkspaceId];
+              if (Object.keys(sessionBindings).length === 0) {
+                await chrome.storage.local.remove('sessionBindings');
+                return;
+              }
+              await chrome.storage.local.set({ sessionBindings });
               return;
             }
-            await chrome.storage.local.set({ agentWorkspace: workspaceState });
+            sessionBindings[targetWorkspaceId] = workspaceState;
+            await chrome.storage.local.set({ sessionBindings });
           },
-          { workspaceState: state }
+          { targetWorkspaceId: bindingId, workspaceState: state }
         );
       });
     };
@@ -504,6 +588,13 @@ export async function createHarness(): Promise<E2EHarness> {
 
     const dispose = async (): Promise<void> => {
       try {
+        if (sessionId) {
+          await rpcCallInternal(rpcPort, 'session.close', { sessionId });
+        }
+      } catch {
+        // ignore session cleanup failures
+      }
+      try {
         await context.close();
       } catch {
         // ignore
@@ -516,12 +607,15 @@ export async function createHarness(): Promise<E2EHarness> {
     return {
       dataDir,
       rpcPort,
+      sessionId,
+      bindingId,
       context,
       page,
       rpcCall,
       rpcError,
       findTabIdByUrl,
       openPage,
+      openHumanPage,
       assertTraceHas,
       disconnectBridge,
       reconnectBridge,

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION } from '../../packages/protocol/src/types.js';
 import {
-  assessActiveTabTelemetry,
   assessPortAvailability,
   assessProtocolCompatibility,
-  assessSessionInfoHealth,
+  assessRuntimeInfoHealth,
   assessVersionCompatibility
 } from '../../packages/cli/src/doctor.js';
 
-describe('doctor session.info health assessment', () => {
+describe('doctor runtime.info health assessment', () => {
   it('passes when connected and heartbeat is healthy', () => {
-    const check = assessSessionInfoHealth({
+    const check = assessRuntimeInfoHealth({
       extensionConnected: true,
       connectionState: 'connected',
       connectionReason: null,
@@ -24,7 +23,7 @@ describe('doctor session.info health assessment', () => {
   });
 
   it('fails when heartbeat is stale', () => {
-    const check = assessSessionInfoHealth({
+    const check = assessRuntimeInfoHealth({
       extensionConnected: false,
       connectionState: 'disconnected',
       connectionReason: 'heartbeat-timeout',
@@ -38,7 +37,7 @@ describe('doctor session.info health assessment', () => {
   });
 
   it('fails when bridge is not connected', () => {
-    const check = assessSessionInfoHealth({
+    const check = assessRuntimeInfoHealth({
       extensionConnected: false,
       connectionState: 'disconnected',
       connectionReason: 'socket-closed',
@@ -130,44 +129,6 @@ describe('doctor session.info health assessment', () => {
     expect(check.ok).toBe(false);
     expect(check.message).toContain('mismatch');
     expect(check.severity).toBe('warn');
-  });
-
-  it('passes when active tab telemetry is present while connected', () => {
-    const check = assessActiveTabTelemetry({
-      extensionConnected: true,
-      connectionState: 'connected',
-      activeTab: {
-        id: 42,
-        url: 'https://example.com/form',
-        title: 'Example'
-      }
-    });
-
-    expect(check.ok).toBe(true);
-    expect(check.message).toContain('available');
-  });
-
-  it('warns when connected session has no active tab telemetry', () => {
-    const check = assessActiveTabTelemetry({
-      extensionConnected: true,
-      connectionState: 'connected',
-      activeTab: null
-    });
-
-    expect(check.ok).toBe(false);
-    expect(check.severity).toBe('warn');
-    expect(check.message).toContain('missing');
-  });
-
-  it('skips active tab telemetry when disconnected', () => {
-    const check = assessActiveTabTelemetry({
-      extensionConnected: false,
-      connectionState: 'disconnected',
-      activeTab: null
-    });
-
-    expect(check.ok).toBe(true);
-    expect(check.message).toContain('skipped');
   });
 
   it('treats bound port as healthy in runtime mode', () => {

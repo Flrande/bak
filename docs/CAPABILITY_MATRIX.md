@@ -6,7 +6,9 @@
 | context | context.enterShadow | beta | `MethodMap['context.enterShadow']` | M002-S, M002-F | true |
 | context | context.exitFrame | beta | `MethodMap['context.exitFrame']` | M003-S, M003-F | true |
 | context | context.exitShadow | beta | `MethodMap['context.exitShadow']` | M004-S, M004-F | true |
+| context | context.get | stable | `MethodMap['context.get']` | - | false |
 | context | context.reset | beta | `MethodMap['context.reset']` | M005-S, M005-F | true |
+| context | context.set | stable | `MethodMap['context.set']` | - | false |
 | debug | debug.dumpState | beta | `MethodMap['debug.dumpState']` | M006-S, M006-F | true |
 | debug | debug.getConsole | stable | `MethodMap['debug.getConsole']` | M007-S, M007-F | true |
 | element | element.blur | stable | `MethodMap['element.blur']` | M008-S, M008-F | true |
@@ -48,9 +50,18 @@
 | page | page.url | stable | `MethodMap['page.url']` | M065-S, M065-F | true |
 | page | page.viewport | stable | `MethodMap['page.viewport']` | M066-S, M066-F | true |
 | page | page.wait | stable | `MethodMap['page.wait']` | M067-S, M067-F | true |
+| runtime | runtime.info | stable | `MethodMap['runtime.info']` | M070-S, M070-F | true |
 | session | session.close | stable | `MethodMap['session.close']` | M068-S, M068-F | true |
 | session | session.create | stable | `MethodMap['session.create']` | M069-S, M069-F | true |
-| session | session.info | stable | `MethodMap['session.info']` | M070-S, M070-F | true |
+| session | session.ensure | stable | `MethodMap['session.ensure']` | - | false |
+| session | session.focus | stable | `MethodMap['session.focus']` | - | false |
+| session | session.getActiveTab | stable | `MethodMap['session.getActiveTab']` | - | false |
+| session | session.info | stable | `MethodMap['session.info']` | - | false |
+| session | session.list | stable | `MethodMap['session.list']` | - | false |
+| session | session.listTabs | stable | `MethodMap['session.listTabs']` | - | false |
+| session | session.openTab | stable | `MethodMap['session.openTab']` | - | false |
+| session | session.reset | stable | `MethodMap['session.reset']` | - | false |
+| session | session.setActiveTab | stable | `MethodMap['session.setActiveTab']` | - | false |
 | tabs | tabs.close | stable | `MethodMap['tabs.close']` | M071-S, M071-F | true |
 | tabs | tabs.focus | stable | `MethodMap['tabs.focus']` | M072-S, M072-F | true |
 | tabs | tabs.get | stable | `MethodMap['tabs.get']` | M073-S, M073-F | true |

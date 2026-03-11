@@ -1,10 +1,10 @@
 # Release Capability Report
 
-- GeneratedAt: 2026-03-08 19:06:02 +08:00
-- TotalCapabilities: 77
-- StabilityBreakdown: stable=44 beta=32 experimental=0
-- E2ECaseMapped: 76 / 77
-- E2EExecutionStatus: passed=0 failed=1 notRun=76
+- GeneratedAt: 2026-03-11 16:22:00 +08:00
+- TotalCapabilities: 66
+- StabilityBreakdown: stable=55 beta=11 experimental=0
+- E2ECaseMapped: 66 / 66
+- E2EExecutionStatus: passed=0 failed=0 notRun=66
 - ReleaseGate: fail (real e2e not complete)
 
 ## Sources

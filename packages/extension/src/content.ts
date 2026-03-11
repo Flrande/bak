@@ -2144,6 +2144,37 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       return { ok: true, fileCount: transfer.files.length };
     }
 
+    case 'context.get':
+      return {
+        ok: true,
+        frameDepth: contextState.framePath.length,
+        shadowDepth: contextState.shadowPath.length,
+        framePath: [...contextState.framePath],
+        shadowPath: [...contextState.shadowPath]
+      };
+
+    case 'context.set': {
+      const framePath = Array.isArray(params.framePath) ? params.framePath.map(String) : [];
+      const shadowPath = Array.isArray(params.shadowPath) ? params.shadowPath.map(String) : [];
+      const frameResult = resolveFrameDocument(framePath);
+      if (!frameResult.ok) {
+        throw frameResult.error;
+      }
+      const shadowResult = resolveShadowRoot(frameResult.document, shadowPath);
+      if (!shadowResult.ok) {
+        throw shadowResult.error;
+      }
+      contextState.framePath = framePath;
+      contextState.shadowPath = shadowPath;
+      return {
+        ok: true,
+        frameDepth: contextState.framePath.length,
+        shadowDepth: contextState.shadowPath.length,
+        framePath: [...contextState.framePath],
+        shadowPath: [...contextState.shadowPath]
+      };
+    }
+
     case 'context.enterFrame': {
       if (params.reset === true) {
         contextState.framePath = [];

@@ -42,15 +42,15 @@ function parseTabId(value: unknown): number | undefined {
   return parsed;
 }
 
-function parseWorkspaceId(value: unknown): string | undefined {
+function parseSessionId(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
-  const workspaceId = String(value).trim();
-  if (!workspaceId) {
+  const sessionId = String(value).trim();
+  if (!sessionId) {
     return undefined;
   }
-  return workspaceId;
+  return sessionId;
 }
 
 function resolveExtensionDistPath(): string | null {
@@ -90,17 +90,17 @@ function addRpcPortOption(command: Command): Command {
 }
 
 function addTabOption(command: Command): Command {
-  return command.option('--tab-id <tabId>', 'explicit tab id to target').option('--workspace-id <workspaceId>', 'explicit workspace id to target');
+  return command.option('--session-id <sessionId>', 'target session id').option('--tab-id <tabId>', 'explicit session tab id to target');
 }
 
-function addWorkspaceOption(command: Command): Command {
-  return command.option('--workspace-id <workspaceId>', 'explicit workspace id to target');
+function addSessionOption(command: Command): Command {
+  return command.option('--session-id <sessionId>', 'target session id');
 }
 
-function targetParams(options: { tabId?: unknown; workspaceId?: unknown }): { tabId?: number; workspaceId?: string } {
+function targetParams(options: { tabId?: unknown; sessionId?: unknown }): { tabId?: number; sessionId?: string } {
   return {
     tabId: parseTabId(options.tabId),
-    workspaceId: parseWorkspaceId(options.workspaceId)
+    sessionId: parseSessionId(options.sessionId)
   };
 }
 
@@ -175,15 +175,15 @@ program
 addStructuredHelp(program, {
   notes: [
     'All commands print machine-friendly JSON.',
-    'Use --tab-id or --workspace-id to override the default target.',
-    'Once a workspace exists, browser commands prefer its current tab.',
+    'Use --session-id for session-scoped commands and --tab-id to override a session tab.',
+    'Create a session before using session, page, element, context, debug, network, keyboard, mouse, or file commands.',
     'Use bak call when the protocol exposes a method without a dedicated CLI command.'
   ],
   examples: [
     'bak setup',
     'bak serve --port 17373 --rpc-ws-port 17374',
     'bak doctor --port 17373 --rpc-ws-port 17374',
-    'bak workspace ensure --rpc-ws-port 17374',
+    'bak session ensure --session-id session_123 --rpc-ws-port 17374',
     'bak page title --rpc-ws-port 17374'
   ]
 });
@@ -369,14 +369,159 @@ addStructuredHelp(
   }
 ).action(async (options) => invoke(String(options.method), parseJson(String(options.params)), parseRpcPort(options)));
 
+const session = program
+  .command('session')
+  .summary('Create and inspect agent sessions')
+  .description('Manage multi-agent sessions and their dedicated browser state');
+addStructuredHelp(session, {
+  notes: ['Each session owns one dedicated browser binding and one default active tab/context state.'],
+  examples: [
+    'bak session create --client-name agent-a --rpc-ws-port 17374',
+    'bak session list --rpc-ws-port 17374',
+    'bak session ensure --session-id session_123 --rpc-ws-port 17374',
+    'bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374'
+  ]
+});
+addStructuredHelp(addRpcPortOption(session.command('create').description('Create a new agent session').option('--client-name <name>', 'display label for the agent session')), {
+  examples: ['bak session create --client-name agent-a --rpc-ws-port 17374']
+}).action(async (options) =>
+  invoke(
+    'session.create',
+    {
+      clientName: options.clientName ? String(options.clientName) : undefined
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(addRpcPortOption(session.command('list').description('List active sessions')), {
+  examples: ['bak session list --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.list', {}, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('info').description('Show session state and current context'))), {
+  examples: ['bak session info --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.info', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('close').description('Close a session and its browser state'))), {
+  examples: ['bak session close --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.close', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addSessionOption(
+      session
+        .command('ensure')
+        .description('Create or repair the dedicated browser window, group, and tracked tabs for a session')
+        .option('--url <url>', 'initial or recovery URL')
+        .option('--focus', 'focus the session window', false)
+    )
+  ),
+  {
+    examples: [
+      'bak session ensure --session-id session_123 --rpc-ws-port 17374',
+      'bak session ensure --session-id session_123 --url "https://example.com" --focus --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'session.ensure',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      url: options.url ? String(options.url) : undefined,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addSessionOption(
+      session
+        .command('open-tab')
+        .description('Open a tab inside the dedicated session window and tab group')
+        .option('--url <url>', 'initial URL')
+        .option('--active', 'activate the tab inside the session window', false)
+        .option('--focus', 'focus the session window', false)
+    )
+  ),
+  {
+    examples: ['bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'session.openTab',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      url: options.url ? String(options.url) : undefined,
+      active: options.active === true,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('list-tabs').description('List the tabs tracked by a session'))), {
+  examples: ['bak session list-tabs --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.listTabs', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('get-active-tab').description('Show the current tab used by default session browser commands'))), {
+  examples: ['bak session get-active-tab --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.getActiveTab', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addSessionOption(
+      session
+        .command('set-active-tab')
+        .description('Set the current tab used by default session browser commands')
+        .requiredOption('--tab-id <tabId>', 'session tab id to make current')
+    )
+  ),
+  {
+    examples: ['bak session set-active-tab --session-id session_123 --tab-id 123 --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'session.setActiveTab',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      tabId: parseTabId(options.tabId)
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('focus').description('Bring the dedicated session window to the front'))), {
+  examples: ['bak session focus --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('session.focus', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addSessionOption(
+      session
+        .command('reset')
+        .description('Recreate the dedicated session window and grouping state')
+        .option('--url <url>', 'initial URL')
+        .option('--focus', 'focus the session window', false)
+    )
+  ),
+  {
+    examples: [
+      'bak session reset --session-id session_123 --rpc-ws-port 17374',
+      'bak session reset --session-id session_123 --url "https://example.com" --focus --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'session.reset',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      url: options.url ? String(options.url) : undefined,
+      focus: options.focus === true
+    },
+    parseRpcPort(options)
+  )
+);
+
 const tabs = program
   .command('tabs')
   .summary('List, open, focus, inspect, and close tabs')
   .description('Inspect and control browser tabs directly');
 addStructuredHelp(tabs, {
   notes: [
-    'Use tabs commands when you want direct browser tab control outside the workspace helpers.',
-    'Most day-to-day agent work is easier with workspace ensure and workspace open-tab.'
+    'Use tabs commands when you want direct browser tab control outside the session helpers.',
+    'Most day-to-day agent work is easier with session ensure and session open-tab.'
   ]
 });
 addStructuredHelp(addRpcPortOption(tabs.command('list').description('List tabs visible to the connected browser')), {
@@ -389,7 +534,6 @@ addRpcPortOption(
     .option('--url <url>', 'initial URL')
     .option('--active', 'make the created tab active in its window', false)
     .option('--window-id <windowId>', 'target browser window id')
-    .option('--workspace-id <workspaceId>', 'target workspace id')
     .option('--add-to-group', 'group the new tab when creating in a window', false)
 ).action(async (options) =>
   invoke(
@@ -398,7 +542,6 @@ addRpcPortOption(
       url: options.url ? String(options.url) : undefined,
       active: options.active === true,
       windowId: parseNonNegativeInt(options.windowId, 'window-id'),
-      workspaceId: parseWorkspaceId(options.workspaceId),
       addToGroup: options.addToGroup === true
     },
     parseRpcPort(options)
@@ -416,103 +559,6 @@ addStructuredHelp(addRpcPortOption(tabs.command('get <tabId>').description('Show
 addStructuredHelp(addRpcPortOption(tabs.command('active').description('Show the browser active tab')), {
   examples: ['bak tabs active --rpc-ws-port 17374']
 }).action(async (options) => invoke('tabs.getActive', {}, parseRpcPort(options)));
-
-const workspace = program
-  .command('workspace')
-  .summary('Create, repair, and target the agent workspace')
-  .description('Manage the dedicated agent workspace window, tab group, and current workspace tab');
-addStructuredHelp(workspace, {
-  notes: [
-    'workspace ensure creates or repairs the agent-owned browser window and tab group.',
-    'Ordinary page and element commands do not create a workspace automatically.',
-    'Once a workspace exists, default browser commands prefer its current tab.'
-  ],
-  examples: [
-    'bak workspace ensure --rpc-ws-port 17374',
-    'bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374',
-    'bak workspace get-active-tab --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('ensure').description('Create or repair the workspace window, group, and tracked tabs').option('--url <url>', 'initial or recovery URL').option('--focus', 'focus the workspace window', false))), {
-  examples: [
-    'bak workspace ensure --rpc-ws-port 17374',
-    'bak workspace ensure --url "https://example.com" --focus --rpc-ws-port 17374'
-  ]
-}).action(async (options) =>
-  invoke(
-    'workspace.ensure',
-    {
-      workspaceId: parseWorkspaceId(options.workspaceId),
-      url: options.url ? String(options.url) : undefined,
-      focus: options.focus === true
-    },
-    parseRpcPort(options)
-  )
-);
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('info').description('Show workspace metadata and tracked ids'))), {
-  examples: ['bak workspace info --rpc-ws-port 17374']
-}).action(async (options) => invoke('workspace.info', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
-addRpcPortOption(
-  addTabOption(
-    workspace.command('open-tab').description('Open a tab inside the workspace window and tab group').option('--url <url>', 'initial URL').option('--active', 'activate the tab inside the workspace window', false).option('--focus', 'focus the workspace window', false)
-  )
-).action(async (options) =>
-  invoke(
-    'workspace.openTab',
-    {
-      workspaceId: parseWorkspaceId(options.workspaceId),
-      url: options.url ? String(options.url) : undefined,
-      active: options.active === true,
-      focus: options.focus === true
-    },
-    parseRpcPort(options)
-  )
-);
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('list-tabs').description('List the tabs tracked by the workspace'))), {
-  examples: ['bak workspace list-tabs --rpc-ws-port 17374']
-}).action(async (options) => invoke('workspace.listTabs', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
-addRpcPortOption(
-  addWorkspaceOption(workspace.command('get-active-tab').description('Show the workspace current tab used by default browser commands'))
-).action(async (options) => invoke('workspace.getActiveTab', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
-addRpcPortOption(
-  addWorkspaceOption(
-    workspace
-      .command('set-active-tab')
-      .description('Set the workspace current tab used by default browser commands')
-      .requiredOption('--tab-id <tabId>', 'workspace tab id to make current')
-  )
-).action(async (options) =>
-  invoke(
-    'workspace.setActiveTab',
-    {
-      workspaceId: parseWorkspaceId(options.workspaceId),
-      tabId: parseTabId(options.tabId)
-    },
-    parseRpcPort(options)
-  )
-);
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('focus').description('Bring the workspace window to the front'))), {
-  examples: ['bak workspace focus --rpc-ws-port 17374']
-}).action(async (options) => invoke('workspace.focus', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('reset').description('Recreate the workspace window and grouping state').option('--url <url>', 'initial URL').option('--focus', 'focus the workspace window', false))), {
-  examples: [
-    'bak workspace reset --rpc-ws-port 17374',
-    'bak workspace reset --url "https://example.com" --focus --rpc-ws-port 17374'
-  ]
-}).action(async (options) =>
-  invoke(
-    'workspace.reset',
-    {
-      workspaceId: parseWorkspaceId(options.workspaceId),
-      url: options.url ? String(options.url) : undefined,
-      focus: options.focus === true
-    },
-    parseRpcPort(options)
-  )
-);
-addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('close').description('Close the workspace window and tracked tabs'))), {
-  examples: ['bak workspace close --rpc-ws-port 17374']
-}).action(async (options) => invoke('workspace.close', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
 
 const page = program
   .command('page')
@@ -642,7 +688,7 @@ addStructuredHelp(addRpcPortOption(addTabOption(network.command('clear').descrip
 const context = program
   .command('context')
   .summary('Enter and reset frame or shadow DOM context')
-  .description('Manage the shared frame and shadow context used by page, debug, and element commands');
+  .description('Manage the session-scoped frame and shadow context used by page, debug, and element commands');
 addStructuredHelp(context, {
   notes: [
     'Context changes affect subsequent page reads, debug dumps, and element actions.',
@@ -664,6 +710,33 @@ addStructuredHelp(addRpcPortOption(addTabOption(context.command('exit-shadow').d
 addStructuredHelp(addRpcPortOption(addTabOption(context.command('reset').description('Return to the top-level page context'))), {
   examples: ['bak context reset --rpc-ws-port 17374']
 }).action(async (options) => invoke('context.reset', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(addTabOption(context.command('get').description('Show the current saved context snapshot'))), {
+  examples: ['bak context get --session-id session_123 --rpc-ws-port 17374']
+}).action(async (options) => invoke('context.get', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      context
+        .command('set')
+        .description('Replace the saved context snapshot for a session tab')
+        .option('--frame-path <selector...>', 'frame path selectors')
+        .option('--host-selectors <selector...>', 'shadow host selectors')
+    )
+  ),
+  {
+    examples: ['bak context set --session-id session_123 --frame-path "#demo-frame" --host-selectors "#shadow-host" --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'context.set',
+    {
+      ...targetParams(options),
+      framePath: Array.isArray(options.framePath) ? options.framePath.map(String) : undefined,
+      shadowPath: Array.isArray(options.hostSelectors) ? options.hostSelectors.map(String) : undefined
+    },
+    parseRpcPort(options)
+  )
+);
 
 const element = program
   .command('element')

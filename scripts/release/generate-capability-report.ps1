@@ -15,8 +15,16 @@ if (-not (Test-Path -LiteralPath $e2ePath)) {
 $capabilityLines = Get-Content -LiteralPath $capabilityPath
 $e2eLines = Get-Content -LiteralPath $e2ePath
 
-$capabilityRows = $capabilityLines | Where-Object { $_ -match '^\| [^ ]' -and $_ -notmatch '^\| ---' }
-$e2eRows = $e2eLines | Where-Object { $_ -match '^\| [^ ]' -and $_ -notmatch '^\| ---' }
+$capabilityRows = $capabilityLines | Where-Object {
+  $_ -match '^\| [^ ]' -and
+  $_ -notmatch '^\| ---' -and
+  $_ -notmatch '^\| Domain \|'
+}
+$e2eRows = $e2eLines | Where-Object {
+  $_ -match '^\| [^ ]' -and
+  $_ -notmatch '^\| ---' -and
+  $_ -notmatch '^\| Method \|'
+}
 
 $stableCount = ($capabilityRows | Where-Object { $_ -match '\| stable \|' }).Count
 $betaCount = ($capabilityRows | Where-Object { $_ -match '\| beta \|' }).Count

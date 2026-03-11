@@ -2,13 +2,18 @@ import type { ConsoleEntry, Locator } from '@flrande/bak-protocol';
 import { isSupportedAutomationUrl } from './url-policy.js';
 import { computeReconnectDelayMs } from './reconnect.js';
 import {
-  DEFAULT_WORKSPACE_ID,
-  type WorkspaceBrowser,
-  type WorkspaceColor,
-  type WorkspaceRecord,
-  type WorkspaceTab,
-  type WorkspaceWindow,
-  WorkspaceManager
+  LEGACY_STORAGE_KEY_WORKSPACE,
+  LEGACY_STORAGE_KEY_WORKSPACES,
+  resolveSessionBindingStateMap,
+  STORAGE_KEY_SESSION_BINDINGS
+} from './session-binding-storage.js';
+import {
+  type WorkspaceBrowser as SessionBindingBrowser,
+  type WorkspaceColor as SessionBindingColor,
+  type WorkspaceRecord as SessionBindingRecord,
+  type WorkspaceTab as SessionBindingTab,
+  type WorkspaceWindow as SessionBindingWindow,
+  WorkspaceManager as SessionBindingManager
 } from './workspace.js';
 
 interface CliRequest {
@@ -44,7 +49,6 @@ const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
 const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
-const STORAGE_KEY_WORKSPACE = 'agentWorkspace';
 const DEFAULT_TAB_LOAD_TIMEOUT_MS = 40_000;
 
 let ws: WebSocket | null = null;
@@ -116,6 +120,12 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   if (lower.includes('no tab with id') || lower.includes('no window with id')) {
     return toError('E_NOT_FOUND', message);
   }
+  if (lower.includes('workspace') && lower.includes('does not exist')) {
+    return toError('E_NOT_FOUND', message);
+  }
+  if (lower.includes('does not belong to workspace') || lower.includes('is missing from workspace')) {
+    return toError('E_NOT_FOUND', message);
+  }
   if (lower.includes('invalid url') || lower.includes('url is invalid')) {
     return toError('E_INVALID_PARAMS', message);
   }
@@ -126,7 +136,7 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   return toError('E_INTERNAL', message);
 }
 
-function toTabInfo(tab: chrome.tabs.Tab): WorkspaceTab {
+function toTabInfo(tab: chrome.tabs.Tab): SessionBindingTab {
   if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
     throw new Error('Tab is missing runtime identifiers');
   }
@@ -140,24 +150,43 @@ function toTabInfo(tab: chrome.tabs.Tab): WorkspaceTab {
   };
 }
 
-async function loadWorkspaceState(): Promise<WorkspaceRecord | null> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY_WORKSPACE);
-  const state = stored[STORAGE_KEY_WORKSPACE];
-  if (!state || typeof state !== 'object') {
-    return null;
-  }
-  return state as WorkspaceRecord;
+async function loadWorkspaceStateMap(): Promise<Record<string, SessionBindingRecord>> {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEY_SESSION_BINDINGS,
+    LEGACY_STORAGE_KEY_WORKSPACES,
+    LEGACY_STORAGE_KEY_WORKSPACE
+  ]);
+  return resolveSessionBindingStateMap(stored);
 }
 
-async function saveWorkspaceState(state: WorkspaceRecord | null): Promise<void> {
-  if (state === null) {
-    await chrome.storage.local.remove(STORAGE_KEY_WORKSPACE);
+async function loadWorkspaceState(workspaceId: string): Promise<SessionBindingRecord | null> {
+  const stateMap = await loadWorkspaceStateMap();
+  return stateMap[workspaceId] ?? null;
+}
+
+async function listWorkspaceStates(): Promise<SessionBindingRecord[]> {
+  return Object.values(await loadWorkspaceStateMap());
+}
+
+async function saveWorkspaceState(state: SessionBindingRecord): Promise<void> {
+  const stateMap = await loadWorkspaceStateMap();
+  stateMap[state.id] = state;
+  await chrome.storage.local.set({ [STORAGE_KEY_SESSION_BINDINGS]: stateMap });
+  await chrome.storage.local.remove([LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
+}
+
+async function deleteWorkspaceState(workspaceId: string): Promise<void> {
+  const stateMap = await loadWorkspaceStateMap();
+  delete stateMap[workspaceId];
+  if (Object.keys(stateMap).length === 0) {
+    await chrome.storage.local.remove([STORAGE_KEY_SESSION_BINDINGS, LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
     return;
   }
-  await chrome.storage.local.set({ [STORAGE_KEY_WORKSPACE]: state });
+  await chrome.storage.local.set({ [STORAGE_KEY_SESSION_BINDINGS]: stateMap });
+  await chrome.storage.local.remove([LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
 }
 
-const workspaceBrowser: WorkspaceBrowser = {
+const workspaceBrowser: SessionBindingBrowser = {
   async getTab(tabId) {
     try {
       return toTabInfo(await chrome.tabs.get(tabId));
@@ -209,7 +238,7 @@ const workspaceBrowser: WorkspaceBrowser = {
       return {
         id: window.id!,
         focused: Boolean(window.focused)
-      } satisfies WorkspaceWindow;
+    } satisfies SessionBindingWindow;
     } catch {
       return null;
     }
@@ -264,7 +293,7 @@ const workspaceBrowser: WorkspaceBrowser = {
         id: group.id,
         windowId: group.windowId,
         title: group.title ?? '',
-        color: group.color as WorkspaceColor,
+      color: group.color as SessionBindingColor,
         collapsed: Boolean(group.collapsed)
       };
     } catch {
@@ -290,16 +319,18 @@ const workspaceBrowser: WorkspaceBrowser = {
       id: updated.id,
       windowId: updated.windowId,
       title: updated.title ?? '',
-      color: updated.color as WorkspaceColor,
+      color: updated.color as SessionBindingColor,
       collapsed: Boolean(updated.collapsed)
     };
   }
 };
 
-const workspaceManager = new WorkspaceManager(
+const bindingManager = new SessionBindingManager(
   {
     load: loadWorkspaceState,
-    save: saveWorkspaceState
+    save: saveWorkspaceState,
+    delete: deleteWorkspaceState,
+    list: listWorkspaceStates
   },
   workspaceBrowser
 );
@@ -409,9 +440,9 @@ function normalizeComparableTabUrl(url: string): string {
 }
 
 async function finalizeOpenedWorkspaceTab(
-  opened: Awaited<ReturnType<WorkspaceManager['openTab']>>,
+  opened: Awaited<ReturnType<SessionBindingManager['openTab']>>,
   expectedUrl?: string
-): Promise<Awaited<ReturnType<WorkspaceManager['openTab']>>> {
+): Promise<Awaited<ReturnType<SessionBindingManager['openTab']>>> {
   if (expectedUrl && expectedUrl !== 'about:blank') {
     await waitForTabUrl(opened.tab.id, expectedUrl).catch(() => undefined);
   }
@@ -433,7 +464,7 @@ async function finalizeOpenedWorkspaceTab(
   } catch {
     refreshedTab = (await workspaceBrowser.getTab(opened.tab.id)) ?? opened.tab;
   }
-  const refreshedWorkspace = (await workspaceManager.getWorkspaceInfo(opened.workspace.id)) ?? {
+  const refreshedWorkspace = (await bindingManager.getWorkspaceInfo(opened.workspace.id)) ?? {
     ...opened.workspace,
     tabs: opened.workspace.tabs.map((tab) => (tab.id === refreshedTab.id ? refreshedTab : tab))
   };
@@ -468,7 +499,7 @@ async function withTab(target: { tabId?: number; workspaceId?: string } = {}, op
     return validate(tab);
   }
 
-  const resolved = await workspaceManager.resolveTarget({
+  const resolved = await bindingManager.resolveTarget({
     tabId: target.tabId,
     workspaceId: typeof target.workspaceId === 'string' ? target.workspaceId : undefined,
     createIfMissing: false
@@ -637,6 +668,8 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     'mouse.click',
     'mouse.wheel',
     'file.upload',
+    'context.get',
+    'context.set',
     'context.enterFrame',
     'context.exitFrame',
     'context.enterShadow',
@@ -687,24 +720,6 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'tabs.new': {
-      if (typeof params.workspaceId === 'string' || params.windowId === undefined) {
-        const expectedUrl = (params.url as string | undefined) ?? 'about:blank';
-        const opened = await preserveHumanFocus(true, async () => {
-          return await workspaceManager.openTab({
-            workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : DEFAULT_WORKSPACE_ID,
-            url: expectedUrl,
-            active: params.active === true,
-            focus: false
-          });
-        });
-        const stabilized = await finalizeOpenedWorkspaceTab(opened, expectedUrl);
-        return {
-          tabId: stabilized.tab.id,
-          windowId: stabilized.tab.windowId,
-          groupId: stabilized.workspace.groupId,
-          workspaceId: stabilized.workspace.id
-        };
-      }
       const tab = await chrome.tabs.create({
         url: (params.url as string | undefined) ?? 'about:blank',
         windowId: typeof params.windowId === 'number' ? params.windowId : undefined,
@@ -730,8 +745,8 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     }
     case 'workspace.ensure': {
       return preserveHumanFocus(params.focus !== true, async () => {
-        return await workspaceManager.ensureWorkspace({
-          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+        return await bindingManager.ensureWorkspace({
+          workspaceId: String(params.workspaceId ?? ''),
           focus: params.focus === true,
           initialUrl: typeof params.url === 'string' ? params.url : undefined
         });
@@ -739,14 +754,14 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     }
     case 'workspace.info': {
       return {
-        workspace: await workspaceManager.getWorkspaceInfo(typeof params.workspaceId === 'string' ? params.workspaceId : undefined)
+        workspace: await bindingManager.getWorkspaceInfo(String(params.workspaceId ?? ''))
       };
     }
     case 'workspace.openTab': {
       const expectedUrl = typeof params.url === 'string' ? params.url : undefined;
       const opened = await preserveHumanFocus(params.focus !== true, async () => {
-        return await workspaceManager.openTab({
-          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+        return await bindingManager.openTab({
+          workspaceId: String(params.workspaceId ?? ''),
           url: expectedUrl,
           active: params.active === true,
           focus: params.focus === true
@@ -755,28 +770,28 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return await finalizeOpenedWorkspaceTab(opened, expectedUrl);
     }
     case 'workspace.listTabs': {
-      return await workspaceManager.listTabs(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+      return await bindingManager.listTabs(String(params.workspaceId ?? ''));
     }
     case 'workspace.getActiveTab': {
-      return await workspaceManager.getActiveTab(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+      return await bindingManager.getActiveTab(String(params.workspaceId ?? ''));
     }
     case 'workspace.setActiveTab': {
-      return await workspaceManager.setActiveTab(Number(params.tabId), typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+      return await bindingManager.setActiveTab(Number(params.tabId), String(params.workspaceId ?? ''));
     }
     case 'workspace.focus': {
-      return await workspaceManager.focus(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+      return await bindingManager.focus(String(params.workspaceId ?? ''));
     }
     case 'workspace.reset': {
       return await preserveHumanFocus(params.focus !== true, async () => {
-        return await workspaceManager.reset({
-          workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined,
+        return await bindingManager.reset({
+          workspaceId: String(params.workspaceId ?? ''),
           focus: params.focus === true,
           initialUrl: typeof params.url === 'string' ? params.url : undefined
         });
       });
     }
     case 'workspace.close': {
-      return await workspaceManager.close(typeof params.workspaceId === 'string' ? params.workspaceId : undefined);
+      return await bindingManager.close(String(params.workspaceId ?? ''));
     }
     case 'page.goto': {
       return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
@@ -1060,45 +1075,51 @@ async function connectWebSocket(): Promise<void> {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void loadWorkspaceState().then(async (state) => {
-    if (!state || !state.tabIds.includes(tabId)) {
-      return;
+  void listWorkspaceStates().then(async (states) => {
+    for (const state of states) {
+      if (!state.tabIds.includes(tabId)) {
+        continue;
+      }
+      const nextTabIds = state.tabIds.filter((id) => id !== tabId);
+      await saveWorkspaceState({
+        ...state,
+        tabIds: nextTabIds,
+        activeTabId: state.activeTabId === tabId ? null : state.activeTabId,
+        primaryTabId: state.primaryTabId === tabId ? null : state.primaryTabId
+      });
     }
-    const nextTabIds = state.tabIds.filter((id) => id !== tabId);
-    await saveWorkspaceState({
-      ...state,
-      tabIds: nextTabIds,
-      activeTabId: state.activeTabId === tabId ? null : state.activeTabId,
-      primaryTabId: state.primaryTabId === tabId ? null : state.primaryTabId
-    });
   });
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  void loadWorkspaceState().then(async (state) => {
-    if (!state || state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
-      return;
+  void listWorkspaceStates().then(async (states) => {
+    for (const state of states) {
+      if (state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
+        continue;
+      }
+      await saveWorkspaceState({
+        ...state,
+        activeTabId: activeInfo.tabId
+      });
     }
-    await saveWorkspaceState({
-      ...state,
-      activeTabId: activeInfo.tabId
-    });
   });
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
-  void loadWorkspaceState().then(async (state) => {
-    if (!state || state.windowId !== windowId) {
-      return;
+  void listWorkspaceStates().then(async (states) => {
+    for (const state of states) {
+      if (state.windowId !== windowId) {
+        continue;
+      }
+      await saveWorkspaceState({
+        ...state,
+        windowId: null,
+        groupId: null,
+        tabIds: [],
+        activeTabId: null,
+        primaryTabId: null
+      });
     }
-    await saveWorkspaceState({
-      ...state,
-      windowId: null,
-      groupId: null,
-      tabIds: [],
-      activeTabId: null,
-      primaryTabId: null
-    });
   });
 });
 

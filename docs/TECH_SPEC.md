@@ -9,23 +9,24 @@ Browser Agent Kit is a paired system:
 
 Both are product surface, not internal implementation detail.
 
-## Workspace Model
+## Session Model
 
-The workspace is the default agent isolation boundary:
+The session is the default agent isolation boundary:
 
-- one default workspace id
+- one explicit session id per agent
 - a dedicated browser window
 - a dedicated tab group inside that window
-- tracked workspace tab ids plus primary and current tab pointers
+- tracked session tab ids plus primary and current tab pointers
+- an internal session binding id used to manage the browser resources
 
 Default targeting resolves in this order:
 
 1. explicit `tabId`
-2. explicit `workspaceId`
-3. current tab in an existing default workspace
-4. browser active tab when no workspace exists yet
+2. explicit `sessionId`
+3. current tab in an existing session binding
+4. browser active tab when no session binding exists yet
 
-Ordinary browser commands do not create a workspace. Explicit workspace commands such as `workspace.ensure` and `workspace.openTab` do.
+Ordinary browser commands do not create a session binding. Explicit session commands such as `session.ensure` and `session.openTab` do.
 
 ## Context Model
 

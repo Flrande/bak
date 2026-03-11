@@ -1,23 +1,26 @@
 # Command Recipes
 
-## Workspace And Page
+## Session And Page
 
 ```powershell
-bak workspace ensure --rpc-ws-port 17374
-bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
-bak workspace get-active-tab --rpc-ws-port 17374
-bak page goto "https://example.com" --rpc-ws-port 17374
-bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374
-bak page snapshot --include-base64 --rpc-ws-port 17374
+$session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
+$sessionId = $session.sessionId
+bak session ensure --session-id $sessionId --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak session get-active-tab --session-id $sessionId --rpc-ws-port 17374
+bak page goto "https://example.com" --session-id $sessionId --rpc-ws-port 17374
+bak page wait --session-id $sessionId --mode text --value "Example Domain" --rpc-ws-port 17374
+bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 ```
 
 ## Element And Debug
 
 ```powershell
-bak element click --css "#submit" --rpc-ws-port 17374
-bak element type --css "#email" --value "me@example.com" --clear --rpc-ws-port 17374
-bak debug dump-state --include-snapshot --rpc-ws-port 17374
-bak network list --limit 20 --rpc-ws-port 17374
+bak element click --session-id $sessionId --css "#submit" --rpc-ws-port 17374
+bak element type --session-id $sessionId --css "#email" --value "me@example.com" --clear --rpc-ws-port 17374
+bak context get --session-id $sessionId --rpc-ws-port 17374
+bak debug dump-state --session-id $sessionId --include-snapshot --rpc-ws-port 17374
+bak network list --session-id $sessionId --limit 20 --rpc-ws-port 17374
 ```
 
 ## Protocol-Only Methods
