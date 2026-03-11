@@ -1782,7 +1782,7 @@ async function connectWebSocket(): Promise<void> {
     ws?.send(JSON.stringify({
       type: 'hello',
       role: 'extension',
-      version: '0.5.0',
+      version: '0.6.0',
       ts: Date.now()
     }));
   });

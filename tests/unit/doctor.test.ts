@@ -51,9 +51,9 @@ describe('doctor runtime.info health assessment', () => {
   it('detects aligned cli/extension versions', () => {
     const check = assessVersionCompatibility(
       {
-        extensionVersion: '0.5.0'
+        extensionVersion: '0.6.0'
       },
-      '0.5.0'
+      '0.6.0'
     );
 
     expect(check.ok).toBe(true);
@@ -65,7 +65,7 @@ describe('doctor runtime.info health assessment', () => {
       {
         extensionVersion: '0.4.9'
       },
-      '0.5.0'
+      '0.6.0'
     );
 
     expect(check.ok).toBe(false);
@@ -74,7 +74,7 @@ describe('doctor runtime.info health assessment', () => {
   });
 
   it('warns when extension version is missing', () => {
-    const check = assessVersionCompatibility({}, '0.5.0');
+    const check = assessVersionCompatibility({}, '0.6.0');
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('missing');
@@ -86,7 +86,7 @@ describe('doctor runtime.info health assessment', () => {
       {
         extensionVersion: 'dev-build'
       },
-      '0.5.0-dev'
+      '0.6.0-dev'
     );
 
     expect(check.ok).toBe(false);

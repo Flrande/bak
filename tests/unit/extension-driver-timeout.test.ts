@@ -8,7 +8,7 @@ function createBridge() {
     getStats: () => ({
       state: 'connected' as const,
       reason: null,
-      extensionVersion: '0.5.0',
+      extensionVersion: '0.6.0',
       lastSeenTs: null,
       lastRequestTs: null,
       lastResponseTs: null,
