@@ -42,12 +42,21 @@
     <div class="panel">
       <a href="/">Back</a>
       <h1>Network Playground</h1>
+      <div id="inline-data-ts">Inline data updated: 2026-03-05</div>
+      <div id="relative-freshness-label">Relative freshness label: Today (previous sample: yesterday)</div>
       <div class="actions">
         <button id="fetch-ok">Fetch 200</button>
         <button id="fetch-fail">Fetch 503</button>
       </div>
       <div id="network-log">idle</div>
     </div>
+    <script>
+      const darkpool_json_data = {
+        updatedAt: '2026-03-05',
+        flows: [{ symbol: 'QQQ', side: 'buy', premium: 125000 }]
+      };
+      window.darkpool_json_data = darkpool_json_data;
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

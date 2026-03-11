@@ -1,9 +1,23 @@
 import WebSocket from 'ws';
 import { JSON_RPC_VERSION, type JsonRpcResponse } from '@flrande/bak-protocol';
+import { markRpcMethodInvoked } from '../e2e-method-status.js';
 
 const DEFAULT_RPC_TIMEOUT_MS = 15_000;
 const NAVIGATION_RPC_TIMEOUT_MS = 45_000;
 const NAVIGATION_METHODS = new Set(['page.goto', 'session.openTab', 'session.ensure', 'session.reset']);
+
+export class RpcClientError extends Error {
+  readonly rpcCode?: number;
+  readonly bakCode?: string;
+  readonly details?: Record<string, unknown>;
+
+  constructor(message: string, options: { rpcCode?: number; bakCode?: string; details?: Record<string, unknown> } = {}) {
+    super(message);
+    this.rpcCode = options.rpcCode;
+    this.bakCode = options.bakCode;
+    this.details = options.details;
+  }
+}
 
 function closeSocket(socket: WebSocket): void {
   if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
@@ -22,6 +36,7 @@ export function resolveRpcTimeoutMs(method: string, params: Record<string, unkno
 }
 
 export async function callRpc(method: string, params: Record<string, unknown>, port: number): Promise<unknown> {
+  markRpcMethodInvoked(method);
   const url = `ws://127.0.0.1:${port}/rpc`;
   const socket = new WebSocket(url);
 
@@ -95,7 +110,11 @@ export async function callRpc(method: string, params: Record<string, unknown>, p
     });
 
     if ('error' in response) {
-      throw new Error(`${response.error.data?.bakCode ?? response.error.code}: ${response.error.message}`);
+      throw new RpcClientError(`${response.error.data?.bakCode ?? response.error.code}: ${response.error.message}`, {
+        rpcCode: response.error.code,
+        bakCode: typeof response.error.data?.bakCode === 'string' ? response.error.data.bakCode : undefined,
+        details: response.error.data
+      });
     }
 
     return response.result;

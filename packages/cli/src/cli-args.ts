@@ -1,8 +1,14 @@
+const INTEGER_PATTERN = /^\d+$/;
+
 export function parseNonNegativeInt(value: unknown, label: string): number | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
-  const parsed = Number.parseInt(String(value), 10);
+  const normalized = String(value).trim();
+  if (!INTEGER_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be an integer >= 0`);
+  }
+  const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`${label} must be an integer >= 0`);
   }
@@ -10,11 +16,22 @@ export function parseNonNegativeInt(value: unknown, label: string): number | und
 }
 
 export function parsePositiveInt(value: unknown, label: string): number {
-  const parsed = Number.parseInt(String(value), 10);
+  const normalized = String(value).trim();
+  if (!INTEGER_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be an integer > 0`);
+  }
+  const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${label} must be an integer > 0`);
   }
   return parsed;
+}
+
+export function parseOptionalPositiveInt(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  return parsePositiveInt(value, label);
 }
 
 export function parseFiniteNumber(
@@ -37,7 +54,10 @@ export function parseFiniteNumber(
   return parsed;
 }
 
-function optionKey(prefix: string, key: 'locator' | 'eid' | 'role' | 'name' | 'text' | 'css' | 'index' | 'shadow' | 'frame'): string {
+function optionKey(
+  prefix: string,
+  key: 'locator' | 'eid' | 'role' | 'name' | 'text' | 'css' | 'xpath' | 'index' | 'shadow' | 'frame'
+): string {
   if (!prefix) {
     return key;
   }
@@ -49,7 +69,7 @@ export function hasLocatorOptions(options: Record<string, unknown>, prefix = '')
   if (typeof locatorValue === 'string' && locatorValue.trim().length > 0) {
     return true;
   }
-  for (const key of ['eid', 'role', 'name', 'text', 'css', 'shadow', 'index', 'frame'] as const) {
+  for (const key of ['eid', 'role', 'name', 'text', 'css', 'xpath', 'shadow', 'index', 'frame'] as const) {
     const value = options[optionKey(prefix, key)];
     if (Array.isArray(value) && value.length > 0) {
       return true;
@@ -72,7 +92,7 @@ export function locatorFromOptions(
   }
 
   const locator: Record<string, unknown> = {};
-  for (const key of ['eid', 'role', 'name', 'text', 'css', 'shadow'] as const) {
+  for (const key of ['eid', 'role', 'name', 'text', 'css', 'xpath', 'shadow'] as const) {
     const optionValue = options[optionKey(prefix, key)];
     if (typeof optionValue === 'string' && optionValue.trim()) {
       locator[key] = optionValue;

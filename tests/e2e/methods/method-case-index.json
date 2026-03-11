@@ -164,6 +164,16 @@
     "failureCaseId": "M052-F",
     "suite": "network"
   },
+  "network.search": {
+    "successCaseId": "M092-S",
+    "failureCaseId": "M092-F",
+    "suite": "network"
+  },
+  "network.replay": {
+    "successCaseId": "M093-S",
+    "failureCaseId": "M093-F",
+    "suite": "network"
+  },
   "network.waitFor": {
     "successCaseId": "M053-S",
     "failureCaseId": "M053-F",
@@ -182,6 +192,26 @@
   "page.dom": {
     "successCaseId": "M056-S",
     "failureCaseId": "M056-F",
+    "suite": "page"
+  },
+  "page.eval": {
+    "successCaseId": "M088-S",
+    "failureCaseId": "M088-F",
+    "suite": "page"
+  },
+  "page.extract": {
+    "successCaseId": "M089-S",
+    "failureCaseId": "M089-F",
+    "suite": "page"
+  },
+  "page.fetch": {
+    "successCaseId": "M090-S",
+    "failureCaseId": "M090-F",
+    "suite": "page"
+  },
+  "page.freshness": {
+    "successCaseId": "M091-S",
+    "failureCaseId": "M091-F",
     "suite": "page"
   },
   "page.forward": {
@@ -299,6 +329,31 @@
     "failureCaseId": "M070-F",
     "suite": "runtime"
   },
+  "capture.snapshot": {
+    "successCaseId": "M101-S",
+    "failureCaseId": "M101-F",
+    "suite": "capture"
+  },
+  "capture.har": {
+    "successCaseId": "M102-S",
+    "failureCaseId": "M102-F",
+    "suite": "capture"
+  },
+  "inspect.pageData": {
+    "successCaseId": "M098-S",
+    "failureCaseId": "M098-F",
+    "suite": "inspect"
+  },
+  "inspect.liveUpdates": {
+    "successCaseId": "M099-S",
+    "failureCaseId": "M099-F",
+    "suite": "inspect"
+  },
+  "inspect.freshness": {
+    "successCaseId": "M100-S",
+    "failureCaseId": "M100-F",
+    "suite": "inspect"
+  },
   "tabs.close": {
     "successCaseId": "M071-S",
     "failureCaseId": "M071-F",
@@ -328,5 +383,25 @@
     "successCaseId": "M076-S",
     "failureCaseId": "M076-F",
     "suite": "tabs"
+  },
+  "table.list": {
+    "successCaseId": "M094-S",
+    "failureCaseId": "M094-F",
+    "suite": "table"
+  },
+  "table.schema": {
+    "successCaseId": "M095-S",
+    "failureCaseId": "M095-F",
+    "suite": "table"
+  },
+  "table.rows": {
+    "successCaseId": "M096-S",
+    "failureCaseId": "M096-F",
+    "suite": "table"
+  },
+  "table.export": {
+    "successCaseId": "M097-S",
+    "failureCaseId": "M097-F",
+    "suite": "table"
   }
 }

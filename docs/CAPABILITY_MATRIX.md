@@ -2,13 +2,15 @@
 
 | Domain | Method | Stability | Request/Response Schema | E2E Case IDs | CaseMapped |
 | --- | --- | --- | --- | --- | --- |
+| capture | capture.har | beta | `MethodMap['capture.har']` | M102-S, M102-F | true |
+| capture | capture.snapshot | beta | `MethodMap['capture.snapshot']` | M101-S, M101-F | true |
 | context | context.enterFrame | beta | `MethodMap['context.enterFrame']` | M001-S, M001-F | true |
 | context | context.enterShadow | beta | `MethodMap['context.enterShadow']` | M002-S, M002-F | true |
 | context | context.exitFrame | beta | `MethodMap['context.exitFrame']` | M003-S, M003-F | true |
 | context | context.exitShadow | beta | `MethodMap['context.exitShadow']` | M004-S, M004-F | true |
-| context | context.get | stable | `MethodMap['context.get']` | - | false |
+| context | context.get | stable | `MethodMap['context.get']` | M077-S, M077-F | true |
 | context | context.reset | beta | `MethodMap['context.reset']` | M005-S, M005-F | true |
-| context | context.set | stable | `MethodMap['context.set']` | - | false |
+| context | context.set | stable | `MethodMap['context.set']` | M078-S, M078-F | true |
 | debug | debug.dumpState | beta | `MethodMap['debug.dumpState']` | M006-S, M006-F | true |
 | debug | debug.getConsole | stable | `MethodMap['debug.getConsole']` | M007-S, M007-F | true |
 | element | element.blur | stable | `MethodMap['element.blur']` | M008-S, M008-F | true |
@@ -26,6 +28,9 @@
 | element | element.type | stable | `MethodMap['element.type']` | M020-S, M020-F | true |
 | element | element.uncheck | stable | `MethodMap['element.uncheck']` | M021-S, M021-F | true |
 | file | file.upload | stable | `MethodMap['file.upload']` | M022-S, M022-F | true |
+| inspect | inspect.freshness | beta | `MethodMap['inspect.freshness']` | M100-S, M100-F | true |
+| inspect | inspect.liveUpdates | beta | `MethodMap['inspect.liveUpdates']` | M099-S, M099-F | true |
+| inspect | inspect.pageData | beta | `MethodMap['inspect.pageData']` | M098-S, M098-F | true |
 | keyboard | keyboard.hotkey | stable | `MethodMap['keyboard.hotkey']` | M023-S, M023-F | true |
 | keyboard | keyboard.press | stable | `MethodMap['keyboard.press']` | M024-S, M024-F | true |
 | keyboard | keyboard.type | stable | `MethodMap['keyboard.type']` | M025-S, M025-F | true |
@@ -35,10 +40,16 @@
 | network | network.clear | beta | `MethodMap['network.clear']` | M050-S, M050-F | true |
 | network | network.get | beta | `MethodMap['network.get']` | M051-S, M051-F | true |
 | network | network.list | beta | `MethodMap['network.list']` | M052-S, M052-F | true |
+| network | network.replay | beta | `MethodMap['network.replay']` | M093-S, M093-F | true |
+| network | network.search | beta | `MethodMap['network.search']` | M092-S, M092-F | true |
 | network | network.waitFor | beta | `MethodMap['network.waitFor']` | M053-S, M053-F | true |
 | page | page.accessibilityTree | beta | `MethodMap['page.accessibilityTree']` | M054-S, M054-F | true |
 | page | page.back | stable | `MethodMap['page.back']` | M055-S, M055-F | true |
 | page | page.dom | stable | `MethodMap['page.dom']` | M056-S, M056-F | true |
+| page | page.eval | beta | `MethodMap['page.eval']` | M088-S, M088-F | true |
+| page | page.extract | beta | `MethodMap['page.extract']` | M089-S, M089-F | true |
+| page | page.fetch | beta | `MethodMap['page.fetch']` | M090-S, M090-F | true |
+| page | page.freshness | beta | `MethodMap['page.freshness']` | M091-S, M091-F | true |
 | page | page.forward | stable | `MethodMap['page.forward']` | M057-S, M057-F | true |
 | page | page.goto | stable | `MethodMap['page.goto']` | M058-S, M058-F | true |
 | page | page.metrics | stable | `MethodMap['page.metrics']` | M059-S, M059-F | true |
@@ -53,15 +64,19 @@
 | runtime | runtime.info | stable | `MethodMap['runtime.info']` | M070-S, M070-F | true |
 | session | session.close | stable | `MethodMap['session.close']` | M068-S, M068-F | true |
 | session | session.create | stable | `MethodMap['session.create']` | M069-S, M069-F | true |
-| session | session.ensure | stable | `MethodMap['session.ensure']` | - | false |
-| session | session.focus | stable | `MethodMap['session.focus']` | - | false |
-| session | session.getActiveTab | stable | `MethodMap['session.getActiveTab']` | - | false |
-| session | session.info | stable | `MethodMap['session.info']` | - | false |
-| session | session.list | stable | `MethodMap['session.list']` | - | false |
-| session | session.listTabs | stable | `MethodMap['session.listTabs']` | - | false |
-| session | session.openTab | stable | `MethodMap['session.openTab']` | - | false |
-| session | session.reset | stable | `MethodMap['session.reset']` | - | false |
-| session | session.setActiveTab | stable | `MethodMap['session.setActiveTab']` | - | false |
+| session | session.ensure | stable | `MethodMap['session.ensure']` | M079-S, M079-F | true |
+| session | session.focus | stable | `MethodMap['session.focus']` | M080-S, M080-F | true |
+| session | session.getActiveTab | stable | `MethodMap['session.getActiveTab']` | M081-S, M081-F | true |
+| session | session.info | stable | `MethodMap['session.info']` | M082-S, M082-F | true |
+| session | session.list | stable | `MethodMap['session.list']` | M083-S, M083-F | true |
+| session | session.listTabs | stable | `MethodMap['session.listTabs']` | M084-S, M084-F | true |
+| session | session.openTab | stable | `MethodMap['session.openTab']` | M085-S, M085-F | true |
+| session | session.reset | stable | `MethodMap['session.reset']` | M086-S, M086-F | true |
+| session | session.setActiveTab | stable | `MethodMap['session.setActiveTab']` | M087-S, M087-F | true |
+| table | table.export | beta | `MethodMap['table.export']` | M097-S, M097-F | true |
+| table | table.list | beta | `MethodMap['table.list']` | M094-S, M094-F | true |
+| table | table.rows | beta | `MethodMap['table.rows']` | M096-S, M096-F | true |
+| table | table.schema | beta | `MethodMap['table.schema']` | M095-S, M095-F | true |
 | tabs | tabs.close | stable | `MethodMap['tabs.close']` | M071-S, M071-F | true |
 | tabs | tabs.focus | stable | `MethodMap['tabs.focus']` | M072-S, M072-F | true |
 | tabs | tabs.get | stable | `MethodMap['tabs.get']` | M073-S, M073-F | true |

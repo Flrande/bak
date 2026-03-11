@@ -40,6 +40,8 @@ pnpm -w test:e2e:full
 - capability matrix: `docs/CAPABILITY_MATRIX.md`
 - E2E matrix: `docs/E2E_MATRIX.md`
 - release gate summary: `docs/RELEASE_CAPABILITY_REPORT.md`
+- local method execution status input: `test-results/method-status.json`
+- tracked current release scope input: `tests/e2e/methods/release-scope.json`
 
 Keep these output paths stable because scripts write to them directly:
 

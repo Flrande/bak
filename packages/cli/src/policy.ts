@@ -11,7 +11,9 @@ const POLICY_ACTION_VALUES = [
   'element.select',
   'element.check',
   'element.uncheck',
-  'file.upload'
+  'file.upload',
+  'page.fetch',
+  'network.replay'
 ] as const;
 
 export type PolicyAction = (typeof POLICY_ACTION_VALUES)[number];
@@ -74,6 +76,7 @@ const FILE_UPLOAD_PATTERN = /(upload|file|附件|上传)/i;
 const PAYMENT_PATTERN = /(payment|pay|付款|支付)/i;
 const DESTRUCTIVE_PATTERN = /(delete|remove|danger|删除|清空)/i;
 const SUBMIT_PATTERN = /(submit|send|confirm|提交|发送|确认)/i;
+const HTTP_MUTATION_PATTERN = /\b(post|put|patch|delete)\b/i;
 
 function safePatternMatch(pattern: string | undefined, value: string): boolean {
   if (!pattern) {
@@ -123,6 +126,10 @@ export function detectPolicyTags(locator: Locator): PolicyTag[] {
   }
   if (SUBMIT_PATTERN.test(bucket)) {
     tags.add('submit');
+  }
+  if (HTTP_MUTATION_PATTERN.test(bucket)) {
+    tags.add('submit');
+    tags.add('highRisk');
   }
   if (HIGH_RISK_PATTERN.test(bucket)) {
     tags.add('highRisk');

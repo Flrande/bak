@@ -5,11 +5,16 @@ import type {
   Locator,
   NetworkEntry,
   PageDomSummary,
+  PageExecutionScope,
+  PageFetchResponse,
+  PageFrameResult,
   PageMetrics,
-  PageTextChunk
+  PageTextChunk,
+  TableColumn,
+  TableHandle
 } from '@flrande/bak-protocol';
 import { documentMetadata, isDocumentNode, isShadowRootNode } from './context-metadata.js';
-import { inferSafeName, redactElementText, type RedactTextOptions } from './privacy.js';
+import { inferSafeName, redactElementText, redactHtmlSnapshot, type RedactTextOptions } from './privacy.js';
 import { unsupportedLocatorHint } from './limitations.js';
 
 type ActionName =
@@ -86,6 +91,8 @@ let networkSequence = 0;
 let longTaskCount = 0;
 let longTaskDurationMs = 0;
 let performanceBaselineMs = 0;
+const pageLoadedAt = Math.round(performance.timeOrigin || Date.now());
+let lastMutationAt = Date.now();
 
 function isHtmlElement(node: Element | null): node is HTMLElement {
   if (!node) {
@@ -727,6 +734,29 @@ function querySelectorAllAcrossOpenShadow(root: ParentNode, selector: string): H
   return collected;
 }
 
+function evaluateXPath(root: ParentNode, expression: string): HTMLElement[] {
+  try {
+    const ownerDocument = isDocumentNode(root) ? root : root.ownerDocument ?? document;
+    const iterator = ownerDocument.evaluate(
+      expression,
+      root,
+      null,
+      XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+      null
+    );
+    const matches: HTMLElement[] = [];
+    for (let index = 0; index < iterator.snapshotLength; index += 1) {
+      const node = iterator.snapshotItem(index);
+      if (isHtmlElement(node as Element | null)) {
+        matches.push(node as HTMLElement);
+      }
+    }
+    return matches;
+  } catch {
+    return [];
+  }
+}
+
 function resolveFrameDocument(framePath: string[]): { ok: true; document: Document } | { ok: false; error: ActionError } {
   let currentDocument = document;
   for (const selector of framePath) {
@@ -807,6 +837,7 @@ function collectElements(options: RedactTextOptions = {}, locator?: Locator): El
     const eid = buildEid(element);
     const selectors = {
       css: toCssSelector(element),
+      xpath: null,
       text: text || name ? (text || name).slice(0, 80) : null,
       aria: role && name ? `${role}:${name.slice(0, 80)}` : null
     };
@@ -820,6 +851,8 @@ function collectElements(options: RedactTextOptions = {}, locator?: Locator): El
       role,
       name,
       text,
+      visible: isElementVisible(element),
+      enabled: !((element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true'),
       bbox: {
         x: rect.x,
         y: rect.y,
@@ -945,6 +978,14 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
     }
   }
 
+  if (locator.xpath) {
+    const matches = evaluateXPath(root, locator.xpath).filter((item) => isElementVisible(item));
+    const found = indexedCandidate(matches, locator);
+    if (found) {
+      return found;
+    }
+  }
+
   if (locator.name) {
     const fallback = indexedCandidate(
       interactive.filter((element) => inferName(element).toLowerCase().includes(locator.name!.toLowerCase())),
@@ -956,6 +997,73 @@ function resolveLocator(locator?: Locator): HTMLElement | null {
   }
 
   return null;
+}
+
+function matchedElementsForLocator(locator?: Locator): HTMLElement[] {
+  if (!locator) {
+    return [];
+  }
+  const rootResult = resolveRootForLocator(locator);
+  if (!rootResult.ok) {
+    return [];
+  }
+  const root = rootResult.root;
+  const interactive = getInteractiveElements(root, locator.shadow !== 'none');
+
+  if (locator.css) {
+    const parts = splitShadowSelector(locator.css);
+    let currentRoot: ParentNode = root;
+    for (let index = 0; index < parts.length; index += 1) {
+      const selector = parts[index];
+      const found =
+        locator.shadow === 'none'
+          ? querySelectorInTree(currentRoot, selector)
+          : querySelectorAcrossOpenShadow(currentRoot, selector);
+      if (!found) {
+        return [];
+      }
+      if (index === parts.length - 1) {
+        return (locator.shadow === 'none'
+          ? Array.from(currentRoot.querySelectorAll<HTMLElement>(selector))
+          : querySelectorAllAcrossOpenShadow(currentRoot, selector)
+        ).filter((item) => isElementVisible(item));
+      }
+      if (!found.shadowRoot) {
+        return [];
+      }
+      currentRoot = found.shadowRoot;
+    }
+  }
+
+  if (locator.xpath) {
+    return evaluateXPath(root, locator.xpath).filter((item) => isElementVisible(item));
+  }
+
+  if (locator.role || locator.name || locator.text) {
+    return interactive.filter((element) => {
+      if (locator.role && inferRole(element).toLowerCase() !== locator.role.toLowerCase()) {
+        return false;
+      }
+      if (locator.name && !inferName(element).toLowerCase().includes(locator.name.toLowerCase())) {
+        return false;
+      }
+      if (locator.text) {
+        const text = (element.innerText || element.textContent || '').toLowerCase();
+        if (!text.includes(locator.text.toLowerCase())) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  if (locator.eid) {
+    collectElements({}, locator);
+    const fromCache = elementCache.get(locator.eid);
+    return fromCache ? [fromCache] : [];
+  }
+
+  return [];
 }
 
 function ensureOverlayRoot(): HTMLDivElement {
@@ -1519,6 +1627,33 @@ function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
     .reverse();
 }
 
+function filterNetworkEntrySections(entry: NetworkEntry, include: unknown): NetworkEntry {
+  if (!Array.isArray(include)) {
+    return entry;
+  }
+  const sections = new Set(
+    include
+      .map(String)
+      .filter((section): section is 'request' | 'response' => section === 'request' || section === 'response')
+  );
+  if (sections.size === 0 || sections.size === 2) {
+    return entry;
+  }
+  const clone: NetworkEntry = { ...entry };
+  if (!sections.has('request')) {
+    delete clone.requestHeaders;
+    delete clone.requestBodyPreview;
+    delete clone.requestBodyTruncated;
+  }
+  if (!sections.has('response')) {
+    delete clone.responseHeaders;
+    delete clone.responseBodyPreview;
+    delete clone.responseBodyTruncated;
+    delete clone.binary;
+  }
+  return clone;
+}
+
 async function waitForNetwork(params: Record<string, unknown>): Promise<NetworkEntry> {
   const timeoutMs = typeof params.timeoutMs === 'number' ? Math.max(1, params.timeoutMs) : 5000;
   const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : Date.now() - timeoutMs;
@@ -1531,6 +1666,600 @@ async function waitForNetwork(params: Record<string, unknown>): Promise<NetworkE
     await new Promise((resolve) => setTimeout(resolve, 80));
   }
   throw { code: 'E_TIMEOUT', message: 'network.waitFor timeout' } satisfies ActionError;
+}
+
+function trackMutations(): void {
+  const observer = new MutationObserver(() => {
+    lastMutationAt = Date.now();
+  });
+  const root = document.documentElement ?? document.body;
+  if (!root) {
+    return;
+  }
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: true
+  });
+}
+
+function currentContextSnapshot(): { tabId: null; framePath: string[]; shadowPath: string[] } {
+  return {
+    tabId: null,
+    framePath: [...contextState.framePath],
+    shadowPath: [...contextState.shadowPath]
+  };
+}
+
+function timestampCandidatesFromText(text: string, patterns?: string[]): string[] {
+  const regexes = (patterns ?? [String.raw`\b20\d{2}-\d{2}-\d{2}\b`, String.raw`\b20\d{2}\/\d{2}\/\d{2}\b`]).map(
+    (pattern) => new RegExp(pattern, 'gi')
+  );
+  const collected = new Set<string>();
+  for (const regex of regexes) {
+    for (const match of text.matchAll(regex)) {
+      if (match[0]) {
+        collected.add(match[0]);
+      }
+    }
+  }
+  return [...collected];
+}
+
+function listInlineScripts(): Array<{ content: string; suspectedVars: string[] }> {
+  return Array.from(document.scripts)
+    .filter((script) => !script.src)
+    .map((script) => {
+      const content = script.textContent ?? '';
+      const suspectedVars = [...content.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*(?:data|table|json|state|store)[A-Za-z_$\w]*)/gi)].map(
+        (match) => match[1] ?? ''
+      ).filter(Boolean);
+      return { content, suspectedVars };
+    });
+}
+
+function cookieMetadata(): Array<{ name: string }> {
+  return document.cookie
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => ({ name: item.split('=')[0] ?? '' }))
+    .filter((item) => item.name.length > 0);
+}
+
+function storageMetadata(): { localStorageKeys: string[]; sessionStorageKeys: string[] } {
+  return {
+    localStorageKeys: Object.keys(localStorage),
+    sessionStorageKeys: Object.keys(sessionStorage)
+  };
+}
+
+function collectFrames(baseDocument: Document = document, framePath: string[] = []): Array<{ framePath: string[]; url: string }> {
+  const frames: Array<{ framePath: string[]; url: string }> = [];
+  const frameNodes = Array.from(baseDocument.querySelectorAll('iframe,frame'));
+  for (const frame of frameNodes) {
+    if (!isFrameElement(frame)) {
+      continue;
+    }
+    const selector = frame.id ? `#${frame.id}` : `${frame.tagName.toLowerCase()}:nth-of-type(${frameNodes.indexOf(frame) + 1})`;
+    try {
+      const childDocument = frame.contentDocument;
+      if (!childDocument) {
+        continue;
+      }
+      const nextPath = [...framePath, selector];
+      frames.push({
+        framePath: nextPath,
+        url: childDocument.location.href
+      });
+      frames.push(...collectFrames(childDocument, nextPath));
+    } catch {
+      continue;
+    }
+  }
+  return frames;
+}
+
+function buildTableId(kind: TableHandle['kind'], index: number): string {
+  return `${kind}:${index + 1}`;
+}
+
+function describeTables(): TableHandle[] {
+  const rootResult = resolveRootForLocator();
+  if (!rootResult.ok) {
+    return [];
+  }
+  const root = rootResult.root;
+  const tables: TableHandle[] = [];
+  const htmlTables = Array.from(root.querySelectorAll('table'));
+  for (const [index, table] of htmlTables.entries()) {
+    tables.push({
+      id: buildTableId(table.closest('.dataTables_wrapper') ? 'dataTables' : 'html', index),
+      name: (table.getAttribute('aria-label') || table.getAttribute('data-testid') || table.id || `table-${index + 1}`).trim(),
+      kind: table.closest('.dataTables_wrapper') ? 'dataTables' : 'html',
+      selector: table.id ? `#${table.id}` : undefined,
+      rowCount: table.querySelectorAll('tbody tr').length || table.querySelectorAll('tr').length,
+      columnCount: table.querySelectorAll('thead th').length || table.querySelectorAll('tr:first-child th, tr:first-child td').length
+    });
+  }
+  const gridRoots = Array.from(root.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .ag-root, .ag-root-wrapper'));
+  for (const [index, grid] of gridRoots.entries()) {
+    const kind: TableHandle['kind'] = grid.className.includes('ag-') ? 'ag-grid' : 'aria-grid';
+    tables.push({
+      id: buildTableId(kind, index),
+      name: (grid.getAttribute('aria-label') || grid.getAttribute('data-testid') || grid.id || `grid-${index + 1}`).trim(),
+      kind,
+      selector: grid.id ? `#${grid.id}` : undefined,
+      rowCount: grid.querySelectorAll('[role="row"]').length,
+      columnCount: grid.querySelectorAll('[role="columnheader"]').length
+    });
+  }
+  return tables;
+}
+
+function resolveTable(handleId: string): { table: TableHandle; element: Element | null } | null {
+  const tables = describeTables();
+  const handle = tables.find((candidate) => candidate.id === handleId);
+  if (!handle) {
+    return null;
+  }
+  const rootResult = resolveRootForLocator();
+  if (!rootResult.ok) {
+    return null;
+  }
+  const root = rootResult.root;
+  if (!handle.selector) {
+    if (handle.kind === 'html' || handle.kind === 'dataTables') {
+      const index = Number(handle.id.split(':')[1] ?? '1') - 1;
+      return { table: handle, element: root.querySelectorAll('table')[index] ?? null };
+    }
+    const candidates = root.querySelectorAll('[role="grid"], [role="table"], .ag-root, .ag-root-wrapper');
+    const index = Number(handle.id.split(':')[1] ?? '1') - 1;
+    return { table: handle, element: candidates[index] ?? null };
+  }
+  return { table: handle, element: root.querySelector(handle.selector) };
+}
+
+function htmlTableSchema(table: HTMLTableElement): TableColumn[] {
+  const headers = Array.from(table.querySelectorAll('thead th'));
+  if (headers.length > 0) {
+    return headers.map((cell, index) => ({
+      key: `col_${index + 1}`,
+      label: (cell.textContent ?? '').trim() || `Column ${index + 1}`
+    }));
+  }
+  const firstRow = table.querySelector('tr');
+  return Array.from(firstRow?.querySelectorAll('th,td') ?? []).map((cell, index) => ({
+    key: `col_${index + 1}`,
+    label: (cell.textContent ?? '').trim() || `Column ${index + 1}`
+  }));
+}
+
+function htmlTableRows(table: HTMLTableElement, limit: number): Array<Record<string, unknown>> {
+  const columns = htmlTableSchema(table);
+  const rowNodes = Array.from(table.querySelectorAll('tbody tr')).length > 0 ? Array.from(table.querySelectorAll('tbody tr')) : Array.from(table.querySelectorAll('tr')).slice(1);
+  return rowNodes.slice(0, limit).map((row) => {
+    const record: Record<string, unknown> = {};
+    Array.from(row.querySelectorAll('th,td')).forEach((cell, index) => {
+      const key = columns[index]?.label ?? `Column ${index + 1}`;
+      record[key] = (cell.textContent ?? '').trim();
+    });
+    return record;
+  });
+}
+
+function gridSchema(grid: Element): TableColumn[] {
+  return Array.from(grid.querySelectorAll('[role="columnheader"]')).map((cell, index) => ({
+    key: `col_${index + 1}`,
+    label: (cell.textContent ?? '').trim() || `Column ${index + 1}`
+  }));
+}
+
+function gridRows(grid: Element, limit: number): Array<Record<string, unknown>> {
+  const columns = gridSchema(grid);
+  return Array.from(grid.querySelectorAll('[role="row"]'))
+    .slice(0, limit)
+    .map((row) => {
+      const record: Record<string, unknown> = {};
+      Array.from(row.querySelectorAll('[role="gridcell"], [role="cell"], [role="columnheader"]')).forEach((cell, index) => {
+        const key = columns[index]?.label ?? `Column ${index + 1}`;
+        record[key] = (cell.textContent ?? '').trim();
+      });
+      return record;
+    })
+    .filter((row) => Object.values(row).some((value) => String(value).trim().length > 0));
+}
+
+function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>): Promise<T> {
+  const requestId = `bak_page_world_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  return new Promise<T>((resolve, reject) => {
+    const timeoutMs =
+      typeof payload.timeoutMs === 'number' && Number.isFinite(payload.timeoutMs) && payload.timeoutMs > 0
+        ? Math.max(1_000, Math.floor(payload.timeoutMs) + 1_000)
+        : 15_000;
+    const responseNode = document.createElement('div');
+    responseNode.setAttribute('data-bak-page-world-response', requestId);
+    responseNode.hidden = true;
+    (document.documentElement ?? document.head ?? document.body).appendChild(responseNode);
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      observer.disconnect();
+      responseNode.remove();
+    };
+
+    const tryResolveFromNode = (): void => {
+      if (responseNode.getAttribute('data-ready') !== '1') {
+        return;
+      }
+      const payloadText = responseNode.getAttribute('data-payload');
+      const detail = payloadText ? (JSON.parse(payloadText) as { ok?: boolean; result?: T; error?: ActionError }) : null;
+      if (!detail) {
+        cleanup();
+        reject(failAction('E_EXECUTION', `${action} returned no detail`));
+        return;
+      }
+      cleanup();
+      if (detail.ok) {
+        resolve(detail.result as T);
+        return;
+      }
+      reject(detail.error ?? failAction('E_EXECUTION', `${action} failed`));
+    };
+
+    const observer = new MutationObserver(() => {
+      try {
+        tryResolveFromNode();
+      } catch (error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    observer.observe(responseNode, {
+      attributes: true,
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(failAction('E_TIMEOUT', `${action} timed out`));
+    }, timeoutMs);
+    const injector = document.createElement('script');
+    injector.textContent = `
+(() => {
+  const requestId = ${JSON.stringify(requestId)};
+  const action = ${JSON.stringify(action)};
+  const payload = ${JSON.stringify(payload)};
+  const responseNode = document.querySelector('div[data-bak-page-world-response="' + requestId + '"]');
+  const emit = (detail) => {
+    if (!responseNode) {
+      return;
+    }
+    responseNode.setAttribute('data-payload', JSON.stringify(detail));
+    responseNode.setAttribute('data-ready', '1');
+  };
+  const serializeValue = (value, maxBytes) => {
+    let cloned;
+    try {
+      cloned = typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      throw { code: 'E_NOT_SERIALIZABLE', message: error instanceof Error ? error.message : String(error) };
+    }
+    const json = JSON.stringify(cloned);
+    if (typeof maxBytes === 'number' && maxBytes > 0 && json.length > maxBytes) {
+      throw { code: 'E_BODY_TOO_LARGE', message: 'serialized value exceeds max-bytes', details: { bytes: json.length, maxBytes } };
+    }
+    return { value: cloned, bytes: json.length };
+  };
+  const resolveFrameWindow = (framePath) => {
+    let currentWindow = window;
+    let currentDocument = document;
+    for (const selector of framePath || []) {
+      const frame = currentDocument.querySelector(selector);
+      if (!frame || !('contentWindow' in frame)) {
+        throw { code: 'E_NOT_FOUND', message: 'frame not found: ' + selector };
+      }
+      const nextWindow = frame.contentWindow;
+      if (!nextWindow) {
+        throw { code: 'E_NOT_READY', message: 'frame window unavailable: ' + selector };
+      }
+      try {
+        currentDocument = nextWindow.document;
+      } catch {
+        throw { code: 'E_CROSS_ORIGIN_BLOCKED', message: 'cross-origin frame is not accessible: ' + selector };
+      }
+      currentWindow = nextWindow;
+    }
+    return currentWindow;
+  };
+  const collectFrames = (rootWindow, framePath) => {
+    const collected = [{
+      url: rootWindow.location.href,
+      framePath,
+      targetWindow: rootWindow
+    }];
+    const frames = Array.from(rootWindow.document.querySelectorAll('iframe,frame'));
+    frames.forEach((frame, index) => {
+      const selector = frame.id ? '#' + frame.id : frame.tagName.toLowerCase() + ':nth-of-type(' + (index + 1) + ')';
+      try {
+        if (!frame.contentWindow || !frame.contentWindow.document) {
+          return;
+        }
+        collected.push(...collectFrames(frame.contentWindow, [...framePath, selector]));
+      } catch {
+        // Skip cross-origin frames.
+      }
+    });
+    return collected;
+  };
+  const parsePath = (path) => {
+    if (typeof path !== 'string' || !path.trim()) {
+      throw { code: 'E_INVALID_PARAMS', message: 'path is required' };
+    }
+    const normalized = path.replace(/^globalThis\\.?/, '').replace(/^window\\.?/, '').trim();
+    if (!normalized) {
+      return [];
+    }
+    const segments = [];
+    let index = 0;
+    while (index < normalized.length) {
+      if (normalized[index] === '.') {
+        index += 1;
+        continue;
+      }
+      if (normalized[index] === '[') {
+        const bracket = normalized.slice(index).match(/^\\[(\\d+)\\]/);
+        if (!bracket) {
+          throw { code: 'E_INVALID_PARAMS', message: 'Only numeric bracket paths are supported' };
+        }
+        segments.push(Number(bracket[1]));
+        index += bracket[0].length;
+        continue;
+      }
+      const identifier = normalized.slice(index).match(/^[A-Za-z_$][\\w$]*/);
+      if (!identifier) {
+        throw { code: 'E_INVALID_PARAMS', message: 'Unsupported path token near: ' + normalized.slice(index, index + 16) };
+      }
+      segments.push(identifier[0]);
+      index += identifier[0].length;
+    }
+    return segments;
+  };
+  const readPath = (targetWindow, path) => {
+    const segments = parsePath(path);
+    let current = targetWindow;
+    for (const segment of segments) {
+      if (current == null || !(segment in current)) {
+        throw { code: 'E_NOT_FOUND', message: 'path not found: ' + path };
+      }
+      current = current[segment];
+    }
+    return current;
+  };
+  const buildScopeTargets = () => {
+    if (payload.scope === 'main') {
+      return [{
+        url: window.location.href,
+        framePath: [],
+        targetWindow: window
+      }];
+    }
+    if (payload.scope === 'all-frames') {
+      return collectFrames(window, []);
+    }
+    return [{
+      url: resolveFrameWindow(payload.framePath || []).location.href,
+      framePath: payload.framePath || [],
+      targetWindow: resolveFrameWindow(payload.framePath || [])
+    }];
+  };
+  const toResult = async (target) => {
+    if (action === 'globals') {
+      const keys = Object.keys(target.targetWindow).filter((key) => /(data|table|json|state|store)/i.test(key)).slice(0, 50);
+      return { url: target.url, framePath: target.framePath, value: keys };
+    }
+    if (action === 'eval') {
+      const serialized = serializeValue(target.targetWindow.eval(payload.expr), payload.maxBytes);
+      return { url: target.url, framePath: target.framePath, value: serialized.value, bytes: serialized.bytes };
+    }
+    if (action === 'extract') {
+      const serialized = serializeValue(readPath(target.targetWindow, payload.path), payload.maxBytes);
+      return { url: target.url, framePath: target.framePath, value: serialized.value, bytes: serialized.bytes };
+    }
+    if (action === 'fetch') {
+      const headers = { ...(payload.headers || {}) };
+      if (payload.contentType && !headers['Content-Type']) {
+        headers['Content-Type'] = payload.contentType;
+      }
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timeoutId =
+        controller && typeof payload.timeoutMs === 'number' && payload.timeoutMs > 0
+          ? window.setTimeout(() => controller.abort(new Error('fetch timeout')), payload.timeoutMs)
+          : null;
+      let response;
+      try {
+        response = await target.targetWindow.fetch(payload.url, {
+          method: payload.method || 'GET',
+          headers,
+          body: typeof payload.body === 'string' ? payload.body : undefined,
+          signal: controller ? controller.signal : undefined
+        });
+      } finally {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+      }
+      const headerMap = {};
+      response.headers.forEach((value, key) => {
+        headerMap[key] = value;
+      });
+      const bodyText = await response.text();
+      const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+      const decoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
+      const previewLimit = typeof payload.maxBytes === 'number' && payload.maxBytes > 0 ? payload.maxBytes : 8192;
+      const encodedBody = encoder ? encoder.encode(bodyText) : null;
+      const bodyBytes = encodedBody ? encodedBody.byteLength : bodyText.length;
+      const truncated = bodyBytes > previewLimit;
+      const finalBodyText =
+        encodedBody && decoder
+          ? decoder.decode(encodedBody.subarray(0, Math.min(encodedBody.byteLength, previewLimit)))
+          : truncated
+            ? bodyText.slice(0, previewLimit)
+            : bodyText;
+      if (payload.mode === 'json' && truncated) {
+        throw {
+          code: 'E_BODY_TOO_LARGE',
+          message: 'JSON response exceeds max-bytes',
+          details: {
+            bytes: bodyBytes,
+            maxBytes: previewLimit
+          }
+        };
+      }
+      const result = {
+        url: response.url,
+        status: response.status,
+        ok: response.ok,
+        headers: headerMap,
+        contentType: response.headers.get('content-type') || undefined,
+        bodyText: payload.mode === 'json' ? undefined : finalBodyText,
+        json: payload.mode === 'json' && bodyText ? JSON.parse(bodyText) : undefined,
+        bytes: bodyBytes,
+        truncated
+      };
+      return { url: target.url, framePath: target.framePath, value: result };
+    }
+    throw { code: 'E_NOT_FOUND', message: 'Unsupported page-world action: ' + action };
+  };
+  Promise.resolve()
+    .then(async () => {
+      const targets = buildScopeTargets();
+      const results = [];
+      for (const target of targets) {
+        try {
+          results.push(await toResult(target));
+        } catch (error) {
+          results.push({
+            url: target.url,
+            framePath: target.framePath,
+            error: typeof error === 'object' && error !== null && 'code' in error
+              ? error
+              : { code: 'E_EXECUTION', message: error instanceof Error ? error.message : String(error) }
+          });
+        }
+      }
+      if (payload.scope === 'all-frames') {
+        emit({ ok: true, result: { scope: payload.scope, results } });
+        return;
+      }
+      emit({ ok: true, result: { scope: payload.scope || 'current', result: results[0] } });
+    })
+    .catch((error) => {
+      emit({
+        ok: false,
+        error: typeof error === 'object' && error !== null && 'code' in error
+          ? error
+          : { code: 'E_EXECUTION', message: error instanceof Error ? error.message : String(error) }
+      });
+    });
+})();
+`;
+    (document.documentElement ?? document.head ?? document.body).appendChild(injector);
+    injector.remove();
+  });
+}
+
+function resolveScope(params: Record<string, unknown>): PageExecutionScope {
+  const scope = typeof params.scope === 'string' ? params.scope : 'current';
+  return scope === 'main' || scope === 'all-frames' ? scope : 'current';
+}
+
+function pageWorldFramePath(): string[] {
+  return [...contextState.framePath];
+}
+
+function pageEval(expr: string, params: Record<string, unknown>): Promise<{ scope: PageExecutionScope; result?: PageFrameResult<unknown>; results?: Array<PageFrameResult<unknown>> }> {
+  return runPageWorldRequest('eval', {
+    expr,
+    scope: resolveScope(params),
+    maxBytes: typeof params.maxBytes === 'number' ? params.maxBytes : undefined,
+    framePath: pageWorldFramePath()
+  });
+}
+
+function pageExtract(path: string, params: Record<string, unknown>): Promise<{ scope: PageExecutionScope; result?: PageFrameResult<unknown>; results?: Array<PageFrameResult<unknown>> }> {
+  return runPageWorldRequest('extract', {
+    path,
+    scope: resolveScope(params),
+    maxBytes: typeof params.maxBytes === 'number' ? params.maxBytes : undefined,
+    framePath: pageWorldFramePath()
+  });
+}
+
+function pageFetch(params: Record<string, unknown>): Promise<{ scope: PageExecutionScope; result?: PageFrameResult<PageFetchResponse>; results?: Array<PageFrameResult<PageFetchResponse>> }> {
+  return runPageWorldRequest('fetch', {
+    url: String(params.url ?? ''),
+    method: typeof params.method === 'string' ? params.method : 'GET',
+    headers: typeof params.headers === 'object' && params.headers !== null ? params.headers : undefined,
+    body: typeof params.body === 'string' ? params.body : undefined,
+    contentType: typeof params.contentType === 'string' ? params.contentType : undefined,
+    mode: params.mode === 'json' ? 'json' : 'raw',
+    maxBytes: typeof params.maxBytes === 'number' ? params.maxBytes : undefined,
+    timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined,
+    scope: resolveScope(params),
+    framePath: pageWorldFramePath()
+  });
+}
+
+async function globalsPreview(): Promise<string[]> {
+  return Object.keys(window)
+    .filter((key) => /(data|table|json|state|store)/i.test(key))
+    .slice(0, 50);
+}
+
+async function collectInspectionState(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const rootResult = resolveRootForLocator();
+  if (!rootResult.ok) {
+    throw rootResult.error;
+  }
+  const root = rootResult.root;
+  const metadata = documentMetadata(root, document);
+  const visibleText = pageTextChunks(root, 40, 320);
+  const combinedText = visibleText.map((chunk) => chunk.text).join('\n');
+  const scripts = listInlineScripts();
+  const visibleTimestamps = timestampCandidatesFromText(combinedText, Array.isArray(params.patterns) ? params.patterns.map(String) : undefined);
+  const inlineTimestamps = timestampCandidatesFromText(
+    scripts.map((script) => script.content).join('\n'),
+    Array.isArray(params.patterns) ? params.patterns.map(String) : undefined
+  );
+  return {
+    url: metadata.url,
+    title: metadata.title,
+    html: redactHtmlSnapshot(document.documentElement),
+    visibleText,
+    visibleTimestamps,
+    inlineTimestamps,
+    suspiciousGlobals: [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50),
+    globalsPreview: await globalsPreview(),
+    scripts: {
+      inlineCount: scripts.length,
+      suspectedDataVars: [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50)
+    },
+    storage: storageMetadata(),
+    cookies: cookieMetadata(),
+    frames: collectFrames(),
+    tables: describeTables(),
+    timers: {
+      timeouts: 0,
+      intervals: 0
+    },
+    pageLoadedAt,
+    lastMutationAt,
+    context: currentContextSnapshot()
+  };
 }
 
 function performDoubleClick(target: HTMLElement, point: { x: number; y: number }): void {
@@ -1835,6 +2564,12 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
         )
       };
       }
+    case 'page.eval':
+      return await pageEval(String(params.expr ?? ''), params);
+    case 'page.extract':
+      return await pageExtract(String(params.path ?? ''), params);
+    case 'page.fetch':
+      return await pageFetch(params);
     case 'page.dom':
       {
         const rootResult = resolveRootForLocator();
@@ -1989,6 +2724,7 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       if (!target) {
         throw notFoundForLocator(params.locator as Locator | undefined, 'element.get target not found');
       }
+      const matches = matchedElementsForLocator(params.locator as Locator);
 
       const elements = collectElements({}, params.locator as Locator);
       const eid = buildEid(target);
@@ -2004,6 +2740,10 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
 
       return {
         element,
+        matchedCount: matches.length,
+        visible: isElementVisible(target),
+        enabled: !((target as HTMLButtonElement).disabled || target.getAttribute('aria-disabled') === 'true'),
+        textPreview: (target.innerText || target.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160),
         value: isEditable(target) ? target.value : target.isContentEditable ? target.textContent ?? '' : undefined,
         checked: isInputElement(target) ? target.checked : undefined,
         attributes
@@ -2249,7 +2989,7 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       if (!found) {
         throw { code: 'E_NOT_FOUND', message: `network entry not found: ${id}` } satisfies ActionError;
       }
-      return { entry: found };
+      return { entry: filterNetworkEntrySections(found, params.include) };
     }
     case 'network.waitFor':
       return { entry: await waitForNetwork(params) };
@@ -2257,6 +2997,49 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       networkEntries.length = 0;
       performanceBaselineMs = performance.now();
       return { ok: true };
+
+    case 'table.list':
+      return { tables: describeTables() };
+    case 'table.schema': {
+      const resolved = resolveTable(String(params.table ?? ''));
+      if (!resolved || !(resolved.element instanceof Element)) {
+        throw { code: 'E_NOT_FOUND', message: `table not found: ${String(params.table ?? '')}` } satisfies ActionError;
+      }
+      const schema =
+        resolved.element instanceof HTMLTableElement
+          ? { columns: htmlTableSchema(resolved.element) }
+          : { columns: gridSchema(resolved.element) };
+      return {
+        table: resolved.table,
+        schema
+      };
+    }
+    case 'table.rows':
+    case 'table.export': {
+      const resolved = resolveTable(String(params.table ?? ''));
+      if (!resolved || !(resolved.element instanceof Element)) {
+        throw { code: 'E_NOT_FOUND', message: `table not found: ${String(params.table ?? '')}` } satisfies ActionError;
+      }
+      const requestedLimit =
+        params.all === true
+          ? typeof params.maxRows === 'number'
+            ? Math.max(1, Math.floor(params.maxRows))
+            : 10000
+          : typeof params.limit === 'number'
+            ? Math.max(1, Math.floor(params.limit))
+            : 100;
+      const extractionMode =
+        resolved.table.kind === 'html' || resolved.table.kind === 'dataTables' ? 'dataSource' : 'visibleOnly';
+      const rows =
+        resolved.element instanceof HTMLTableElement
+          ? htmlTableRows(resolved.element, requestedLimit)
+          : gridRows(resolved.element, requestedLimit);
+      return {
+        table: resolved.table,
+        extractionMode,
+        rows
+      };
+    }
 
     case 'debug.dumpState': {
       const consoleLimit = typeof params.consoleLimit === 'number' ? Math.max(1, Math.floor(params.consoleLimit)) : 80;
@@ -2267,6 +3050,7 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
         throw rootResult.error;
       }
       const metadata = documentMetadata(rootResult.root, document);
+      const inspection = await collectInspectionState(params);
       return {
         url: metadata.url,
         title: metadata.title,
@@ -2285,9 +3069,19 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
         },
         console: consoleEntries.slice(-consoleLimit),
         network: filterNetworkEntries({ limit: networkLimit }),
-        accessibility: includeAccessibility ? pageAccessibility(rootResult.root, 200) : undefined
+        accessibility: includeAccessibility ? pageAccessibility(rootResult.root, 200) : undefined,
+        scripts: inspection.scripts as { inlineCount: number; suspectedDataVars: string[] },
+        globalsPreview: inspection.globalsPreview as string[],
+        storage: inspection.storage as { localStorageKeys: string[]; sessionStorageKeys: string[] },
+        frames: inspection.frames as Array<{ framePath: string[]; url: string }>,
+        networkSummary: {
+          total: filterNetworkEntries({ limit: networkLimit }).length,
+          recent: filterNetworkEntries({ limit: Math.min(networkLimit, 10) })
+        }
       };
     }
+    case 'bak.internal.inspectState':
+      return await collectInspectionState(params);
     default:
       throw { code: 'E_NOT_FOUND', message: `Unsupported content RPC method: ${method}` } satisfies ActionError;
   }
@@ -2355,5 +3149,6 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 });
 
 ensureOverlayRoot();
+trackMutations();
 
 

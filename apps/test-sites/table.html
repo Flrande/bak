@@ -48,6 +48,7 @@
       </thead>
       <tbody id="rows"></tbody>
     </table>
+    <p id="table-inline-data-note">Inline data seed loaded</p>
     <div id="modal">
       <div id="modal-card">
         <h3>删除确认</h3>
@@ -56,6 +57,25 @@
         <button id="cancel-delete">取消</button>
       </div>
     </div>
+    <script>
+      const table_data = [
+        { id: 1, name: 'Alpha' },
+        { id: 2, name: 'Beta' },
+        { id: 3, name: 'Gamma' }
+      ];
+      const market_data = {
+        QQQ: {
+          quotes: {
+            changePercent: 1.23,
+            asOf: '2026-03-05'
+          }
+        }
+      };
+      const top_table_row = table_data[0];
+      window.table_data = table_data;
+      window.market_data = market_data;
+      window.top_table_row = top_table_row;
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

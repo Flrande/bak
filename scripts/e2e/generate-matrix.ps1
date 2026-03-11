@@ -3,8 +3,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
 $schemaPath = Join-Path $repoRoot 'packages' 'protocol' 'schemas' 'protocol.schema.json'
 $indexPath = Join-Path $repoRoot 'tests' 'e2e' 'methods' 'method-case-index.json'
+$localStatusPath = Join-Path $repoRoot 'test-results' 'method-status.json'
 $outputPath = Join-Path $repoRoot 'docs' 'E2E_MATRIX.md'
-$statusPath = Join-Path $repoRoot 'test-results' 'method-status.json'
 
 if (-not (Test-Path -LiteralPath $schemaPath)) {
   throw "Missing protocol schema: $schemaPath"
@@ -18,8 +18,8 @@ $enumMethods = @($schema.definitions.jsonRpcRequest.properties.method.enum)
 $index = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json -AsHashtable
 $statusByMethod = @{}
 
-if (Test-Path -LiteralPath $statusPath) {
-  $statusRaw = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json -AsHashtable
+if (Test-Path -LiteralPath $localStatusPath) {
+  $statusRaw = Get-Content -LiteralPath $localStatusPath -Raw | ConvertFrom-Json -AsHashtable
   foreach ($item in $statusRaw.GetEnumerator()) {
     $statusByMethod[$item.Key] = [string]$item.Value
   }

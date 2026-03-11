@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
@@ -6,7 +6,15 @@ import { callRpc } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
 import { runGc } from './gc.js';
-import { dragDropLocatorsFromOptions, hasLocatorOptions, locatorFromOptions, parseFiniteNumber, parseNonNegativeInt, parsePositiveInt } from './cli-args.js';
+import {
+  dragDropLocatorsFromOptions,
+  hasLocatorOptions,
+  locatorFromOptions,
+  parseFiniteNumber,
+  parseNonNegativeInt,
+  parseOptionalPositiveInt,
+  parsePositiveInt
+} from './cli-args.js';
 import { PairingStore } from './pairing-store.js';
 import { startBakDaemon } from './server.js';
 import { readEnvInt } from './utils.js';
@@ -28,14 +36,22 @@ function parseJson(value: string | undefined, fallback: Record<string, unknown> 
 }
 
 function parseRpcPort(options: { rpcWsPort?: string }): number {
-  return Number.parseInt(String(options.rpcWsPort ?? DEFAULT_RPC_PORT), 10);
+  const port = parsePositiveInt(options.rpcWsPort ?? DEFAULT_RPC_PORT, 'rpc-ws-port');
+  if (port > 65535) {
+    throw new Error('rpc-ws-port must be <= 65535');
+  }
+  return port;
 }
 
 function parseTabId(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
-  const parsed = Number.parseInt(String(value), 10);
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error('tab-id must be an integer >= 0');
+  }
+  const parsed = Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error('tab-id must be an integer >= 0');
   }
@@ -51,6 +67,55 @@ function parseSessionId(value: unknown): string | undefined {
     return undefined;
   }
   return sessionId;
+}
+
+function parseScope(value: unknown): 'current' | 'main' | 'all-frames' | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const scope = String(value).trim();
+  if (scope === 'current' || scope === 'main' || scope === 'all-frames') {
+    return scope;
+  }
+  throw new Error('scope must be one of: current, main, all-frames');
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value.map(String).map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+function parseHeaderEntries(values: unknown): Record<string, string> | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+  const headers: Record<string, string> = {};
+  for (const raw of values.map(String)) {
+    const index = raw.indexOf(':');
+    if (index <= 0) {
+      throw new Error('header must use Name:Value format');
+    }
+    const name = raw.slice(0, index).trim();
+    const value = raw.slice(index + 1).trim();
+    if (!name) {
+      throw new Error('header name is required');
+    }
+    headers[name] = value;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function writeJsonFile(path: string, value: unknown): { outPath: string; bytes: number } {
+  const content = `${JSON.stringify(value, null, 2)}\n`;
+  const outPath = resolve(path);
+  writeFileSync(outPath, content, 'utf8');
+  return {
+    outPath,
+    bytes: Buffer.byteLength(content, 'utf8')
+  };
 }
 
 function resolveExtensionDistPath(): string | null {
@@ -112,6 +177,7 @@ function addLocatorOptions(command: Command): Command {
     .option('--name <name>', 'accessible name')
     .option('--text <text>', 'visible text match')
     .option('--css <css>', 'CSS selector')
+    .option('--xpath <xpath>', 'XPath selector')
     .option('--index <index>', 'zero-based match index')
     .option('--shadow <mode>', 'shadow mode auto|pierce|none')
     .option('--frame <selector...>', 'frame path selectors');
@@ -125,6 +191,7 @@ function addPrefixedLocatorOptions(command: Command, prefix: 'from' | 'to', labe
     .option(`--${prefix}-name <name>`, `${label} locator name`)
     .option(`--${prefix}-text <text>`, `${label} locator text`)
     .option(`--${prefix}-css <css>`, `${label} CSS selector`)
+    .option(`--${prefix}-xpath <xpath>`, `${label} XPath selector`)
     .option(`--${prefix}-index <index>`, `${label} locator index`)
     .option(`--${prefix}-shadow <mode>`, `${label} shadow mode auto|pierce|none`)
     .option(`--${prefix}-frame <selector...>`, `${label} frame path selectors`);
@@ -169,6 +236,7 @@ program
   .name('bak')
   .description('Drive a real Chromium browser for an agent through the paired bak daemon and extension')
   .version(readCliVersion())
+  .option('--json-errors', 'print structured JSON errors', false)
   .showHelpAfterError()
   .showSuggestionAfterError();
 
@@ -567,11 +635,13 @@ const page = program
 addStructuredHelp(page, {
   notes: [
     'Page reads reflect the active frame or shadow context, not always the top-level tab document.',
+    'Use page eval, extract, and fetch when important runtime data lives in script state instead of visible DOM.',
     'Use bak call for protocol-only navigation helpers such as page.back, page.forward, page.reload, and page.scrollTo.'
   ],
   examples: [
     'bak page goto "https://example.com" --rpc-ws-port 17374',
     'bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374',
+    'bak page extract --path "market_data.QQQ" --rpc-ws-port 17374',
     'bak page snapshot --include-base64 --rpc-ws-port 17374'
   ]
 });
@@ -624,7 +694,149 @@ addStructuredHelp(addRpcPortOption(addTabOption(page.command('viewport').descrip
     'bak page viewport --rpc-ws-port 17374',
     'bak page viewport --width 1440 --height 900 --rpc-ws-port 17374'
   ]
-}).action(async (options) => invoke('page.viewport', { ...targetParams(options), width: parsePositiveInt(options.width, 'width'), height: parsePositiveInt(options.height, 'height') }, parseRpcPort(options)));
+}).action(async (options) => invoke('page.viewport', { ...targetParams(options), width: parseOptionalPositiveInt(options.width, 'width'), height: parseOptionalPositiveInt(options.height, 'height') }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('eval')
+        .description('Evaluate a page-world JavaScript expression and return a structured-clone-safe result')
+        .requiredOption('--expr <expr>', 'JavaScript expression evaluated in page world')
+        .option('--scope <scope>', 'current|main|all-frames')
+        .option('--max-bytes <bytes>', 'max serialized result size in bytes')
+    )
+  ),
+  {
+    notes: [
+      'Use page eval when the data you need is exposed only through runtime JS state.',
+      'Results are limited to structured-clone-safe data and may be truncated by --max-bytes.'
+    ],
+    examples: [
+      'bak page eval --expr "window.table_data?.length" --rpc-ws-port 17374',
+      'bak page eval --expr "window.market_data?.QQQ" --scope all-frames --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'page.eval',
+    {
+      ...targetParams(options),
+      expr: String(options.expr),
+      scope: parseScope(options.scope),
+      maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes')
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('extract')
+        .description('Extract a global variable path from page world without allowing arbitrary function calls')
+        .requiredOption('--path <path>', 'globalThis path such as market_data.QQQ.quotes.changePercent')
+        .option('--scope <scope>', 'current|main|all-frames')
+        .option('--max-bytes <bytes>', 'max serialized result size in bytes')
+    )
+  ),
+  {
+    notes: [
+      'Use page extract first when you know the variable path and want the safer read-only option.',
+      'Paths start from globalThis and support dotted segments plus array indexes.'
+    ],
+    examples: [
+      'bak page extract --path "table_data" --rpc-ws-port 17374',
+      'bak page extract --path "market_data.QQQ.quotes.changePercent" --scope main --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'page.extract',
+    {
+      ...targetParams(options),
+      path: String(options.path),
+      scope: parseScope(options.scope),
+      maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes')
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('fetch')
+        .description('Issue a fetch request from the page context so cookies and page session state are preserved')
+        .requiredOption('--url <url>', 'request URL')
+        .option('--method <method>', 'HTTP method', 'GET')
+        .option('--header <name:value...>', 'header entries in Name:Value form')
+        .option('--body <body>', 'request body text')
+        .option('--content-type <contentType>', 'content type header value')
+        .option('--mode <mode>', 'raw|json', 'raw')
+        .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
+        .option('--scope <scope>', 'current|main|all-frames')
+        .option('--max-bytes <bytes>', 'max response body bytes to retain')
+        .option('--requires-confirm', 'confirm that this request is safe to send from the page context', false)
+    )
+  ),
+  {
+    notes: [
+      'page fetch executes inside the page context and can reuse login state, CSRF tokens, and same-origin headers.',
+      'Use network replay when you want to start from a previously captured request.'
+    ],
+    examples: [
+      'bak page fetch --url "https://example.com/api/data" --method POST --body "{}" --content-type "application/json" --rpc-ws-port 17374',
+      'bak page fetch --url "https://example.com/feed" --mode json --header "Accept: application/json" --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'page.fetch',
+    {
+      ...targetParams(options),
+      url: String(options.url),
+      method: options.method ? String(options.method) : undefined,
+      headers: parseHeaderEntries(options.header),
+      body: options.body ? String(options.body) : undefined,
+      contentType: options.contentType ? String(options.contentType) : undefined,
+      mode: options.mode ? String(options.mode) : undefined,
+      timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
+      scope: parseScope(options.scope),
+      maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes'),
+      requiresConfirm: options.requiresConfirm === true
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('freshness')
+        .description('Assess whether the page appears fresh, lagged, stale, or unknown based on DOM, inline data, and network signals')
+        .option('--patterns <pattern...>', 'additional timestamp regex patterns to scan')
+        .option('--fresh-window-ms <ms>', 'max age in milliseconds considered fresh')
+        .option('--stale-window-ms <ms>', 'age threshold in milliseconds considered stale')
+    )
+  ),
+  {
+    examples: [
+      'bak page freshness --rpc-ws-port 17374',
+      'bak page freshness --patterns "20\\\\d{2}-\\\\d{2}-\\\\d{2}" "Today" --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'page.freshness',
+    {
+      ...targetParams(options),
+      patterns: parseStringList(options.patterns),
+      freshWindowMs: parseOptionalPositiveInt(options.freshWindowMs, 'fresh-window-ms'),
+      staleWindowMs: parseOptionalPositiveInt(options.staleWindowMs, 'stale-window-ms')
+    },
+    parseRpcPort(options)
+  )
+);
 
 const debug = program
   .command('debug')
@@ -646,6 +858,7 @@ addRpcPortOption(
       .description('Capture a structured debug bundle for the current browser context')
       .option('--console-limit <limit>', 'console entry limit', '80')
       .option('--network-limit <limit>', 'network entry limit', '80')
+      .option('--section <section...>', 'subset of sections: dom|visible-text|scripts|globals-preview|network-summary|storage|frames')
       .option('--include-a11y', 'include accessibility nodes', false)
       .option('--include-snapshot', 'attach a fresh viewport snapshot to the dump', false)
       .option('--include-snapshot-base64', 'include snapshot imageBase64 when a snapshot is attached', false)
@@ -657,6 +870,7 @@ addRpcPortOption(
       ...targetParams(options),
       consoleLimit: parsePositiveInt(options.consoleLimit, 'console-limit'),
       networkLimit: parsePositiveInt(options.networkLimit, 'network-limit'),
+      section: parseStringList(options.section),
       includeAccessibility: options.includeA11y === true,
       includeSnapshot: options.includeSnapshot === true,
       includeSnapshotBase64: options.includeSnapshotBase64 === true
@@ -670,20 +884,333 @@ const network = program
   .summary('Inspect captured page requests')
   .description('Read recent network activity captured from the current page');
 addStructuredHelp(network, {
-  notes: ['Use network wait when the page needs a specific request to finish before the next action.']
+  notes: [
+    'Use network wait when the page needs a specific request to finish before the next action.',
+    'Use network search and replay to turn dynamic page loading into a reproducible data workflow.'
+  ]
 });
 addStructuredHelp(addRpcPortOption(addTabOption(network.command('list').description('List captured network entries').option('--limit <limit>', 'result limit', '50').option('--url-includes <text>', 'URL substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method'))), {
   examples: ['bak network list --url-includes "/api/" --limit 20 --rpc-ws-port 17374']
 }).action(async (options) => invoke('network.list', { ...targetParams(options), limit: parsePositiveInt(options.limit, 'limit'), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(network.command('get <id>').description('Show a single network entry by id'))), {
-  examples: ['bak network get req_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('network.get', { ...targetParams(options), id: String(id) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      network
+        .command('get <id>')
+        .description('Show a single network entry by id')
+        .option('--include <section...>', 'sections to include: request response')
+        .option('--body-bytes <bytes>', 'max request or response body preview bytes')
+    )
+  ),
+  {
+    examples: [
+      'bak network get req_123 --rpc-ws-port 17374',
+      'bak network get req_123 --include request response --body-bytes 4096 --rpc-ws-port 17374'
+    ]
+  }
+).action(async (id, options) =>
+  invoke(
+    'network.get',
+    {
+      ...targetParams(options),
+      id: String(id),
+      include: parseStringList(options.include),
+      bodyBytes: parseOptionalPositiveInt(options.bodyBytes, 'body-bytes')
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(addTabOption(network.command('wait').description('Wait for a matching network entry').option('--url-includes <text>', 'URL substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds', '5000'))), {
   examples: ['bak network wait --url-includes "/api/save" --status 200 --rpc-ws-port 17374']
 }).action(async (options) => invoke('network.waitFor', { ...targetParams(options), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined, timeoutMs: parsePositiveInt(options.timeoutMs, 'timeout-ms') }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(network.command('clear').description('Clear captured network history for the target tab'))), {
   examples: ['bak network clear --rpc-ws-port 17374']
 }).action(async (options) => invoke('network.clear', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      network
+        .command('search')
+        .description('Search recent network entries by URL, headers, or body preview')
+        .requiredOption('--pattern <pattern>', 'search pattern')
+        .option('--limit <limit>', 'max number of entries', '50')
+    )
+  ),
+  {
+    examples: [
+      'bak network search --pattern "get_updated_data_" --rpc-ws-port 17374',
+      'bak network search --pattern "table_data" --limit 10 --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'network.search',
+    {
+      ...targetParams(options),
+      pattern: String(options.pattern),
+      limit: parsePositiveInt(options.limit, 'limit')
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      network
+        .command('replay')
+        .description('Replay a captured network request through the current page context')
+        .requiredOption('--request-id <id>', 'captured request id')
+        .option('--mode <mode>', 'raw|json', 'raw')
+        .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
+        .option('--max-bytes <bytes>', 'max response body bytes to retain')
+        .option('--requires-confirm', 'confirm that replaying the captured request is safe', false)
+    )
+  ),
+  {
+    examples: [
+      'bak network replay --request-id req_123 --rpc-ws-port 17374',
+      'bak network replay --request-id req_123 --mode json --max-bytes 8192 --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'network.replay',
+    {
+      ...targetParams(options),
+      id: String(options.requestId),
+      mode: options.mode ? String(options.mode) : undefined,
+      timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
+      maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes'),
+      requiresConfirm: options.requiresConfirm === true
+    },
+    parseRpcPort(options)
+  )
+);
+
+const table = program
+  .command('table')
+  .summary('Inspect structured tables and virtual grids')
+  .description('Discover tables and extract rows from HTML tables or grid-like components');
+addStructuredHelp(table, {
+  notes: [
+    'Use table commands when page text is incomplete because the UI renders only the visible rows.',
+    'rows --all prefers data-source extraction, then scroll stitching, then visible-only fallback.'
+  ],
+  examples: [
+    'bak table list --rpc-ws-port 17374',
+    'bak table rows --table table-1 --all --rpc-ws-port 17374',
+    'bak table export --table table-1 --out .\\table.json --rpc-ws-port 17374'
+  ]
+});
+addStructuredHelp(addRpcPortOption(addTabOption(table.command('list').description('List candidate tables or grid-like regions on the page'))), {
+  examples: ['bak table list --rpc-ws-port 17374']
+}).action(async (options) => invoke('table.list', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(addTabOption(table.command('schema').description('Read the detected schema for a table or grid').requiredOption('--table <table>', 'table id from table list'))),
+  {
+    examples: ['bak table schema --table table-1 --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'table.schema',
+    {
+      ...targetParams(options),
+      table: String(options.table)
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      table
+        .command('rows')
+        .description('Read rows from a detected table or grid')
+        .requiredOption('--table <table>', 'table id from table list')
+        .option('--limit <limit>', 'row limit', '100')
+        .option('--all', 'attempt to read all rows up to --max-rows', false)
+        .option('--max-rows <maxRows>', 'max rows when --all is enabled', '10000')
+    )
+  ),
+  {
+    examples: [
+      'bak table rows --table table-1 --limit 50 --rpc-ws-port 17374',
+      'bak table rows --table table-1 --all --max-rows 10000 --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'table.rows',
+    {
+      ...targetParams(options),
+      table: String(options.table),
+      limit: parsePositiveInt(options.limit, 'limit'),
+      all: options.all === true,
+      maxRows: parsePositiveInt(options.maxRows, 'max-rows')
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      table
+        .command('export')
+        .description('Export rows from a detected table or grid')
+        .requiredOption('--table <table>', 'table id from table list')
+        .option('--format <format>', 'export format', 'json')
+        .option('--out <path>', 'write the export payload to a file')
+    )
+  ),
+  {
+    examples: [
+      'bak table export --table table-1 --format json --rpc-ws-port 17374',
+      'bak table export --table table-1 --out .\\table.json --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) => {
+  const result = await callRpc(
+    'table.export',
+    {
+      ...targetParams(options),
+      table: String(options.table),
+      format: options.format ? String(options.format) : undefined
+    },
+    parseRpcPort(options)
+  );
+  if (options.out) {
+    printResult({
+      ok: true,
+      format: String(options.format ?? 'json'),
+      ...writeJsonFile(String(options.out), result)
+    });
+    return;
+  }
+  printResult(result);
+});
+
+const inspect = program
+  .command('inspect')
+  .summary('Run higher-level discovery workflows for dynamic pages')
+  .description('Summarize candidate data sources, live update signals, and freshness cues for agent workflows');
+addStructuredHelp(inspect, {
+  notes: ['Inspect commands are intended as discovery helpers built on top of page, table, network, and freshness primitives.'],
+  examples: [
+    'bak inspect page-data --rpc-ws-port 17374',
+    'bak inspect live-updates --rpc-ws-port 17374',
+    'bak inspect freshness --patterns "20\\\\d{2}-\\\\d{2}-\\\\d{2}" --rpc-ws-port 17374'
+  ]
+});
+addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('page-data').description('Summarize likely inline data variables, tables, and recent requests'))), {
+  examples: ['bak inspect page-data --rpc-ws-port 17374']
+}).action(async (options) => invoke('inspect.pageData', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('live-updates').description('Summarize recent mutations, timers, and recent network cadence'))), {
+  examples: ['bak inspect live-updates --rpc-ws-port 17374']
+}).action(async (options) => invoke('inspect.liveUpdates', { ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      inspect
+        .command('freshness')
+        .description('Summarize freshness with UI, inline, and network timing cues')
+        .option('--patterns <pattern...>', 'additional timestamp regex patterns to scan')
+    )
+  ),
+  {
+    examples: ['bak inspect freshness --patterns "Today" "yesterday" --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'inspect.freshness',
+    {
+      ...targetParams(options),
+      patterns: parseStringList(options.patterns)
+    },
+    parseRpcPort(options)
+  )
+);
+
+const capture = program
+  .command('capture')
+  .summary('Export snapshot archives for offline analysis')
+  .description('Capture structured session snapshots or HAR payloads for replay and debugging');
+addStructuredHelp(capture, {
+  examples: [
+    'bak capture snapshot --out .\\session.json --rpc-ws-port 17374',
+    'bak capture har --out .\\session.har --rpc-ws-port 17374'
+  ]
+});
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      capture
+        .command('snapshot')
+        .description('Capture a structured page snapshot including visible text, freshness, and recent network activity')
+        .option('--network-limit <limit>', 'max network entries to include', '20')
+        .option('--out <path>', 'write the snapshot payload to a file')
+    )
+  ),
+  {
+    examples: [
+      'bak capture snapshot --rpc-ws-port 17374',
+      'bak capture snapshot --network-limit 50 --out .\\tradytics-session.json --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) => {
+  const result = await callRpc(
+    'capture.snapshot',
+    {
+      ...targetParams(options),
+      networkLimit: parsePositiveInt(options.networkLimit, 'network-limit')
+    },
+    parseRpcPort(options)
+  );
+  if (options.out) {
+    printResult({
+      ok: true,
+      format: 'json',
+      ...writeJsonFile(String(options.out), result)
+    });
+    return;
+  }
+  printResult(result);
+});
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      capture
+        .command('har')
+        .description('Capture recent network activity as HAR 1.2 JSON')
+        .option('--limit <limit>', 'max network entries to include')
+        .option('--out <path>', 'write the HAR payload to a file')
+    )
+  ),
+  {
+    examples: [
+      'bak capture har --rpc-ws-port 17374',
+      'bak capture har --limit 200 --out .\\tradytics.har --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) => {
+  const result = await callRpc(
+    'capture.har',
+    {
+      ...targetParams(options),
+      limit: parseOptionalPositiveInt(options.limit, 'limit')
+    },
+    parseRpcPort(options)
+  );
+  if (options.out) {
+    const harPayload = typeof result === 'object' && result !== null && 'har' in (result as Record<string, unknown>) ? (result as { har: unknown }).har : result;
+    printResult({
+      ok: true,
+      format: 'har',
+      ...writeJsonFile(String(options.out), harPayload)
+    });
+    return;
+  }
+  printResult(result);
+});
 
 const context = program
   .command('context')
@@ -700,13 +1227,13 @@ addStructuredHelp(addRpcPortOption(addTabOption(context.command('enter-frame').d
 }).action(async (options) => invoke('context.enterFrame', { ...targetParams(options), framePath: Array.isArray(options.framePath) ? options.framePath.map(String) : undefined }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(context.command('exit-frame').description('Exit one or more nested frame levels').option('--levels <levels>', 'levels to exit'))), {
   examples: ['bak context exit-frame --levels 1 --rpc-ws-port 17374']
-}).action(async (options) => invoke('context.exitFrame', { ...targetParams(options), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
+}).action(async (options) => invoke('context.exitFrame', { ...targetParams(options), levels: parseOptionalPositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(context.command('enter-shadow').description('Enter a shadow DOM context by host selector path').option('--host-selectors <selector...>', 'shadow host selectors'))), {
   examples: ['bak context enter-shadow --host-selectors "#shadow-host" --rpc-ws-port 17374']
 }).action(async (options) => invoke('context.enterShadow', { ...targetParams(options), hostSelectors: Array.isArray(options.hostSelectors) ? options.hostSelectors.map(String) : undefined }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(context.command('exit-shadow').description('Exit one or more shadow DOM levels').option('--levels <levels>', 'levels to exit'))), {
   examples: ['bak context exit-shadow --levels 1 --rpc-ws-port 17374']
-}).action(async (options) => invoke('context.exitShadow', { ...targetParams(options), levels: parsePositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
+}).action(async (options) => invoke('context.exitShadow', { ...targetParams(options), levels: parseOptionalPositiveInt(options.levels, 'levels') }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(context.command('reset').description('Return to the top-level page context'))), {
   examples: ['bak context reset --rpc-ws-port 17374']
 }).action(async (options) => invoke('context.reset', { ...targetParams(options) }, parseRpcPort(options)));

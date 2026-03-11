@@ -47,6 +47,20 @@ describe('policy matcher', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it('requires confirm for mutating page.fetch requests by default', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-fetch-default-'));
+    const engine = new PolicyEngine(dataDir);
+    const decision = engine.evaluate({
+      action: 'page.fetch',
+      domain: 'api.example.com',
+      path: '/orders',
+      locator: { name: 'POST https://api.example.com/orders' }
+    });
+
+    expect(decision.decision).toBe('requireConfirm');
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
   it('applies allow rule from policy file', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-policy-rule-'));
     writeFileSync(

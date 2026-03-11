@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { dragDropLocatorsFromOptions, locatorFromOptions, parseFiniteNumber } from '../../packages/cli/src/cli-args.js';
+import {
+  dragDropLocatorsFromOptions,
+  locatorFromOptions,
+  parseFiniteNumber,
+  parseNonNegativeInt,
+  parseOptionalPositiveInt,
+  parsePositiveInt
+} from '../../packages/cli/src/cli-args.js';
 
 function parseJson(value: string): Record<string, unknown> {
   return JSON.parse(value) as Record<string, unknown>;
@@ -55,6 +62,16 @@ describe('cli argument helpers', () => {
     expect(() => parseFiniteNumber('-1', 'x', { min: 0 })).toThrow(/must be >= 0/i);
   });
 
+  it('treats omitted optional positive integers as undefined', () => {
+    expect(parseOptionalPositiveInt(undefined, 'max-bytes')).toBeUndefined();
+    expect(parseOptionalPositiveInt('', 'max-bytes')).toBeUndefined();
+  });
+
+  it('rejects partially numeric integers instead of truncating them', () => {
+    expect(() => parsePositiveInt('17374junk', 'rpc-ws-port')).toThrow(/integer > 0/i);
+    expect(() => parseNonNegativeInt('12px', 'limit')).toThrow(/integer >= 0/i);
+  });
+
   it('parses standard locator payloads including frame paths and index', () => {
     const locator = locatorFromOptions(
       {
@@ -71,6 +88,30 @@ describe('cli argument helpers', () => {
       name: 'Save',
       framePath: ['#demo-frame'],
       index: 0
+    });
+  });
+
+  it('supports xpath locators in direct and prefixed forms', () => {
+    const direct = locatorFromOptions(
+      {
+        xpath: '//button[@aria-label="Refresh"]'
+      },
+      parseJson
+    );
+    const prefixed = dragDropLocatorsFromOptions(
+      {
+        fromXpath: '//*[@data-role="drag-source"]',
+        toXpath: '//*[@data-role="drop-target"]'
+      },
+      parseJson
+    );
+
+    expect(direct).toEqual({
+      xpath: '//button[@aria-label="Refresh"]'
+    });
+    expect(prefixed).toEqual({
+      from: { xpath: '//*[@data-role="drag-source"]' },
+      to: { xpath: '//*[@data-role="drop-target"]' }
     });
   });
 });

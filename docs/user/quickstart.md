@@ -88,7 +88,24 @@ bak page title --session-id $sessionId --rpc-ws-port 17374
 bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 ```
 
-## 6. Minimal Fallback
+Use `bak session ...` for agent-owned tabs. Reach for `bak tabs ...` only when you need browser-wide inspection or manual recovery outside the session helpers. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
+
+## 6. Dynamic Page Basics
+
+When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers:
+
+```powershell
+bak page extract --session-id $sessionId --path "table_data" --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "window.market_data?.QQQ" --rpc-ws-port 17374
+bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
+bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
+bak table list --session-id $sessionId --rpc-ws-port 17374
+bak page freshness --session-id $sessionId --rpc-ws-port 17374
+```
+
+Add `--requires-confirm` to `bak page fetch` when the request can change remote state.
+
+## 7. Minimal Fallback
 
 If `bak` is not on `PATH` yet, use:
 

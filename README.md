@@ -4,7 +4,7 @@
 
 - a local CLI daemon
 - a Chromium extension
-- an explicit browser workspace for agent-owned tabs
+- an explicit agent session with dedicated tabs
 - explicit page, element, and context control
 
 ## Install
@@ -63,14 +63,38 @@ You want:
 - `ok: true`
 - `extensionConnected: true`
 
+## Command Model
+
+- `bak session ...` creates, repairs, and targets agent sessions plus their dedicated tabs.
+- `bak tabs ...` inspects or repairs browser tabs directly outside the session helpers.
+- `bak page`, `bak context`, `bak element`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` act on the current session tab by default.
+- `bak call` is the fallback for protocol-only methods. When new first-class commands land, they follow the same noun-based surface instead of a `workspace` namespace.
+
 ## First Browser Commands
 
 ```powershell
-bak workspace ensure --rpc-ws-port 17374
-bak workspace open-tab --url "https://example.com" --rpc-ws-port 17374
-bak page title --rpc-ws-port 17374
-bak page snapshot --include-base64 --rpc-ws-port 17374
+$session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
+$sessionId = $session.sessionId
+bak session ensure --session-id $sessionId --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak page title --session-id $sessionId --rpc-ws-port 17374
+bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 ```
+
+## Dynamic Data Workflows
+
+Use the dynamic page helpers when data lives in runtime state, virtual tables, or XHR/fetch responses instead of visible DOM:
+
+```powershell
+bak page extract --session-id $sessionId --path "table_data" --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "window.market_data?.QQQ" --rpc-ws-port 17374
+bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table table-1 --all --rpc-ws-port 17374
+bak page freshness --session-id $sessionId --rpc-ws-port 17374
+```
+
+Mutating `bak page fetch` calls and non-readonly `bak network replay` calls now require explicit `--requires-confirm`.
 
 ## For Agents
 

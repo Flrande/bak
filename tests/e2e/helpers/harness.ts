@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { chromium, expect, type BrowserContext, type Page } from '@playwright/test';
 import WebSocket from 'ws';
 import { PROTOCOL_VERSION } from '../../../packages/protocol/src/types.js';
+import { markMethodInvoked } from './method-status';
 import { cliDistPath, ensureE2ERuntimeFresh, extensionDistPath } from './runtime';
 
 interface RpcResponse {
@@ -96,6 +97,7 @@ export interface E2EHarness {
 }
 
 async function rpcCallInternal(port: number, method: string, params: Record<string, unknown>): Promise<unknown> {
+  markMethodInvoked(method);
   const socket = new WebSocket(`ws://127.0.0.1:${port}/rpc`);
   await new Promise<void>((resolve, reject) => {
     socket.once('open', () => resolve());

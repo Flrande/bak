@@ -8,7 +8,14 @@ export const BakErrorCode = {
   E_TIMEOUT: 'E_TIMEOUT',
   E_INVALID_PARAMS: 'E_INVALID_PARAMS',
   E_INTERNAL: 'E_INTERNAL',
-  E_NOT_READY: 'E_NOT_READY'
+  E_NOT_READY: 'E_NOT_READY',
+  E_EXECUTION: 'E_EXECUTION',
+  E_NOT_SERIALIZABLE: 'E_NOT_SERIALIZABLE',
+  E_BODY_TOO_LARGE: 'E_BODY_TOO_LARGE',
+  E_RESPONSE_NOT_CAPTURED: 'E_RESPONSE_NOT_CAPTURED',
+  E_CROSS_ORIGIN_BLOCKED: 'E_CROSS_ORIGIN_BLOCKED',
+  E_SELECTOR_AMBIGUOUS: 'E_SELECTOR_AMBIGUOUS',
+  E_DEBUGGER_NOT_ATTACHED: 'E_DEBUGGER_NOT_ATTACHED'
 } as const;
 
 export type BakErrorCodeValue = (typeof BakErrorCode)[keyof typeof BakErrorCode];
@@ -55,6 +62,7 @@ export const LocatorSchema = z.object({
   name: z.string().optional(),
   text: z.string().optional(),
   css: z.string().optional(),
+  xpath: z.string().optional(),
   framePath: z.array(z.string()).optional(),
   shadow: z.enum(['auto', 'pierce', 'none']).optional(),
   index: z.number().int().min(0).optional()
@@ -77,9 +85,12 @@ export const ElementMapItemSchema = z.object({
   role: z.string().nullable(),
   name: z.string(),
   text: z.string(),
+  visible: z.boolean().optional(),
+  enabled: z.boolean().optional(),
   bbox: BBoxSchema,
   selectors: z.object({
     css: z.string().nullable(),
+    xpath: z.string().nullable().optional(),
     text: z.string().nullable(),
     aria: z.string().nullable()
   }),
@@ -105,10 +116,24 @@ export interface NetworkEntry {
   ok: boolean;
   kind: 'fetch' | 'xhr' | 'navigation' | 'resource';
   ts: number;
+  startedAt?: number;
   durationMs: number;
   requestBytes?: number;
   responseBytes?: number;
   tabId?: number;
+  resourceType?: string;
+  contentType?: string;
+  initiatorUrl?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  requestBodyPreview?: string;
+  responseBodyPreview?: string;
+  requestBodyTruncated?: boolean;
+  responseBodyTruncated?: boolean;
+  binary?: boolean;
+  truncated?: boolean;
+  failureReason?: string;
+  source?: 'debugger' | 'content';
 }
 
 export interface PageTextChunk {
@@ -152,6 +177,100 @@ export interface PageMetrics {
     transferSize: number;
     encodedBodySize: number;
   };
+}
+
+export type PageExecutionScope = 'current' | 'main' | 'all-frames';
+
+export interface PageMethodError {
+  code: BakErrorCodeValue | string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface PageFrameResult<T = unknown> {
+  url: string;
+  framePath: string[];
+  value?: T;
+  truncated?: boolean;
+  bytes?: number;
+  error?: PageMethodError;
+}
+
+export interface PageValueResult<T = unknown> {
+  scope: PageExecutionScope;
+  result?: PageFrameResult<T>;
+  results?: Array<PageFrameResult<T>>;
+}
+
+export interface PageFetchResponse {
+  url: string;
+  status: number;
+  ok: boolean;
+  headers: Record<string, string>;
+  contentType?: string;
+  bodyText?: string;
+  json?: unknown;
+  bytes?: number;
+  truncated?: boolean;
+}
+
+export interface TableHandle {
+  id: string;
+  name: string;
+  kind: 'html' | 'dataTables' | 'ag-grid' | 'tanstack' | 'handsontable' | 'aria-grid' | 'visible-only';
+  selector?: string;
+  rowCount?: number;
+  columnCount?: number;
+}
+
+export interface TableColumn {
+  key: string;
+  label: string;
+}
+
+export interface TableSchema {
+  columns: TableColumn[];
+}
+
+export type TableExtractionMode = 'dataSource' | 'scroll' | 'visibleOnly';
+
+export interface PageFreshnessResult {
+  pageLoadedAt: number | null;
+  lastMutationAt: number | null;
+  latestNetworkTimestamp: number | null;
+  latestInlineDataTimestamp: number | null;
+  domVisibleTimestamp: number | null;
+  assessment: 'fresh' | 'lagged' | 'stale' | 'unknown';
+  evidence: {
+    visibleTimestamps: string[];
+    inlineTimestamps: string[];
+    networkSampleIds: string[];
+  };
+}
+
+export type DebugDumpSection =
+  | 'dom'
+  | 'visible-text'
+  | 'scripts'
+  | 'globals-preview'
+  | 'network-summary'
+  | 'storage'
+  | 'frames';
+
+export interface CaptureSnapshotResult {
+  url: string;
+  title: string;
+  html: string;
+  visibleText: PageTextChunk[];
+  cookies: Array<{ name: string }>;
+  storage: {
+    localStorageKeys: string[];
+    sessionStorageKeys: string[];
+  };
+  context: SessionContextSnapshot;
+  freshness?: PageFreshnessResult;
+  network: NetworkEntry[];
+  capturedAt: number;
 }
 
 export interface UploadFilePayload {
@@ -350,6 +469,31 @@ export interface MethodMap {
     params: { sessionId: string; tabId?: number; maxChunks?: number; chunkSize?: number };
     result: { chunks: PageTextChunk[] };
   };
+  'page.eval': {
+    params: { sessionId: string; tabId?: number; expr: string; scope?: PageExecutionScope; maxBytes?: number };
+    result: PageValueResult<unknown>;
+  };
+  'page.extract': {
+    params: { sessionId: string; tabId?: number; path: string; scope?: PageExecutionScope; maxBytes?: number };
+    result: PageValueResult<unknown>;
+  };
+  'page.fetch': {
+    params: {
+      sessionId: string;
+      tabId?: number;
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      contentType?: string;
+      mode?: 'raw' | 'json';
+      timeoutMs?: number;
+      scope?: PageExecutionScope;
+      maxBytes?: number;
+      requiresConfirm?: boolean;
+    };
+    result: PageValueResult<PageFetchResponse>;
+  };
   'page.dom': {
     params: { sessionId: string; tabId?: number };
     result: { summary: PageDomSummary };
@@ -369,6 +513,16 @@ export interface MethodMap {
   'page.metrics': {
     params: { sessionId: string; tabId?: number };
     result: PageMetrics;
+  };
+  'page.freshness': {
+    params: {
+      sessionId: string;
+      tabId?: number;
+      patterns?: string[];
+      freshWindowMs?: number;
+      staleWindowMs?: number;
+    };
+    result: PageFreshnessResult;
   };
 
   'element.click': { params: { sessionId: string; tabId?: number; locator: Locator; requiresConfirm?: boolean }; result: { ok: true } };
@@ -403,6 +557,10 @@ export interface MethodMap {
     params: { sessionId: string; tabId?: number; locator: Locator };
     result: {
       element: ElementMapItem;
+      matchedCount: number;
+      visible: boolean;
+      enabled: boolean;
+      textPreview: string;
       value?: string;
       checked?: boolean;
       attributes: Record<string, string>;
@@ -463,8 +621,24 @@ export interface MethodMap {
     result: { entries: NetworkEntry[] };
   };
   'network.get': {
-    params: { sessionId: string; tabId?: number; id: string };
+    params: { sessionId: string; tabId?: number; id: string; include?: Array<'request' | 'response'>; bodyBytes?: number };
     result: { entry: NetworkEntry };
+  };
+  'network.search': {
+    params: { sessionId: string; tabId?: number; pattern: string; limit?: number };
+    result: { entries: NetworkEntry[] };
+  };
+  'network.replay': {
+    params: {
+      sessionId: string;
+      tabId?: number;
+      id: string;
+      mode?: 'raw' | 'json';
+      timeoutMs?: number;
+      maxBytes?: number;
+      requiresConfirm?: boolean;
+    };
+    result: PageFetchResponse;
   };
   'network.waitFor': {
     params: {
@@ -492,6 +666,7 @@ export interface MethodMap {
       includeAccessibility?: boolean;
       includeSnapshot?: boolean;
       includeSnapshotBase64?: boolean;
+      section?: DebugDumpSection[];
     };
     result: {
       url: string;
@@ -500,14 +675,28 @@ export interface MethodMap {
         framePath: string[];
         shadowPath: string[];
       };
-      dom: PageDomSummary;
-      text: PageTextChunk[];
-      elements: ElementMapItem[];
-      metrics: PageMetrics;
-      viewport: { width: number; height: number; devicePixelRatio: number };
-      console: ConsoleEntry[];
-      network: NetworkEntry[];
+      dom?: PageDomSummary;
+      text?: PageTextChunk[];
+      elements?: ElementMapItem[];
+      metrics?: PageMetrics;
+      viewport?: { width: number; height: number; devicePixelRatio: number };
+      console?: ConsoleEntry[];
+      network?: NetworkEntry[];
       accessibility?: AccessibilityNode[];
+      scripts?: {
+        inlineCount: number;
+        suspectedDataVars: string[];
+      };
+      globalsPreview?: string[];
+      storage?: {
+        localStorageKeys: string[];
+        sessionStorageKeys: string[];
+      };
+      frames?: Array<{ framePath: string[]; url: string }>;
+      networkSummary?: {
+        total: number;
+        recent: NetworkEntry[];
+      };
       snapshot?: {
         traceId: string;
         imagePath: string;
@@ -516,6 +705,42 @@ export interface MethodMap {
         elementCount: number;
       };
     };
+  };
+  'table.list': {
+    params: { sessionId: string; tabId?: number };
+    result: { tables: TableHandle[] };
+  };
+  'table.schema': {
+    params: { sessionId: string; tabId?: number; table: string };
+    result: { table: TableHandle; schema: TableSchema };
+  };
+  'table.rows': {
+    params: { sessionId: string; tabId?: number; table: string; limit?: number; all?: boolean; maxRows?: number };
+    result: { table: TableHandle; extractionMode: TableExtractionMode; rows: Array<Record<string, unknown>> };
+  };
+  'table.export': {
+    params: { sessionId: string; tabId?: number; table: string; format?: 'json' };
+    result: { table: TableHandle; extractionMode: TableExtractionMode; rows: Array<Record<string, unknown>> };
+  };
+  'inspect.pageData': {
+    params: { sessionId: string; tabId?: number };
+    result: Record<string, unknown>;
+  };
+  'inspect.liveUpdates': {
+    params: { sessionId: string; tabId?: number };
+    result: Record<string, unknown>;
+  };
+  'inspect.freshness': {
+    params: { sessionId: string; tabId?: number; patterns?: string[] };
+    result: Record<string, unknown>;
+  };
+  'capture.snapshot': {
+    params: { sessionId: string; tabId?: number; networkLimit?: number };
+    result: CaptureSnapshotResult;
+  };
+  'capture.har': {
+    params: { sessionId: string; tabId?: number; limit?: number };
+    result: { har: Record<string, unknown> };
   };
 }
 

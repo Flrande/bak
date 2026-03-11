@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { inferSafeName, redactElementText } from '../../packages/extension/src/privacy.js';
+import {
+  containsRedactionMarker,
+  inferSafeName,
+  redactElementText,
+  redactHeaderMap,
+  redactTransportText
+} from '../../packages/extension/src/privacy.js';
 
 describe('privacy redaction', () => {
   it('redacts obvious sensitive text patterns', () => {
@@ -13,6 +19,25 @@ describe('privacy redaction', () => {
     const raw = 'x'.repeat(400);
     expect(redactElementText(raw).length).toBeLessThanOrEqual(120);
     expect(redactElementText(raw, { debugRichText: true }).length).toBeLessThanOrEqual(320);
+  });
+
+  it('redacts transport secrets without destroying surrounding structure', () => {
+    expect(redactTransportText('authorization=Bearer abc123def456')).toContain('[REDACTED]');
+    expect(redactTransportText('{"csrfToken":"abc123","symbol":"QQQ"}')).toContain('"symbol":"QQQ"');
+    expect(redactTransportText('token=abc123&limit=20')).toBe('token=[REDACTED]&limit=20');
+  });
+
+  it('redacts sensitive headers while preserving safe ones', () => {
+    const headers = redactHeaderMap({
+      Authorization: 'Bearer abc123def456',
+      'Content-Type': 'application/json'
+    });
+
+    expect(headers).toEqual({
+      Authorization: '[REDACTED:authorization]',
+      'Content-Type': 'application/json'
+    });
+    expect(containsRedactionMarker(headers?.Authorization)).toBe(true);
   });
 });
 

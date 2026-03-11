@@ -21,6 +21,11 @@ class FakeDriver extends StubDriver {
   workspaceListTabsCalls = 0;
   pageTitleCalls = 0;
   pageSnapshotCalls = 0;
+  rawRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+  replayEntry: { method: string; url: string } = {
+    method: 'POST',
+    url: 'https://api.example.test/orders'
+  };
   bindingExists = true;
   contextSetBehaviors: Array<'success' | 'stale-not-found' | 'timeout'> = [];
   workspace: SessionBindingEnsureResult['workspace'] = {
@@ -118,6 +123,7 @@ class FakeDriver extends StubDriver {
   }
 
   async rawRequest(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    this.rawRequests.push({ method, params });
     if (method === 'context.set') {
       const behavior = this.contextSetBehaviors.shift() ?? 'success';
       if (behavior === 'stale-not-found') {
@@ -131,9 +137,50 @@ class FakeDriver extends StubDriver {
         shadowPath: Array.isArray(params?.shadowPath) ? params.shadowPath : []
       };
     }
+    if (method === 'page.url') {
+      return { url: 'https://example.test/frame' };
+    }
     if (method === 'page.title') {
       this.pageTitleCalls += 1;
       return { title: 'Example title' };
+    }
+    if (method === 'page.fetch') {
+      return {
+        scope: 'current',
+        result: {
+          url: 'https://example.test/frame',
+          framePath: [],
+          value: {
+            url: typeof params?.url === 'string' ? params.url : 'https://api.example.test/orders',
+            status: 200,
+            ok: true,
+            headers: {},
+            bodyText: '{}',
+            bytes: 2,
+            truncated: false
+          }
+        }
+      };
+    }
+    if (method === 'network.get') {
+      return {
+        entry: {
+          id: typeof params?.id === 'string' ? params.id : 'req_1',
+          url: this.replayEntry.url,
+          method: this.replayEntry.method
+        }
+      };
+    }
+    if (method === 'network.replay') {
+      return {
+        url: this.replayEntry.url,
+        status: 200,
+        ok: true,
+        headers: {},
+        bodyText: '{}',
+        bytes: 2,
+        truncated: false
+      };
     }
     if (method === 'debug.dumpState') {
       return {
@@ -385,5 +432,65 @@ describe('service runtime session bindings', () => {
     expect(existsSync(dump.snapshot!.elementsPath)).toBe(true);
     expect(dump.snapshot!.imageBase64).toBeUndefined();
     expect(JSON.parse(readFileSync(dump.snapshot!.elementsPath, 'utf8'))).toHaveLength(1);
+  });
+
+  it('requires explicit confirmation for mutating page.fetch requests', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    await expect(
+      service.invokeDynamic('page.fetch', {
+        sessionId: created.sessionId,
+        url: 'https://api.example.test/orders',
+        method: 'POST'
+      })
+    ).rejects.toMatchObject({
+      bakCode: BakErrorCode.E_NEED_USER_CONFIRM
+    });
+    expect(driver.rawRequests.filter((entry) => entry.method === 'page.fetch')).toHaveLength(0);
+
+    await expect(
+      service.invokeDynamic('page.fetch', {
+        sessionId: created.sessionId,
+        url: 'https://api.example.test/orders',
+        method: 'POST',
+        requiresConfirm: true
+      })
+    ).resolves.toMatchObject({
+      scope: 'current'
+    });
+    expect(driver.rawRequests.filter((entry) => entry.method === 'page.fetch')).toHaveLength(1);
+  });
+
+  it('requires explicit confirmation for mutating network replays', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    await expect(
+      service.invokeDynamic('network.replay', {
+        sessionId: created.sessionId,
+        id: 'req_1'
+      })
+    ).rejects.toMatchObject({
+      bakCode: BakErrorCode.E_NEED_USER_CONFIRM
+    });
+    expect(driver.rawRequests.filter((entry) => entry.method === 'network.replay')).toHaveLength(0);
+
+    await expect(
+      service.invokeDynamic('network.replay', {
+        sessionId: created.sessionId,
+        id: 'req_1',
+        requiresConfirm: true
+      })
+    ).resolves.toMatchObject({
+      ok: true
+    });
+    expect(driver.rawRequests.filter((entry) => entry.method === 'network.replay')).toHaveLength(1);
   });
 });

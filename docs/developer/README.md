@@ -14,3 +14,5 @@ Current implementation assumptions:
 - the product surface is the CLI daemon plus the Chromium extension
 - the session is the default agent isolation boundary, with an internal binding managing the dedicated window and tab group
 - browser reads, actions, and debug output share one context stack
+- public docs and user-facing help should use `session` and `tabs` as the top-level nouns, not `workspace`
+- new first-class CLI commands should extend the existing noun groups such as `session`, `tabs`, `page`, and `context`

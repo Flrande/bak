@@ -34,7 +34,14 @@ export const BAK_ERROR_TO_RPC_CODE: Record<BakErrorCodeValue, number> = {
   [BakErrorCodes.E_TIMEOUT]: 4080,
   [BakErrorCodes.E_INVALID_PARAMS]: -32602,
   [BakErrorCodes.E_INTERNAL]: -32603,
-  [BakErrorCodes.E_NOT_READY]: 4250
+  [BakErrorCodes.E_NOT_READY]: 4250,
+  [BakErrorCodes.E_EXECUTION]: 4260,
+  [BakErrorCodes.E_NOT_SERIALIZABLE]: 4261,
+  [BakErrorCodes.E_BODY_TOO_LARGE]: 4262,
+  [BakErrorCodes.E_RESPONSE_NOT_CAPTURED]: 4263,
+  [BakErrorCodes.E_CROSS_ORIGIN_BLOCKED]: 4264,
+  [BakErrorCodes.E_SELECTOR_AMBIGUOUS]: 4265,
+  [BakErrorCodes.E_DEBUGGER_NOT_ATTACHED]: 4266
 };
 
 export function ok<TResult>(id: JsonRpcId, result: TResult): JsonRpcSuccess<TResult> {

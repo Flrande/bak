@@ -8,6 +8,18 @@ interface QueuedTask {
   title: string;
 }
 
+declare global {
+  interface Window {
+    table_data?: Array<RowItem>;
+    market_data?: Record<string, unknown>;
+    top_table_row?: RowItem | null;
+    darkpool_json_data?: Record<string, unknown>;
+    latestNetworkData?: Record<string, unknown>;
+    latestNetworkTimestamp?: string;
+    frame_table_data?: Array<{ id: number; name: string }>;
+  }
+}
+
 const page = document.body.dataset.page;
 
 function initFormPage(): void {
@@ -74,6 +86,19 @@ function initTablePage(): void {
 
   let pendingDeleteId: number | null = null;
 
+  const syncRuntimeState = (): void => {
+    window.table_data = rows.map((row) => ({ ...row }));
+    window.top_table_row = rows[0] ? { ...rows[0] } : null;
+    window.market_data = {
+      QQQ: {
+        quotes: {
+          changePercent: 1.23,
+          asOf: '2026-03-05'
+        }
+      }
+    };
+  };
+
   const render = (): void => {
     tbody.innerHTML = '';
     for (const row of rows) {
@@ -89,6 +114,7 @@ function initTablePage(): void {
         modalText.textContent = `确认删除 #${pendingDeleteId}?`;
       });
     });
+    syncRuntimeState();
   };
 
   cancelDelete.addEventListener('click', () => {
@@ -333,13 +359,19 @@ function initNetworkPage(): void {
   const okButton = document.getElementById('fetch-ok') as HTMLButtonElement;
   const failButton = document.getElementById('fetch-fail') as HTMLButtonElement;
   const log = document.getElementById('network-log') as HTMLDivElement;
+  window.darkpool_json_data = {
+    updatedAt: '2026-03-05',
+    flows: [{ symbol: 'QQQ', side: 'buy', premium: 125000 }]
+  };
 
   const request = async (status: number): Promise<void> => {
     log.textContent = `fetch:${status}:pending`;
     console.info(`network request started: ${status}`);
     try {
       const response = await fetch(`/api/slow?delay=250&status=${status}`);
-      const payload = (await response.json()) as { status: number; ok: boolean };
+      const payload = (await response.json()) as { status: number; ok: boolean; generatedAt: string; symbol: string };
+      window.latestNetworkData = payload as unknown as Record<string, unknown>;
+      window.latestNetworkTimestamp = payload.generatedAt;
       log.textContent = `fetch:${payload.status}:${payload.ok ? 'ok' : 'fail'}`;
       if (payload.ok) {
         console.info(`network request ok: ${payload.status}`);

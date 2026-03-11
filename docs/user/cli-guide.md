@@ -2,6 +2,14 @@
 
 `bak` is the agent-facing entrypoint to the paired browser extension.
 
+## Command Map
+
+- `bak session ...` is the default agent surface for creating, repairing, focusing, resetting, and closing session-owned browser state plus tracked tabs.
+- `bak tabs ...` is the browser-wide inspection and recovery surface outside the session helpers.
+- `bak page`, `bak context`, `bak element`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` target the current session tab unless you override with `--tab-id`.
+- `bak call` covers protocol-only methods until they graduate into one of those noun groups.
+- Older `workspace` wording is obsolete in the public CLI surface.
+
 ## Start Every Session
 
 ```powershell
@@ -17,6 +25,15 @@ bak session ensure --session-id $sessionId --rpc-ws-port 17374
 bak session info --session-id $sessionId --rpc-ws-port 17374
 ```
 
+Common maintenance commands for the dedicated session window:
+
+```powershell
+bak session list --rpc-ws-port 17374
+bak session focus --session-id $sessionId --rpc-ws-port 17374
+bak session reset --session-id $sessionId --focus --rpc-ws-port 17374
+bak session close --session-id $sessionId --rpc-ws-port 17374
+```
+
 ## Open And Target Pages
 
 Use session helpers for agent-owned tabs:
@@ -26,6 +43,19 @@ bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-w
 bak session list-tabs --session-id $sessionId --rpc-ws-port 17374
 bak session get-active-tab --session-id $sessionId --rpc-ws-port 17374
 bak session set-active-tab --session-id $sessionId --tab-id 123 --rpc-ws-port 17374
+```
+
+## Direct Browser Tabs
+
+Use `bak tabs ...` when you need browser-wide tab inspection or manual recovery outside the session-owned window. Most day-to-day agent work should stay on `bak session ensure` and `bak session open-tab`.
+
+```powershell
+bak tabs list --rpc-ws-port 17374
+bak tabs active --rpc-ws-port 17374
+bak tabs get 123 --rpc-ws-port 17374
+bak tabs focus 123 --rpc-ws-port 17374
+bak tabs new --url "https://example.com" --active --rpc-ws-port 17374
+bak tabs close 123 --rpc-ws-port 17374
 ```
 
 Navigate and wait:
@@ -44,10 +74,23 @@ bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 bak page text --session-id $sessionId --rpc-ws-port 17374
 bak page dom --session-id $sessionId --rpc-ws-port 17374
 bak page a11y --session-id $sessionId --rpc-ws-port 17374
+bak page metrics --session-id $sessionId --rpc-ws-port 17374
+bak page viewport --session-id $sessionId --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "window.table_data?.length" --rpc-ws-port 17374
+bak page extract --session-id $sessionId --path "market_data.QQQ" --rpc-ws-port 17374
+bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
+bak page freshness --session-id $sessionId --rpc-ws-port 17374
 bak debug console --session-id $sessionId --limit 20 --rpc-ws-port 17374
-bak debug dump-state --session-id $sessionId --include-snapshot --rpc-ws-port 17374
+bak debug dump-state --session-id $sessionId --section dom visible-text network-summary --include-snapshot --rpc-ws-port 17374
 bak network list --session-id $sessionId --limit 20 --rpc-ws-port 17374
+bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
+bak network wait --session-id $sessionId --url-includes "/api/save" --rpc-ws-port 17374
+bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --rpc-ws-port 17374
+bak network clear --session-id $sessionId --rpc-ws-port 17374
 ```
+
+Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
 
 ## Interact With Elements
 
@@ -55,11 +98,14 @@ bak network list --session-id $sessionId --limit 20 --rpc-ws-port 17374
 
 ```powershell
 bak element click --session-id $sessionId --css "#submit" --rpc-ws-port 17374
+bak element get --session-id $sessionId --xpath "//button[@aria-label='Refresh']" --rpc-ws-port 17374
 bak element type --session-id $sessionId --css "#email" --value "me@example.com" --clear --rpc-ws-port 17374
 bak element select --session-id $sessionId --css "#role-select" --value admin --rpc-ws-port 17374
 bak element scroll --session-id $sessionId --css "#list" --dy 320 --rpc-ws-port 17374
 bak element drag-drop --session-id $sessionId --from-css "#drag-source" --to-css "#drop-target" --rpc-ws-port 17374
 ```
+
+The same surface also exposes `get`, `hover`, `double-click`, `right-click`, `check`, `uncheck`, `scroll-into-view`, `focus`, and `blur`.
 
 Keyboard, mouse, and file upload stay on the same target tab:
 
@@ -76,18 +122,43 @@ bak context get --session-id $sessionId --rpc-ws-port 17374
 bak context enter-frame --session-id $sessionId --frame-path "#demo-frame" --rpc-ws-port 17374
 bak context enter-shadow --session-id $sessionId --host-selectors "#shadow-host" --rpc-ws-port 17374
 bak page title --session-id $sessionId --rpc-ws-port 17374
+bak context exit-shadow --session-id $sessionId --levels 1 --rpc-ws-port 17374
+bak context exit-frame --session-id $sessionId --levels 1 --rpc-ws-port 17374
 bak context reset --session-id $sessionId --rpc-ws-port 17374
+```
+
+## Tables And Dynamic Data
+
+Use `bak table ...` when a page renders only part of a table or grid:
+
+```powershell
+bak table list --session-id $sessionId --rpc-ws-port 17374
+bak table schema --session-id $sessionId --table table-1 --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table table-1 --limit 100 --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table export --session-id $sessionId --table table-1 --out .\table.json --rpc-ws-port 17374
+```
+
+Use `bak inspect ...` for discovery and `bak capture ...` for offline artifacts:
+
+```powershell
+bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374
+bak inspect freshness --session-id $sessionId --patterns "20\d{2}-\d{2}-\d{2}" --rpc-ws-port 17374
+bak capture snapshot --session-id $sessionId --out .\session.json --rpc-ws-port 17374
+bak capture har --session-id $sessionId --out .\session.har --rpc-ws-port 17374
 ```
 
 ## Protocol-Only Methods
 
-Use `bak call` when the protocol exposes a method without a first-class CLI command.
+Use `bak call` when the protocol exposes a method without a first-class CLI command. These navigation helpers currently live there; if they become first-class later, expect them under `bak page ...` to match the existing noun-based CLI surface.
 
 Examples:
 
 ```powershell
 bak call --method page.reload --params "{}" --rpc-ws-port 17374
 bak call --method page.back --params "{}" --rpc-ws-port 17374
+bak call --method page.forward --params "{}" --rpc-ws-port 17374
 bak call --method page.scrollTo --params '{"x":0,"y":640}' --rpc-ws-port 17374
 ```
 
@@ -103,3 +174,22 @@ bak page wait --session-id $sessionId --mode text --value "Example Domain" --rpc
 bak element click --session-id $sessionId --css "a" --rpc-ws-port 17374
 bak debug dump-state --session-id $sessionId --include-snapshot --rpc-ws-port 17374
 ```
+
+## Dynamic Financial Or Data-Dense Flow
+
+When the visible page is incomplete, use the workflow below:
+
+```powershell
+bak page extract --session-id $sessionId --path "table_data" --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "window.market_data?.QQQ" --rpc-ws-port 17374
+bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
+bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
+bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table table-1 --all --rpc-ws-port 17374
+bak page freshness --session-id $sessionId --patterns "20\d{2}-\d{2}-\d{2}" "Today" "yesterday" --rpc-ws-port 17374
+bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak capture snapshot --session-id $sessionId --out .\tradytics-session.json --rpc-ws-port 17374
+```
+
+If the request mutates server state, add `--requires-confirm` to `bak page fetch` or `bak network replay`.

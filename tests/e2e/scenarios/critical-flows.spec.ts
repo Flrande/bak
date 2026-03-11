@@ -88,15 +88,17 @@ test.describe('scenario-level e2e', () => {
     }
     const { page, tabId } = await harness.openPage('/network.html');
     try {
+      const waitForSlowRequest = harness.rpcCall('network.waitFor', {
+        tabId,
+        urlIncludes: '/api/slow',
+        timeoutMs: 5000
+      }) as Promise<{ entry: { url: string } }>;
+
       await page.click('#fetch-ok');
       await page.click('#fetch-fail');
       await expect(page.locator('#network-log')).toContainText('fetch:503:');
 
-      const waited = (await harness.rpcCall('network.waitFor', {
-        tabId,
-        urlIncludes: '/api/slow',
-        timeoutMs: 5000
-      })) as { entry: { url: string } };
+      const waited = await waitForSlowRequest;
       expect(waited.entry.url).toContain('/api/slow');
       const list = (await harness.rpcCall('network.list', { tabId, limit: 10 })) as {
         entries: Array<{ id: string; status: number }>;

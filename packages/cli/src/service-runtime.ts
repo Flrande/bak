@@ -31,11 +31,15 @@ const SESSION_DYNAMIC_FORWARD_METHODS = new Set<MethodName>([
   'page.title',
   'page.url',
   'page.text',
+  'page.eval',
+  'page.extract',
+  'page.fetch',
   'page.dom',
   'page.accessibilityTree',
   'page.scrollTo',
   'page.viewport',
   'page.metrics',
+  'page.freshness',
   'element.hover',
   'element.doubleClick',
   'element.rightClick',
@@ -63,9 +67,20 @@ const SESSION_DYNAMIC_FORWARD_METHODS = new Set<MethodName>([
   'context.reset',
   'network.list',
   'network.get',
+  'network.search',
+  'network.replay',
   'network.waitFor',
   'network.clear',
-  'debug.dumpState'
+  'debug.dumpState',
+  'table.list',
+  'table.schema',
+  'table.rows',
+  'table.export',
+  'inspect.pageData',
+  'inspect.liveUpdates',
+  'inspect.freshness',
+  'capture.snapshot',
+  'capture.har'
 ]);
 
 const STATIC_METHODS = new Set<MethodName>([
@@ -112,7 +127,9 @@ const POLICY_ACTION_BY_METHOD: Partial<Record<MethodName, PolicyAction>> = {
   'element.select': 'element.select',
   'element.check': 'element.check',
   'element.uncheck': 'element.uncheck',
-  'file.upload': 'file.upload'
+  'file.upload': 'file.upload',
+  'page.fetch': 'page.fetch',
+  'network.replay': 'network.replay'
 };
 
 type SessionContextMethod =
@@ -359,19 +376,21 @@ export class BakService {
     }
     if (error instanceof BridgeError) {
       const bakCode =
-        error.code === 'E_TIMEOUT'
-          ? BakErrorCode.E_TIMEOUT
-          : error.code === 'E_NOT_FOUND'
-            ? BakErrorCode.E_NOT_FOUND
-            : error.code === 'E_INVALID_PARAMS'
-              ? BakErrorCode.E_INVALID_PARAMS
-              : error.code === 'E_PERMISSION'
-                ? BakErrorCode.E_PERMISSION
-                : error.code === 'E_NEED_USER_CONFIRM'
-                  ? BakErrorCode.E_NEED_USER_CONFIRM
-                  : error.code === 'E_NOT_READY'
-                    ? BakErrorCode.E_NOT_READY
-                    : BakErrorCode.E_INTERNAL;
+        error.code === BakErrorCode.E_TIMEOUT ||
+        error.code === BakErrorCode.E_NOT_FOUND ||
+        error.code === BakErrorCode.E_INVALID_PARAMS ||
+        error.code === BakErrorCode.E_PERMISSION ||
+        error.code === BakErrorCode.E_NEED_USER_CONFIRM ||
+        error.code === BakErrorCode.E_NOT_READY ||
+        error.code === BakErrorCode.E_EXECUTION ||
+        error.code === BakErrorCode.E_NOT_SERIALIZABLE ||
+        error.code === BakErrorCode.E_BODY_TOO_LARGE ||
+        error.code === BakErrorCode.E_RESPONSE_NOT_CAPTURED ||
+        error.code === BakErrorCode.E_CROSS_ORIGIN_BLOCKED ||
+        error.code === BakErrorCode.E_SELECTOR_AMBIGUOUS ||
+        error.code === BakErrorCode.E_DEBUGGER_NOT_ATTACHED
+          ? error.code
+          : BakErrorCode.E_INTERNAL;
       return new RpcError(error.message, -32603, bakCode, error.data);
     }
     return new RpcError(error instanceof Error ? error.message : String(error), -32603, BakErrorCode.E_INTERNAL);
@@ -430,6 +449,33 @@ export class BakService {
       domain: getDomain(active.url),
       path: getPathname(active.url)
     };
+  }
+
+  private resolveLocationFromUrl(url: string | undefined, fallback: { domain: string; path: string }): {
+    domain: string;
+    path: string;
+  } {
+    if (typeof url !== 'string' || url.trim().length === 0) {
+      return fallback;
+    }
+    return {
+      domain: getDomain(url),
+      path: getPathname(url)
+    };
+  }
+
+  private buildRequestPolicyLocator(action: PolicyAction, requestMethod: string, requestUrl: string | undefined): Locator {
+    const summary = requestUrl && requestUrl.trim().length > 0 ? requestUrl.trim() : '(unknown-url)';
+    return {
+      role: 'request',
+      name: `${requestMethod} ${summary}`,
+      text: `${action} ${requestMethod} ${summary}`
+    };
+  }
+
+  private isSafeRequestMethod(method: string): boolean {
+    const normalized = method.trim().toUpperCase();
+    return normalized === 'GET' || normalized === 'HEAD' || normalized === 'OPTIONS';
   }
 
   private appendPolicyAudit(
@@ -497,6 +543,64 @@ export class BakService {
     }
 
     return { requiresConfirm: decision.decision === 'requireConfirm' };
+  }
+
+  private async evaluatePolicyForRequest(
+    action: Extract<PolicyAction, 'page.fetch' | 'network.replay'>,
+    request: {
+      method?: string;
+      url?: string;
+      requiresConfirm?: boolean;
+    },
+    traceId: string,
+    target?: { tabId?: number }
+  ): Promise<void> {
+    const fallbackLocation = await this.activeLocation(target);
+    const requestMethod =
+      typeof request.method === 'string' && request.method.trim().length > 0
+        ? request.method.trim().toUpperCase()
+        : action === 'network.replay'
+          ? 'REPLAY'
+          : 'GET';
+    const location = this.resolveLocationFromUrl(request.url, fallbackLocation);
+    const locator = this.buildRequestPolicyLocator(action, requestMethod, request.url);
+    const evaluation = this.policyEngine.evaluateWithAudit({
+      action,
+      domain: location.domain,
+      path: location.path,
+      locator
+    });
+    this.appendPolicyAudit(traceId, action, locator, evaluation, location);
+    const decision = evaluation.decision;
+
+    if (decision.decision === 'deny') {
+      throw new RpcError(`Blocked by policy: ${decision.reason}`, 4030, BakErrorCode.E_PERMISSION, {
+        policyDecision: decision.decision,
+        policyReason: decision.reason,
+        policySource: decision.source,
+        policyRuleId: decision.ruleId,
+        requestMethod,
+        requestUrl: request.url ?? null
+      });
+    }
+
+    const requiresConfirm = decision.decision === 'requireConfirm' || !this.isSafeRequestMethod(requestMethod);
+    if (requiresConfirm && request.requiresConfirm !== true) {
+      throw new RpcError(
+        'Request requires explicit confirmation. Re-run with --requires-confirm.',
+        4090,
+        BakErrorCode.E_NEED_USER_CONFIRM,
+        {
+          action,
+          policyDecision: decision.decision,
+          policyReason: decision.reason,
+          policySource: decision.source,
+          policyRuleId: decision.ruleId,
+          requestMethod,
+          requestUrl: request.url ?? null
+        }
+      );
+    }
   }
 
   private async clickWithPolicy(
@@ -1157,7 +1261,49 @@ export class BakService {
       }
 
       const action = POLICY_ACTION_BY_METHOD[methodName];
-      if (action && methodName === 'element.dragDrop') {
+      if (action && methodName === 'page.fetch') {
+        await this.evaluatePolicyForRequest(
+          'page.fetch',
+          {
+            method: typeof forwardArgs.method === 'string' ? String(forwardArgs.method) : 'GET',
+            url: typeof forwardArgs.url === 'string' ? String(forwardArgs.url) : undefined,
+            requiresConfirm: forwardArgs.requiresConfirm === true
+          },
+          session.traceId,
+          { tabId: target.tabId }
+        );
+      } else if (action && methodName === 'network.replay') {
+        let replayMethod = 'REPLAY';
+        let replayUrl: string | undefined;
+        try {
+          const preview = asRecord(
+            await this.driver.rawRequest('network.get', {
+              tabId: target.tabId,
+              id: forwardArgs.id,
+              include: ['request']
+            })
+          );
+          const entry = asRecord(preview.entry);
+          if (typeof entry.method === 'string' && entry.method.trim().length > 0) {
+            replayMethod = entry.method;
+          }
+          if (typeof entry.url === 'string' && entry.url.trim().length > 0) {
+            replayUrl = entry.url;
+          }
+        } catch {
+          // Fall back to conservative confirmation when the captured request metadata is unavailable.
+        }
+        await this.evaluatePolicyForRequest(
+          'network.replay',
+          {
+            method: replayMethod,
+            url: replayUrl,
+            requiresConfirm: forwardArgs.requiresConfirm === true
+          },
+          session.traceId,
+          { tabId: target.tabId }
+        );
+      } else if (action && methodName === 'element.dragDrop') {
         const from = forwardArgs.from as Locator | undefined;
         const to = forwardArgs.to as Locator | undefined;
         if (!from || !to) {

@@ -1,0 +1,20 @@
+{
+  "name": "dynamic-data-v1",
+  "methods": [
+    "page.eval",
+    "page.extract",
+    "page.fetch",
+    "page.freshness",
+    "network.search",
+    "network.replay",
+    "table.list",
+    "table.schema",
+    "table.rows",
+    "table.export",
+    "inspect.pageData",
+    "inspect.liveUpdates",
+    "inspect.freshness",
+    "capture.snapshot",
+    "capture.har"
+  ]
+}

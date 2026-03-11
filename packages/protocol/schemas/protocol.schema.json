@@ -57,11 +57,15 @@
             "page.title",
             "page.url",
             "page.text",
+            "page.eval",
+            "page.extract",
+            "page.fetch",
             "page.dom",
             "page.accessibilityTree",
             "page.scrollTo",
             "page.viewport",
             "page.metrics",
+            "page.freshness",
             "element.click",
             "element.type",
             "element.scroll",
@@ -92,10 +96,21 @@
             "context.reset",
             "network.list",
             "network.get",
+            "network.search",
+            "network.replay",
             "network.waitFor",
             "network.clear",
             "debug.getConsole",
-            "debug.dumpState"
+            "debug.dumpState",
+            "table.list",
+            "table.schema",
+            "table.rows",
+            "table.export",
+            "inspect.pageData",
+            "inspect.liveUpdates",
+            "inspect.freshness",
+            "capture.snapshot",
+            "capture.har"
           ]
         },
         "params": {}
@@ -180,7 +195,14 @@
                     "E_TIMEOUT",
                     "E_INVALID_PARAMS",
                     "E_INTERNAL",
-                    "E_NOT_READY"
+                    "E_NOT_READY",
+                    "E_EXECUTION",
+                    "E_NOT_SERIALIZABLE",
+                    "E_BODY_TOO_LARGE",
+                    "E_RESPONSE_NOT_CAPTURED",
+                    "E_CROSS_ORIGIN_BLOCKED",
+                    "E_SELECTOR_AMBIGUOUS",
+                    "E_DEBUGGER_NOT_ATTACHED"
                   ]
                 }
               },
@@ -208,6 +230,9 @@
           "type": "string"
         },
         "css": {
+          "type": "string"
+        },
+        "xpath": {
           "type": "string"
         },
         "framePath": {

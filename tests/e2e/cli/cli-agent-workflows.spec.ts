@@ -176,10 +176,10 @@ test.describe('CLI agent workflows', () => {
       expect([0, 200]).toContain(Number(okEntry.status));
       expect([0, 503]).toContain(Number(failedEntry.status));
       if (Number(okEntry.status) === 0) {
-        expect(okEntry.kind).toBe('resource');
+        expect(['fetch', 'resource']).toContain(okEntry.kind);
       }
       if (Number(failedEntry.status) === 0) {
-        expect(failedEntry.kind).toBe('resource');
+        expect(['fetch', 'resource']).toContain(failedEntry.kind);
       }
       expect(fetched.entry.id).toBe(failedEntry.id);
       expect(fetched.entry.url).toContain('status=503');

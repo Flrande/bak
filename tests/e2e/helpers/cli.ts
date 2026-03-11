@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { methodStatusPath } from './method-status';
 import { cliDistPath, ensureE2ERuntimeFresh } from './runtime';
 
 const SESSION_METADATA_PATH = 'e2e-session.json';
-const DIRECT_SESSION_SCOPED_COMMANDS = new Set(['page', 'element', 'keyboard', 'mouse', 'file', 'context', 'network', 'debug']);
+const DIRECT_SESSION_SCOPED_COMMANDS = new Set(['page', 'element', 'keyboard', 'mouse', 'file', 'context', 'network', 'debug', 'table', 'inspect', 'capture']);
 const SESSION_SUBCOMMANDS_REQUIRING_ID = new Set(['info', 'close', 'ensure', 'open-tab', 'list-tabs', 'get-active-tab', 'set-active-tab', 'focus', 'reset']);
 
 export function cliBinPath(): string {
@@ -41,7 +42,8 @@ export function runCli<T = unknown>(args: string[], rpcPort: number, dataDir: st
     cwd: process.cwd(),
     env: {
       ...process.env,
-      BAK_DATA_DIR: dataDir
+      BAK_DATA_DIR: dataDir,
+      BAK_E2E_METHOD_STATUS_PATH: methodStatusPath()
     },
     encoding: 'utf8'
   });
