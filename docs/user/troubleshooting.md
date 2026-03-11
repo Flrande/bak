@@ -67,11 +67,13 @@ Actions:
 ## Need Shareable Diagnostics
 
 ```powershell
-bak export --out .\.bak-data\diag.zip
+$bakDataDir = Join-Path $env:LOCALAPPDATA 'bak'
+bak export --out (Join-Path $bakDataDir 'diag.zip')
 ```
 
 Include raw snapshots only when they are necessary:
 
 ```powershell
-bak export --include-snapshots --out .\.bak-data\diag-with-images.zip
+$bakDataDir = Join-Path $env:LOCALAPPDATA 'bak'
+bak export --include-snapshots --out (Join-Path $bakDataDir 'diag-with-images.zip')
 ```

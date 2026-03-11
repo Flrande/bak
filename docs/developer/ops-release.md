@@ -13,7 +13,8 @@ Useful runtime commands:
 
 ```powershell
 node packages/cli/dist/bin.js pair status
-node packages/cli/dist/bin.js export --out .\.bak-data\diag.zip
+$bakDataDir = Join-Path $env:LOCALAPPDATA 'bak'
+node packages/cli/dist/bin.js export --out (Join-Path $bakDataDir 'diag.zip')
 node packages/cli/dist/bin.js gc
 ```
 

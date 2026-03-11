@@ -1,4 +1,3 @@
-import { createMemoryStoreResolved } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { ExtensionBridge } from './drivers/extension-bridge.js';
 import { ExtensionDriver } from './drivers/extension-driver.js';
@@ -15,25 +14,14 @@ export interface BakDaemon {
 export async function startBakDaemon(port: number, rpcWsPort: number): Promise<BakDaemon> {
   const pairingStore = new PairingStore();
   const traceStore = new TraceStore();
-  const memoryResolution = createMemoryStoreResolved();
-  const memoryStore = memoryResolution.store;
-  if (memoryResolution.fallbackReason) {
-    process.stderr.write(
-      `[bak] memory backend fallback: requested=${memoryResolution.requestedBackend} actual=${memoryResolution.backend} reason=${memoryResolution.fallbackReason}\n`
-    );
-  }
 
   const bridge = new ExtensionBridge(port, pairingStore);
   await bridge.start();
 
   const driver = new ExtensionDriver(bridge);
   const heartbeatIntervalMs = readEnvInt('BAK_HEARTBEAT_MS', 10_000);
-  const service = new BakService(driver, pairingStore, traceStore, memoryStore, {
+  const service = new BakService(driver, pairingStore, traceStore, {
     intervalMs: heartbeatIntervalMs
-  }, {
-    requestedBackend: memoryResolution.requestedBackend,
-    backend: memoryResolution.backend,
-    fallbackReason: memoryResolution.fallbackReason
   });
   service.seedSessionIfNeeded();
   service.startHeartbeat();
@@ -43,7 +31,6 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
 
   const stop = async (): Promise<void> => {
     service.stopHeartbeat();
-    memoryStore.close?.();
     await rpcServer.stop();
     await bridge.stop();
   };

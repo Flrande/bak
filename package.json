@@ -14,7 +14,7 @@
     "test": "pnpm test:unit && pnpm test:e2e",
     "test:unit": "vitest run",
     "test:e2e": "pnpm build && pnpm test:e2e:full",
-    "test:e2e:critical": "pnpm build && playwright test tests/e2e/scenarios tests/e2e/memory --reporter=line",
+    "test:e2e:critical": "pnpm build && playwright test tests/e2e/scenarios --reporter=line",
     "test:e2e:full": "pnpm build && playwright test --reporter=line --output=test-results",
     "e2e:matrix": "pwsh -NoLogo -NoProfile -File scripts/e2e/generate-matrix.ps1",
     "release:report": "pwsh -NoLogo -NoProfile -File scripts/release/generate-capability-report.ps1",

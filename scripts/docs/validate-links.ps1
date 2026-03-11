@@ -36,7 +36,6 @@ $stalePatterns = @(
   @{ Pattern = '(?i)\bProtocol v2\b'; Label = 'older protocol branding' }
   @{ Pattern = '(?i)PROTOCOL_V2'; Label = 'archived protocol reference' }
   @{ Pattern = '(?i)\bold CLI version\b'; Label = 'old-version troubleshooting' }
-  @{ Pattern = '(?i)\bmemory migrate\b'; Label = 'removed memory migrate command' }
   @{ Pattern = '(?i)\bjson backend\b'; Label = 'non-current backend wording' }
   @{ Pattern = '(?i)\bbackend is `json`\b'; Label = 'non-current backend statement' }
   @{ Pattern = '(?i)\bremoved `v2`\b'; Label = 'older implementation narrative' }

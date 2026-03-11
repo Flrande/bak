@@ -37,11 +37,10 @@ pnpm -w test:e2e:full
 
 ## Upgrade checklist
 
-1. Read `docs/PROTOCOL_V2.md` for method/result changes.
+1. Read `docs/PROTOCOL.md` for method/result changes.
 2. Run `bak doctor` after upgrade.
 3. Keep existing pairing token or rotate with `bak pair`.
-4. If enabling SQLite backend, run `bak memory migrate` and verify with `bak memory export --backend sqlite`.
-5. Publish with synced artifacts:
+4. Publish with synced artifacts:
    - `docs/CAPABILITY_MATRIX.md`
    - `docs/E2E_MATRIX.md`
    - `docs/RELEASE_CAPABILITY_REPORT.md`

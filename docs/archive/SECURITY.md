@@ -37,7 +37,7 @@ This legacy page is kept for compatibility. Prefer [docs/developer/security-priv
 - no full network interception in v1
 
 7. Policy engine + audit (MVP)
-- CLI loads local policy file `.bak-data/.bak-policy.json` (override with `BAK_POLICY_PATH`)
+- CLI loads the local policy file from the bak data directory (on Windows by default: `Join-Path (Join-Path $env:LOCALAPPDATA 'bak') '.bak-policy.json'`; override with `BAK_POLICY_PATH`)
 - decisions: `allow | deny | requireConfirm`
 - when multiple rules match, most conservative decision wins (`deny > requireConfirm > allow`)
 - default conservative behavior:
@@ -81,9 +81,8 @@ Example (`policy.decision` params excerpt):
 ## Known limitations / risks (v1)
 
 - Keyword risk detector can have false positives/false negatives.
-- Pair token stored locally in plain text under `.bak-data/pairing.json`.
+- Pair token stored locally in plain text under the bak data directory (on Windows by default: `Join-Path (Join-Path $env:LOCALAPPDATA 'bak') 'pairing.json'`).
 - Extension popup currently does not provide rotate/revoke buttons; use CLI commands.
-- Memory backend (`memory.sqlite`) is local-only but not encrypted at rest.
 - Healing candidate ranking is heuristic and can select wrong elements on dense UIs.
 - Rich text debug mode can still capture non-secret page copy; enable only when needed.
 
@@ -91,7 +90,7 @@ Example (`policy.decision` params excerpt):
 
 - Keep daemon bound to localhost only (default behavior).
 - Rotate token regularly (`bak pair create`) and re-pair extension.
-- Keep `.bak-data` out of source control.
+- Keep the bak data directory out of source control when you override it into a repository.
 - Run `bak gc` regularly to enforce local retention and reduce stale artifacts.
 - Use policy file for domain/path/action guardrails:
 
@@ -113,7 +112,6 @@ Example (`policy.decision` params excerpt):
 
 - Require human supervision for destructive operations.
 - Keep rich-text debug capture disabled unless investigating locator failures.
-- For production-hardening, replace file memory with encrypted store and add stronger auth.
 
 ## Explicit non-goals
 

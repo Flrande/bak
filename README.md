@@ -5,7 +5,7 @@
 - a local CLI daemon
 - a Chromium extension
 - an explicit browser workspace for agent-owned tabs
-- explicit route and procedure memory
+- explicit page, element, and context control
 
 ## Install
 
@@ -81,7 +81,6 @@ bak page snapshot --include-base64 --rpc-ws-port 17374
 
 - Fast start: [docs/user/quickstart.md](./docs/user/quickstart.md)
 - Daily CLI usage: [docs/user/cli-guide.md](./docs/user/cli-guide.md)
-- Memory workflows: [docs/user/memory-guide.md](./docs/user/memory-guide.md)
 - Troubleshooting: [docs/user/troubleshooting.md](./docs/user/troubleshooting.md)
 - Contributor docs: [docs/developer/README.md](./docs/developer/README.md)
 - Protocol and reference: [docs/PROTOCOL.md](./docs/PROTOCOL.md), [docs/reference/README.md](./docs/reference/README.md)

@@ -22,7 +22,7 @@ Use this skill when browser work should happen through `bak` instead of a direct
 1. Health-check the runtime.
 2. If needed, follow the setup flow in [references/setup.md](./references/setup.md).
 3. Ensure the workspace and open or target the correct tab.
-4. Use page, element, keyboard, mouse, file, context, debug, network, and memory commands as needed.
+4. Use page, element, keyboard, mouse, file, context, debug, and network commands as needed.
 5. Fall back to [references/commands.md](./references/commands.md) for command recipes and protocol-only examples.
 
 ## When To Stop

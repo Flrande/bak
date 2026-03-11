@@ -43,22 +43,6 @@ describe('cli help output', () => {
     expect(help).toContain('bak page snapshot --include-base64 --rpc-ws-port 17374');
   });
 
-  it('documents memory help with explicit sqlite-backed workflow', () => {
-    const help = runHelp(['memory', '--help']);
-
-    expect(help).toContain('Memory is explicit');
-    expect(help).toContain('The current backend is sqlite');
-    expect(help).toContain('bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374');
-  });
-
-  it('documents memory plan creation examples', () => {
-    const help = runHelp(['memory', 'plan', 'create', '--help']);
-
-    expect(help).toContain('Create an execution plan from one memory or a route plus procedure pair');
-    expect(help).toContain('assist is the safest default');
-    expect(help).toContain('bak memory plan create --route-memory-id mem_route --procedure-memory-id mem_proc --param accountName=Acme --rpc-ws-port 17374');
-  });
-
   it('documents bak call as the fallback for protocol-only methods', () => {
     const help = runHelp(['call', '--help']);
 

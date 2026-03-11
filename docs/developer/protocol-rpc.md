@@ -22,7 +22,6 @@ Use first-class CLI commands for common workflows such as:
 - workspace creation and tab targeting
 - page reads and snapshots
 - element actions
-- explicit memory workflows
 
 Use `bak call` when the protocol has a method without a dedicated CLI command.
 
@@ -32,5 +31,5 @@ bak call --method page.reload --params "{}" --rpc-ws-port 17374
 
 ## Health And Compatibility
 
-- `session.info` reports protocol version, compatible versions, extension connection state, active tab summary, context stack, and memory backend status
+- `session.info` reports protocol version, compatible versions, extension connection state, active tab summary, and context stack
 - `bak doctor` surfaces protocol and version drift as warnings instead of silent failures

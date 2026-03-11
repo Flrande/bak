@@ -27,13 +27,3 @@ bak call --method page.reload --params "{}" --rpc-ws-port 17374
 bak call --method page.back --params "{}" --rpc-ws-port 17374
 bak call --method page.scrollTo --params '{"x":0,"y":640}' --rpc-ws-port 17374
 ```
-
-## Memory
-
-```powershell
-bak memory capture begin --goal "return to billing settings" --rpc-ws-port 17374
-bak memory draft list --rpc-ws-port 17374
-bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374
-bak memory plan create --memory-id <memoryId> --mode assist --rpc-ws-port 17374
-bak memory execute <planId> --rpc-ws-port 17374
-```

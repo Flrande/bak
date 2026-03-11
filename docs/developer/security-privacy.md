@@ -10,7 +10,7 @@
 
 Policy file:
 
-- default path: `.bak-data/.bak-policy.json`
+- default path on Windows: `Join-Path (Join-Path $env:LOCALAPPDATA 'bak') '.bak-policy.json'`
 - override: `BAK_POLICY_PATH`
 
 ## Privacy Defaults
@@ -18,12 +18,11 @@ Policy file:
 - snapshot extraction avoids raw `input.value` collection for element naming
 - traces and snapshot metadata are redacted before persistence
 - `bak export` excludes raw snapshot image folders unless `--include-snapshots`
-- memory capture is explicit and durable memories are created only after draft promotion
 - typed input is redacted in traces by default
 
 ## Operational Guidance
 
-- keep `.bak-data` out of source control
+- keep the bak data directory out of source control when you override it into a repository
 - rotate pairing tokens when reconnecting a browser profile
 - use short retention windows and run `bak gc`
 - enable richer debug capture only for active troubleshooting sessions

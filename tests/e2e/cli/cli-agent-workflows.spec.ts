@@ -13,35 +13,6 @@ function must<T>(value: T | null | undefined, message: string): T {
   return value;
 }
 
-function captureAndPromoteActionMemory(tabId: number, goal: string, actionCss: string): { id: string; kind: string } {
-  if (!harness) {
-    throw new Error('Harness not initialized');
-  }
-
-  runCli(['memory', 'capture', 'begin', '--goal', goal, '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir);
-  runCli(
-    ['memory', 'capture', 'mark', '--tab-id', String(tabId), '--label', 'run drift action', '--role', 'procedure'],
-    harness.rpcPort,
-    harness.dataDir
-  );
-  runCli(['element', 'click', '--tab-id', String(tabId), '--css', actionCss], harness.rpcPort, harness.dataDir);
-  const ended = runCli<{ drafts: Array<{ id: string; kind: string }> }>(
-    ['memory', 'capture', 'end', '--tab-id', String(tabId), '--outcome', 'completed'],
-    harness.rpcPort,
-    harness.dataDir
-  );
-  const procedureDraft =
-    ended.drafts.find((draft) => draft.kind === 'procedure')
-    ?? ended.drafts.find((draft) => draft.kind === 'composite')
-    ?? ended.drafts[0];
-  const promoted = runCli<{ memory: { id: string } }>(
-    ['memory', 'draft', 'promote', must(procedureDraft, 'Expected a draft carrying the captured action').id],
-    harness.rpcPort,
-    harness.dataDir
-  );
-  return { id: promoted.memory.id, kind: must(procedureDraft, 'Expected promoted draft').kind };
-}
-
 test.describe('CLI agent workflows', () => {
   test.beforeAll(async () => {
     harness = await createHarness();
@@ -251,93 +222,13 @@ test.describe('CLI agent workflows', () => {
     }
   });
 
-  test('captures a drift-prone procedure, applies a patch suggestion, and reruns successfully through the CLI', async () => {
-    if (!harness) {
-      throw new Error('Harness not initialized');
-    }
-
-    const { page, tabId } = await harness.openPage('/controlled.html');
-    try {
-      const memory = captureAndPromoteActionMemory(tabId, 'run drift action', '#action-primary');
-      await expect(page.locator('#action-result')).toContainText('result:primary@');
-
-      runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#swap-action'], harness.rpcPort, harness.dataDir);
-      await expect(page.locator('#action-variant')).toContainText('secondary');
-
-      const plan = runCli<{ plan: { id: string } }>(
-        ['memory', 'plan', 'create', '--memory-id', memory.id, '--tab-id', String(tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const failedRun = runCli<{ run: { status: string; patchSuggestionIds: string[] } }>(
-        ['memory', 'execute', plan.plan.id, '--tab-id', String(tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const patchId = must(failedRun.run.patchSuggestionIds[0], 'Expected a patch suggestion');
-      expect(failedRun.run.status).toBe('failed');
-
-      const patch = runCli<{ patch: { id: string; status: string; summary: string } }>(['memory', 'patch', 'show', patchId], harness.rpcPort, harness.dataDir);
-      expect(patch.patch.status).toBe('open');
-      expect(patch.patch.summary).toMatch(/drift/i);
-
-      const applied = runCli<{ patch: { status: string }; revision: { id: string } }>(
-        ['memory', 'patch', 'apply', patchId, '--note', 'accept drift repair'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      expect(applied.patch.status).toBe('applied');
-      expect(applied.revision.id).toBeTruthy();
-
-      const rerunPlan = runCli<{ plan: { id: string } }>(
-        ['memory', 'plan', 'create', '--memory-id', memory.id, '--tab-id', String(tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const rerun = runCli<{ run: { status: string } }>(
-        ['memory', 'execute', rerunPlan.plan.id, '--tab-id', String(tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      expect(rerun.run.status).toBe('completed');
-      await expect(page.locator('#action-result')).toContainText('result:secondary@');
-    } finally {
-      await page.close();
-    }
-  });
-
-  test('surfaces CLI failure paths for patch rejection, invalid locators, and request timeouts', async () => {
+  test('surfaces CLI failure paths for invalid locators and request timeouts', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
 
     const controlled = await harness.openPage('/controlled.html');
     try {
-      const memory = captureAndPromoteActionMemory(controlled.tabId, 'reject drift patch', '#action-primary');
-      runCli(['element', 'click', '--tab-id', String(controlled.tabId), '--css', '#swap-action'], harness.rpcPort, harness.dataDir);
-
-      const plan = runCli<{ plan: { id: string } }>(
-        ['memory', 'plan', 'create', '--memory-id', memory.id, '--tab-id', String(controlled.tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const failedRun = runCli<{ run: { patchSuggestionIds: string[] } }>(
-        ['memory', 'execute', plan.plan.id, '--tab-id', String(controlled.tabId), '--mode', 'auto'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      const patchId = must(failedRun.run.patchSuggestionIds[0], 'Expected a patch suggestion');
-
-      const rejected = runCli<{ patch: { status: string } }>(
-        ['memory', 'patch', 'reject', patchId, '--reason', 'unsafe patch'],
-        harness.rpcPort,
-        harness.dataDir
-      );
-      expect(rejected.patch.status).toBe('rejected');
-
-      const patchApplyError = runCliFailure(['memory', 'patch', 'apply', patchId], harness.rpcPort, harness.dataDir);
-      expect(patchApplyError).toMatch(/already resolved/i);
-
       const clickError = runCliFailure(['element', 'click', '--tab-id', String(controlled.tabId), '--css', '#missing-node'], harness.rpcPort, harness.dataDir);
       expect(clickError).toMatch(/not found/i);
     } finally {

@@ -13,7 +13,7 @@ test.describe('CLI smoke coverage', () => {
     await harness?.dispose();
   });
 
-  test('exercises first-class browser and memory commands for the new route-memory flow', async () => {
+  test('exercises first-class browser commands for a simple navigation flow', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -30,12 +30,10 @@ test.describe('CLI smoke coverage', () => {
       };
       expect(snapshot.elementCount).toBeGreaterThan(0);
 
-      const started = runCli(
-        ['memory', 'capture', 'begin', '--goal', 'go to next page', '--tab-id', String(tabId)],
-        harness.rpcPort,
-        harness.dataDir
-      ) as { captureSession: { id: string } };
-      expect(started.captureSession.id).toBeTruthy();
+      const pageTitle = runCli(['page', 'title', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir) as {
+        title: string;
+      };
+      expect(pageTitle.title).toContain('Form');
 
       runCli(['element', 'click', '--tab-id', String(tabId), '--css', '#next-page'], harness.rpcPort, harness.dataDir);
       runCli(
@@ -45,56 +43,14 @@ test.describe('CLI smoke coverage', () => {
       );
       await expect(page).toHaveURL(/table\.html/);
 
-      const ended = runCli(
-        ['memory', 'capture', 'end', '--tab-id', String(tabId), '--outcome', 'completed'],
-        harness.rpcPort,
-        harness.dataDir
-      ) as { drafts: Array<{ id: string; kind: string }> };
-      const routeDraft = ended.drafts.find((draft) => draft.kind === 'route');
-      expect(routeDraft).toBeTruthy();
-
-      const promoted = routeDraft
-        ? (runCli(['memory', 'draft', 'promote', routeDraft.id], harness.rpcPort, harness.dataDir) as { memory: { id: string } })
-        : null;
-      expect(promoted?.memory.id).toBeTruthy();
-
-      const search = runCli(
-        ['memory', 'search', '--goal', 'go to next page', '--url', 'http://127.0.0.1:4173/table.html', '--limit', '5'],
-        harness.rpcPort,
-        harness.dataDir
-      ) as { candidates: Array<{ memoryId: string }> };
-      expect(search.candidates.some((candidate) => candidate.memoryId === promoted?.memory.id)).toBe(true);
-
-      const explain = promoted
-        ? (runCli(['memory', 'explain', promoted.memory.id, '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir) as {
-            explanation: { status: string; checks: unknown[] };
-          })
-        : null;
-      expect(explain?.explanation.checks.length).toBeGreaterThan(0);
-
-      const plan = promoted
-        ? (runCli(
-            ['memory', 'plan', 'create', '--memory-id', promoted.memory.id, '--tab-id', String(tabId), '--mode', 'dry-run'],
-            harness.rpcPort,
-            harness.dataDir
-          ) as { plan: { id: string; kind: string } })
-        : null;
-      expect(plan?.plan.kind).toBe('route');
-
-      const run = plan
-        ? (runCli(['memory', 'execute', plan.plan.id, '--tab-id', String(tabId), '--mode', 'dry-run'], harness.rpcPort, harness.dataDir) as {
-            run: { id: string; status: string; steps: Array<{ status: string }> };
-          })
-        : null;
-      expect(run?.run.status).toBe('completed');
-      expect(run?.run.steps.every((step) => step.status === 'dry-run')).toBe(true);
-
-      const runs = promoted
-        ? (runCli(['memory', 'run', 'list', '--memory-id', promoted.memory.id], harness.rpcPort, harness.dataDir) as {
-            runs: Array<{ id: string }>;
-          })
-        : null;
-      expect(runs?.runs.some((item) => item.id === run?.run.id)).toBe(true);
+      const nextPageUrl = runCli(['page', 'url', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir) as {
+        url: string;
+      };
+      const nextPageTitle = runCli(['page', 'title', '--tab-id', String(tabId)], harness.rpcPort, harness.dataDir) as {
+        title: string;
+      };
+      expect(nextPageUrl.url).toContain('/table.html');
+      expect(nextPageTitle.title).toContain('Table');
     } finally {
       await page.close();
     }

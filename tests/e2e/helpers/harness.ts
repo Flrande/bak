@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, expect, type BrowserContext, type Page } from '@playwright/test';
 import WebSocket from 'ws';
+import { PROTOCOL_VERSION } from '../../../packages/protocol/src/types.js';
 import { cliDistPath, ensureE2ERuntimeFresh, extensionDistPath } from './runtime';
 
 interface RpcResponse {
@@ -19,17 +20,8 @@ interface RpcResponse {
 }
 
 const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'page.reload']);
-const SLOW_MEMORY_METHODS = new Set([
-  'memory.capture.end',
-  'memory.memories.search',
-  'memory.memories.explain',
-  'memory.plans.create',
-  'memory.plans.execute',
-  'memory.patches.apply'
-]);
 const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
 const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
-const SLOW_MEMORY_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_MEMORY_RPC_TIMEOUT_MS', 60_000);
 
 function parseTimeoutEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -47,9 +39,6 @@ function resolveRpcTimeoutMs(method: string, params: Record<string, unknown>): n
   let timeoutMs = DEFAULT_RPC_TIMEOUT_MS;
   if (NAVIGATION_METHODS.has(method)) {
     timeoutMs = Math.max(timeoutMs, NAVIGATION_RPC_TIMEOUT_MS);
-  }
-  if (SLOW_MEMORY_METHODS.has(method)) {
-    timeoutMs = Math.max(timeoutMs, SLOW_MEMORY_RPC_TIMEOUT_MS);
   }
 
   const requested = params.timeoutMs;
@@ -352,7 +341,7 @@ export async function createHarness(): Promise<E2EHarness> {
             connectionState: string;
             protocolVersion: string;
           };
-          return info.extensionConnected && info.connectionState === 'connected' && info.protocolVersion === 'v3';
+          return info.extensionConnected && info.connectionState === 'connected' && info.protocolVersion === PROTOCOL_VERSION;
         },
         { timeout: 40_000 }
       )

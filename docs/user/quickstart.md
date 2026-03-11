@@ -21,7 +21,7 @@ Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
 pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 ```
 
-The launcher installs the CLI and extension packages, generates a pairing token, starts the daemon when needed, and writes `.bak-data/bootstrap-result.json`.
+The launcher installs the CLI and extension packages, generates a pairing token, starts the daemon when needed, and writes `bootstrap-result.json` under the bak data directory. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`. Pass `-DataDir` to the bootstrap script if you want a different location.
 
 ## 2. Manual Setup
 

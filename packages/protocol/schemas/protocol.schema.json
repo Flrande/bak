@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bak.local/schemas/protocol-v3.json",
-  "title": "Browser Agent Kit Protocol v3",
+  "$id": "https://bak.local/schemas/protocol.json",
+  "title": "Browser Agent Kit Protocol",
   "type": "object",
   "definitions": {
     "jsonRpcRequest": {
@@ -69,28 +69,7 @@
             "network.waitFor",
             "network.clear",
             "debug.getConsole",
-            "debug.dumpState",
-            "memory.capture.begin",
-            "memory.capture.mark",
-            "memory.capture.end",
-            "memory.drafts.list",
-            "memory.drafts.get",
-            "memory.drafts.promote",
-            "memory.drafts.discard",
-            "memory.memories.search",
-            "memory.memories.get",
-            "memory.memories.explain",
-            "memory.memories.deprecate",
-            "memory.memories.delete",
-            "memory.plans.create",
-            "memory.plans.get",
-            "memory.plans.execute",
-            "memory.runs.list",
-            "memory.runs.get",
-            "memory.patches.list",
-            "memory.patches.get",
-            "memory.patches.apply",
-            "memory.patches.reject"
+            "debug.dumpState"
           ]
         },
         "params": {}
@@ -216,10 +195,8 @@
         "protocolVersion",
         "compatibleProtocolVersions",
         "extensionVersion",
-        "memoryBackend",
         "activeTab",
         "context",
-        "captureSessionId",
         "heartbeatStale",
         "heartbeatAgeMs",
         "staleAfterMs",
@@ -239,22 +216,12 @@
         "extensionConnected": { "type": "boolean" },
         "connectionState": { "type": "string", "enum": ["connecting", "connected", "disconnected"] },
         "connectionReason": { "type": ["string", "null"] },
-        "protocolVersion": { "type": "string", "const": "v3" },
+        "protocolVersion": { "type": "string", "const": "v4" },
         "compatibleProtocolVersions": {
           "type": "array",
-          "items": { "type": "string", "enum": ["v3"] }
+          "items": { "type": "string", "enum": ["v4"] }
         },
         "extensionVersion": { "type": ["string", "null"] },
-        "memoryBackend": {
-          "type": "object",
-          "required": ["requestedBackend", "backend", "fallbackReason"],
-          "properties": {
-            "requestedBackend": { "type": "string", "enum": ["sqlite"] },
-            "backend": { "type": "string", "enum": ["sqlite"] },
-            "fallbackReason": { "type": ["string", "null"] }
-          },
-          "additionalProperties": false
-        },
         "activeTab": {
           "type": ["object", "null"],
           "required": ["id", "title", "url"],
@@ -274,7 +241,6 @@
           },
           "additionalProperties": false
         },
-        "captureSessionId": { "type": ["string", "null"] },
         "heartbeatStale": { "type": "boolean" },
         "heartbeatAgeMs": { "type": ["number", "null"] },
         "staleAfterMs": { "type": "number" },

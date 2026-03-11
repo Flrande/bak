@@ -4,7 +4,7 @@
 
 Current runtime constant:
 
-- `PROTOCOL_VERSION = "v3"`
+- `PROTOCOL_VERSION` in `@flrande/bak-protocol`
 
 Schema artifact:
 
@@ -62,27 +62,14 @@ Failure:
 - `context.*`
 - `network.*`
 - `debug.*`
-- `memory.*`
 
 ## Runtime Semantics
 
 - default targeting resolves in this order: explicit `tabId`, explicit `workspaceId`, current tab in an existing workspace, browser active tab if no workspace exists
 - the workspace is a dedicated browser window plus a dedicated tab group
 - actions, reads, and debug output share the same effective frame and shadow context
-- `page.url`, `page.title`, DOM summaries, debug state, and memory fingerprints use the active document for the current context
+- `page.url`, `page.title`, DOM summaries, and debug state use the active document for the current context
 - `session.info.activeTab` is the top-level tab summary when you need tab metadata instead of the current frame document
-
-## Memory Semantics
-
-- capture is single-active
-- search returns candidates only
-- explain reports applicability and rationale
-- plan creation binds execution parameters and checks current-page fit
-- route memories model how to get to a feature
-- procedure memories model what to do after arrival
-- composite memories model a reusable execution composition
-- patch suggestions are explicit review items that create new revisions only when applied
-- the default plan mode is `assist`
 
 ## CLI Mapping
 

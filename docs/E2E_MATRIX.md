@@ -32,27 +32,6 @@
 | keyboard.hotkey | M023-S | M023-F | true | NotRun |
 | keyboard.press | M024-S | M024-F | true | NotRun |
 | keyboard.type | M025-S | M025-F | true | NotRun |
-| memory.capture.begin | M026-S | M026-F | true | NotRun |
-| memory.capture.end | M027-S | M027-F | true | NotRun |
-| memory.capture.mark | M028-S | M028-F | true | NotRun |
-| memory.drafts.discard | M029-S | M029-F | true | NotRun |
-| memory.drafts.get | M030-S | M030-F | true | NotRun |
-| memory.drafts.list | M031-S | M031-F | true | NotRun |
-| memory.drafts.promote | M032-S | M032-F | true | NotRun |
-| memory.memories.delete | M033-S | M033-F | true | NotRun |
-| memory.memories.deprecate | M034-S | M034-F | true | NotRun |
-| memory.memories.explain | M035-S | M035-F | true | NotRun |
-| memory.memories.get | M036-S | M036-F | true | NotRun |
-| memory.memories.search | M037-S | M037-F | true | NotRun |
-| memory.patches.apply | M038-S | M038-F | true | NotRun |
-| memory.patches.get | M039-S | M039-F | true | NotRun |
-| memory.patches.list | M040-S | M040-F | true | NotRun |
-| memory.patches.reject | M041-S | M041-F | true | NotRun |
-| memory.plans.create | M042-S | M042-F | true | NotRun |
-| memory.plans.execute | M043-S | M043-F | true | NotRun |
-| memory.plans.get | M044-S | M044-F | true | NotRun |
-| memory.runs.get | M045-S | M045-F | true | NotRun |
-| memory.runs.list | M046-S | M046-F | true | NotRun |
 | mouse.click | M047-S | M047-F | true | NotRun |
 | mouse.move | M048-S | M048-F | true | NotRun |
 | mouse.wheel | M049-S | M049-F | true | NotRun |
@@ -84,6 +63,6 @@
 | tabs.list | M075-S | M075-F | true | NotRun |
 | tabs.new | M076-S | M076-F | true | NotRun |
 
-Total methods: 76
+Total methods: 55
 Missing mappings: 0
 

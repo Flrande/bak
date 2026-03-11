@@ -29,9 +29,6 @@ function Invoke-BakRpc {
 Write-Host 'Creating session...'
 Invoke-BakRpc -Method 'session.create' -Params @{ clientName = 'demo-script' } | Out-Null
 
-Write-Host 'Start record...'
-Invoke-BakRpc -Method 'memory.recordStart' -Params @{ intent = 'fill and submit form in test site' } | Out-Null
-
 Write-Host 'Navigate to form page...'
 Invoke-BakRpc -Method 'page.goto' -Params @{ url = $BaseUrl } | Out-Null
 Start-Sleep -Milliseconds 600
@@ -47,14 +44,5 @@ Invoke-BakRpc -Method 'element.click' -Params @{ locator = @{ css = '#save-btn' 
 Write-Host 'Capture snapshot...'
 $snapshot = Invoke-BakRpc -Method 'page.snapshot' -Params @{}
 $snapshot
-
-Write-Host 'Stop record and auto-extract skill...'
-$stop = Invoke-BakRpc -Method 'memory.recordStop' -Params @{ outcome = 'success' }
-$stop
-
-if ($stop.skillId) {
-  Write-Host "Run extracted skill: $($stop.skillId)"
-  Invoke-BakRpc -Method 'memory.skills.run' -Params @{ id = $stop.skillId; params = @{ param_1 = 'Bak Demo 2'; param_2 = 'demo2@example.com'; param_3 = 'rerun note' } }
-}
 
 Write-Host 'Done.'

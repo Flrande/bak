@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { callRpc } from './rpc/client.js';
@@ -7,10 +7,9 @@ import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
 import { runGc } from './gc.js';
 import { dragDropLocatorsFromOptions, hasLocatorOptions, locatorFromOptions, parseFiniteNumber, parseNonNegativeInt, parsePositiveInt } from './cli-args.js';
-import { exportMemory, createMemoryStoreResolved } from './memory/factory.js';
 import { PairingStore } from './pairing-store.js';
 import { startBakDaemon } from './server.js';
-import { readEnvInt, resolveDataDir } from './utils.js';
+import { readEnvInt } from './utils.js';
 
 const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
 const DEFAULT_RPC_PORT = readEnvInt('BAK_RPC_WS_PORT', DEFAULT_PORT + 1);
@@ -26,18 +25,6 @@ function parseJson(value: string | undefined, fallback: Record<string, unknown> 
     return fallback;
   }
   return JSON.parse(value) as Record<string, unknown>;
-}
-
-function parseKv(values: string[]): Record<string, string> {
-  const output: Record<string, string> = {};
-  for (const value of values) {
-    const [key, ...rest] = value.split('=');
-    if (!key || rest.length === 0) {
-      continue;
-    }
-    output[key] = rest.join('=');
-  }
-  return output;
 }
 
 function parseRpcPort(options: { rpcWsPort?: string }): number {
@@ -189,7 +176,7 @@ addStructuredHelp(program, {
   notes: [
     'All commands print machine-friendly JSON.',
     'Use --tab-id or --workspace-id to override the default target.',
-    'Once a workspace exists, browser and memory commands prefer its current tab.',
+    'Once a workspace exists, browser commands prefer its current tab.',
     'Use bak call when the protocol exposes a method without a dedicated CLI command.'
   ],
   examples: [
@@ -293,7 +280,7 @@ addStructuredHelp(
     setInterval(() => {
       const status = daemon.service.status();
       process.stderr.write(
-        `[bak] paired=${status.paired} state=${status.connectionState} extensionConnected=${status.extensionConnected} heartbeatStale=${status.heartbeatStale} capture=${status.captureSessionId ?? 'none'} protocol=${status.protocolVersion} memory=${status.memoryBackend.backend}\n`
+        `[bak] paired=${status.paired} state=${status.connectionState} extensionConnected=${status.extensionConnected} heartbeatStale=${status.heartbeatStale} protocol=${status.protocolVersion}\n`
       );
     }, 15_000);
   });
@@ -335,8 +322,8 @@ addStructuredHelp(pair.command('status').description('Show the current pairing t
 addStructuredHelp(
   program
     .command('doctor')
-    .summary('Check daemon, extension, ports, and memory health')
-    .description('Run local diagnostics for the bak runtime, pairing state, and memory backend')
+    .summary('Check daemon, extension, and ports')
+    .description('Run local diagnostics for the bak runtime, pairing state, and connectivity')
   .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
   .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
   .option('--data-dir <path>', 'override the data directory'),
@@ -347,7 +334,7 @@ addStructuredHelp(
     ],
     examples: [
       'bak doctor --port 17373 --rpc-ws-port 17374',
-      'bak doctor --data-dir .\\.bak-data'
+      'bak doctor --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')'
     ]
   }
 )
@@ -438,7 +425,7 @@ addStructuredHelp(workspace, {
   notes: [
     'workspace ensure creates or repairs the agent-owned browser window and tab group.',
     'Ordinary page and element commands do not create a workspace automatically.',
-    'Once a workspace exists, default browser and memory commands prefer its current tab.'
+    'Once a workspace exists, default browser commands prefer its current tab.'
   ],
   examples: [
     'bak workspace ensure --rpc-ws-port 17374',
@@ -485,13 +472,13 @@ addStructuredHelp(addRpcPortOption(addTabOption(workspace.command('list-tabs').d
   examples: ['bak workspace list-tabs --rpc-ws-port 17374']
 }).action(async (options) => invoke('workspace.listTabs', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
 addRpcPortOption(
-  addWorkspaceOption(workspace.command('get-active-tab').description('Show the workspace current tab used by default browser and memory commands'))
+  addWorkspaceOption(workspace.command('get-active-tab').description('Show the workspace current tab used by default browser commands'))
 ).action(async (options) => invoke('workspace.getActiveTab', { workspaceId: parseWorkspaceId(options.workspaceId) }, parseRpcPort(options)));
 addRpcPortOption(
   addWorkspaceOption(
     workspace
       .command('set-active-tab')
-      .description('Set the workspace current tab used by default browser and memory commands')
+      .description('Set the workspace current tab used by default browser commands')
       .requiredOption('--tab-id <tabId>', 'workspace tab id to make current')
   )
 ).action(async (options) =>
@@ -803,208 +790,22 @@ addStructuredHelp(addRpcPortOption(addTabOption(addLocatorOptions(file.command('
   examples: ['bak file upload --css "#file-input" --file-path .\\report.pdf --rpc-ws-port 17374']
 }).action(async (options) => invoke('file.upload', { ...targetParams(options), locator: locatorFromOptions(options, parseJson), files: uploadFilesFromOptions(options) }, parseRpcPort(options)));
 
-const memory = program
-  .command('memory')
-  .summary('Capture, search, explain, and execute explicit memories')
-  .description('Work with explicit route, procedure, and composite memories');
-addStructuredHelp(memory, {
-  notes: [
-    'Memory is explicit: capture, review, promote, search, explain, plan, and execute are separate steps.',
-    'Use route memories to get back to a feature, then optionally compose them with procedure memories.',
-    'The current backend is sqlite and plan mode defaults to assist.'
-  ],
-  examples: [
-    'bak memory capture begin --goal "return to billing settings" --rpc-ws-port 17374',
-    'bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374',
-    'bak memory plan create --memory-id mem_123 --mode assist --rpc-ws-port 17374'
-  ]
-});
-const capture = memory.command('capture').description('Start, mark, and end a capture session');
-addStructuredHelp(capture, {
-  examples: [
-    'bak memory capture begin --goal "return to billing settings" --rpc-ws-port 17374',
-    'bak memory capture mark --label "billing tab opened" --role route --rpc-ws-port 17374',
-    'bak memory capture end --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(addTabOption(capture.command('begin').description('Start a capture session').requiredOption('--goal <goal>', 'capture goal').option('--label <label...>', 'labels', []))), {
-  examples: ['bak memory capture begin --goal "return to billing settings" --label billing --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.capture.begin', { goal: String(options.goal), ...targetParams(options), labels: (options.label as string[]).map(String) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(capture.command('mark').description('Add a labeled checkpoint inside the active capture').requiredOption('--label <label>', 'mark label').option('--role <role>', 'checkpoint|route|procedure|target-page|note').option('--note <note>', 'note'))), {
-  examples: ['bak memory capture mark --label "opened settings" --role route --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.capture.mark', { ...targetParams(options), label: String(options.label), role: options.role ? String(options.role) : undefined, note: options.note ? String(options.note) : undefined }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(capture.command('end').description('Finish the active capture session and emit drafts').option('--outcome <outcome>', 'completed|failed|abandoned', 'completed'))), {
-  examples: ['bak memory capture end --outcome completed --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.capture.end', { ...targetParams(options), outcome: String(options.outcome) }, parseRpcPort(options)));
-
-const draft = memory.command('draft').description('Inspect, promote, or discard draft memories');
-addStructuredHelp(draft, {
-  examples: [
-    'bak memory draft list --rpc-ws-port 17374',
-    'bak memory draft promote draft_123 --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(draft.command('list').description('List draft memories').option('--capture-session-id <id>', 'capture session id').option('--kind <kind>', 'route|procedure|composite').option('--status <status>', 'draft|discarded|promoted').option('--limit <limit>', 'result limit', '50')), {
-  examples: ['bak memory draft list --kind route --limit 10 --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.drafts.list', { captureSessionId: options.captureSessionId ? String(options.captureSessionId) : undefined, kind: options.kind ? String(options.kind) : undefined, status: options.status ? String(options.status) : undefined, limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(draft.command('show <id>').description('Show one draft memory by id')), {
-  examples: ['bak memory draft show draft_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.drafts.get', { id: String(id) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(draft.command('promote <id>').description('Promote a draft into a durable memory').option('--title <title>', 'override title').option('--goal <goal>', 'override goal').option('--description <description>', 'override description').option('--tag <tag...>', 'tags', [])), {
-  examples: ['bak memory draft promote draft_123 --title "Return to billing settings" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.drafts.promote', { id: String(id), title: options.title ? String(options.title) : undefined, goal: options.goal ? String(options.goal) : undefined, description: options.description ? String(options.description) : undefined, tags: (options.tag as string[]).map(String) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(draft.command('discard <id>').description('Discard a draft memory').option('--reason <reason>', 'discard reason')), {
-  examples: ['bak memory draft discard draft_123 --reason "no longer needed" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.drafts.discard', { id: String(id), reason: options.reason ? String(options.reason) : undefined }, parseRpcPort(options)));
-
-addStructuredHelp(
-addRpcPortOption(
-  addTabOption(
-    memory
-      .command('search')
-      .description('Search durable memories without executing them')
-      .requiredOption('--goal <goal>', 'goal text')
-      .option('--kind <kind>', 'route|procedure|composite')
-      .option('--url <url>', 'explicit page url context')
-      .option('--limit <limit>', 'result limit', '10')
-  )
-), {
-  notes: [
-    'Search returns candidates only. Explain and plan are the next steps before execution.',
-    'Use --kind route when the goal is getting back to a feature or page.'
-  ],
-  examples: [
-    'bak memory search --goal "return to billing settings" --kind route --rpc-ws-port 17374',
-    'bak memory search --goal "queue a nightly backup" --kind procedure --url "https://portal.local/settings" --rpc-ws-port 17374'
-  ]
-}).action(async (options) =>
-  invoke(
-    'memory.memories.search',
-    {
-      goal: String(options.goal),
-      kind: options.kind ? String(options.kind) : undefined,
-      ...targetParams(options),
-      url: options.url ? String(options.url) : undefined,
-      limit: parsePositiveInt(options.limit, 'limit')
-    },
-    parseRpcPort(options)
-  )
-);
-addStructuredHelp(addRpcPortOption(addTabOption(memory.command('explain <id>').description('Explain how well a memory fits the current page or URL').option('--revision-id <id>', 'specific revision').option('--url <url>', 'explicit page url context'))), {
-  examples: ['bak memory explain mem_123 --url "https://portal.local/" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.memories.explain', { id: String(id), revisionId: options.revisionId ? String(options.revisionId) : undefined, ...targetParams(options), url: options.url ? String(options.url) : undefined }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(memory.command('show <id>').description('Show a durable memory and optional revisions').option('--include-revisions', 'include revisions', false))), {
-  examples: ['bak memory show mem_123 --include-revisions --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.memories.get', { id: String(id), includeRevisions: options.includeRevisions === true }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(memory.command('deprecate <id>').description('Mark a memory as deprecated').option('--reason <reason>', 'deprecation reason')), {
-  examples: ['bak memory deprecate mem_123 --reason "route changed" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.memories.deprecate', { id: String(id), reason: options.reason ? String(options.reason) : undefined }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(memory.command('delete <id>').description('Delete a durable memory record')), {
-  examples: ['bak memory delete mem_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.memories.delete', { id: String(id) }, parseRpcPort(options)));
-
-const plan = memory.command('plan').description('Create and inspect executable memory plans');
-addStructuredHelp(plan, {
-  examples: [
-    'bak memory plan create --memory-id mem_123 --mode assist --rpc-ws-port 17374',
-    'bak memory plan show plan_123 --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(addTabOption(plan.command('create').description('Create an execution plan from one memory or a route plus procedure pair').option('--memory-id <id>', 'single memory id').option('--revision-id <id>', 'single revision id').option('--route-memory-id <id>', 'route memory id').option('--route-revision-id <id>', 'route revision id').option('--procedure-memory-id <id>', 'procedure memory id').option('--procedure-revision-id <id>', 'procedure revision id').option('--mode <mode>', 'dry-run|assist|auto', 'assist').option('--param <kv...>', 'bound parameters key=value', []))), {
-  notes: [
-    'Use --memory-id for one durable memory or the route/procedure flags for explicit composition.',
-    'assist is the safest default when a plan contains mutating procedure steps.'
-  ],
-  examples: [
-    'bak memory plan create --memory-id mem_123 --mode assist --rpc-ws-port 17374',
-    'bak memory plan create --route-memory-id mem_route --procedure-memory-id mem_proc --param accountName=Acme --rpc-ws-port 17374'
-  ]
-}).action(async (options) => invoke('memory.plans.create', { memoryId: options.memoryId ? String(options.memoryId) : undefined, revisionId: options.revisionId ? String(options.revisionId) : undefined, routeMemoryId: options.routeMemoryId ? String(options.routeMemoryId) : undefined, routeRevisionId: options.routeRevisionId ? String(options.routeRevisionId) : undefined, procedureMemoryId: options.procedureMemoryId ? String(options.procedureMemoryId) : undefined, procedureRevisionId: options.procedureRevisionId ? String(options.procedureRevisionId) : undefined, ...targetParams(options), mode: String(options.mode), parameters: parseKv((options.param as string[]) ?? []) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(plan.command('show <id>').description('Show a previously created execution plan')), {
-  examples: ['bak memory plan show plan_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.plans.get', { id: String(id) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(memory.command('execute <id>').description('Execute a plan by id').option('--mode <mode>', 'dry-run|assist|auto'))), {
-  examples: ['bak memory execute plan_123 --mode assist --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.plans.execute', { id: String(id), ...targetParams(options), mode: options.mode ? String(options.mode) : undefined }, parseRpcPort(options)));
-
-const run = memory.command('run').description('Inspect execution run history');
-addStructuredHelp(run, {
-  examples: [
-    'bak memory run list --rpc-ws-port 17374',
-    'bak memory run show run_123 --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(run.command('list').description('List execution runs').option('--memory-id <id>', 'filter by memory').option('--plan-id <id>', 'filter by plan').option('--status <status>', 'completed|blocked|failed').option('--limit <limit>', 'result limit', '50')), {
-  examples: ['bak memory run list --status failed --limit 20 --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.runs.list', { memoryId: options.memoryId ? String(options.memoryId) : undefined, planId: options.planId ? String(options.planId) : undefined, status: options.status ? String(options.status) : undefined, limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(run.command('show <id>').description('Show a single execution run')), {
-  examples: ['bak memory run show run_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.runs.get', { id: String(id) }, parseRpcPort(options)));
-
-const patch = memory.command('patch').description('Review patch suggestions created during drift repair');
-addStructuredHelp(patch, {
-  examples: [
-    'bak memory patch list --rpc-ws-port 17374',
-    'bak memory patch apply patch_123 --rpc-ws-port 17374'
-  ]
-});
-addStructuredHelp(addRpcPortOption(patch.command('list').description('List patch suggestions').option('--memory-id <id>', 'filter by memory').option('--status <status>', 'open|applied|rejected').option('--limit <limit>', 'result limit', '50')), {
-  examples: ['bak memory patch list --status open --rpc-ws-port 17374']
-}).action(async (options) => invoke('memory.patches.list', { memoryId: options.memoryId ? String(options.memoryId) : undefined, status: options.status ? String(options.status) : undefined, limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(patch.command('show <id>').description('Show a single patch suggestion')), {
-  examples: ['bak memory patch show patch_123 --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.patches.get', { id: String(id) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(patch.command('apply <id>').description('Accept a patch suggestion and create a new revision').option('--note <note>', 'apply note')), {
-  examples: ['bak memory patch apply patch_123 --note "verified against latest UI" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.patches.apply', { id: String(id), note: options.note ? String(options.note) : undefined }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(patch.command('reject <id>').description('Reject a patch suggestion').option('--reason <reason>', 'reject reason')), {
-  examples: ['bak memory patch reject patch_123 --reason "wrong element candidate" --rpc-ws-port 17374']
-}).action(async (id, options) => invoke('memory.patches.reject', { id: String(id), reason: options.reason ? String(options.reason) : undefined }, parseRpcPort(options)));
-
-memory
-  .command('export')
-  .description('Export the current memory store snapshot')
-  .option('--data-dir <path>', 'override data dir')
-  .option('--out <path>', 'output path')
-  .action((options) => {
-    const dataDir = options.dataDir ? resolve(String(options.dataDir)) : resolveDataDir();
-    const resolution = createMemoryStoreResolved({ dataDir });
-    const payload = exportMemory(resolution.store, resolution.backend);
-    const outPath = options.out ? resolve(String(options.out)) : join(dataDir, `memory-export-${Date.now()}.json`);
-    writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-    printResult({
-      outPath,
-      backend: resolution.backend,
-      captureSessionCount: payload.captureSessions.length,
-      draftCount: payload.drafts.length,
-      memoryCount: payload.memories.length,
-      revisionCount: payload.revisions.length,
-      runCount: payload.runs.length,
-      patchCount: payload.patches.length
-    });
-  });
-
-addStructuredHelp(memory.commands.find((command) => command.name() === 'export')!, {
-  examples: ['bak memory export --out .\\.bak-data\\memory-export.json']
-});
-
 addStructuredHelp(
   program
     .command('export')
     .summary('Export a redacted diagnostic package')
-    .description('Export a redacted diagnostic zip package with traces, doctor output, and optional snapshots or memory')
+    .description('Export a redacted diagnostic zip package with traces, doctor output, and optional snapshots')
   .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
   .option('--trace <traceId>', 'deprecated alias for --trace-id')
   .option('--port <port>', 'extension websocket port for doctor snapshot', `${DEFAULT_PORT}`)
   .option('--rpc-ws-port <port>', 'JSON-RPC websocket port for doctor snapshot', `${DEFAULT_RPC_PORT}`)
   .option('--include-snapshots', 'include raw snapshot image folders (may contain sensitive visual data)', false)
-  .option('--include-memory', 'include redacted memory export in package', false)
   .option('--data-dir <path>', 'override the data directory')
   .option('--out <path>', 'output zip path'),
   {
     examples: [
-      'bak export --out .\\.bak-data\\diag.zip',
-      'bak export --trace-id trace_123 --include-snapshots --out .\\.bak-data\\diag-with-images.zip'
+      'bak export --out .\\diag.zip',
+      'bak export --trace-id trace_123 --include-snapshots --out .\\diag-with-images.zip'
     ]
   }
 )
@@ -1022,9 +823,7 @@ addStructuredHelp(
         dataDir,
         outPath: options.out ? resolve(String(options.out)) : undefined,
         doctorReport,
-        includeSnapshots: options.includeSnapshots === true,
-        includeMemory: options.includeMemory === true,
-        memoryBackend: 'sqlite'
+        includeSnapshots: options.includeSnapshots === true
       })
     );
   });

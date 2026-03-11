@@ -10,7 +10,6 @@ Use these pages as the current product documentation for `bak`.
 
 ## Daily Use
 
-- [user/memory-guide.md](./user/memory-guide.md)
 - [user/troubleshooting.md](./user/troubleshooting.md)
 - [user/agent-prompts.md](./user/agent-prompts.md)
 

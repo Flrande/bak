@@ -40,35 +40,6 @@ Requirement:
 
 - actions, reads, and debug APIs must resolve against the same effective context stack
 
-## Memory Model
-
-Core entities:
-
-- `CaptureSession`
-- `CaptureEvent`
-- `DraftMemory`
-- `DurableMemory`
-- `MemoryRevision`
-- `PageFingerprint`
-- `MemoryPlan`
-- `MemoryRun`
-- `PatchSuggestion`
-
-Memory kinds:
-
-- `route`
-- `procedure`
-- `composite`
-
-Rules:
-
-- durable writes are explicit
-- capture is single-active
-- search never executes
-- revisions are immutable
-- accepted patches create new revisions
-- the current backend is sqlite
-
 ## Debug Surface
 
 Agent-usable debug output includes:

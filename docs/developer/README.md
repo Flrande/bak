@@ -14,4 +14,3 @@ Current implementation assumptions:
 - the product surface is the CLI daemon plus the Chromium extension
 - the workspace is the default agent isolation boundary
 - browser reads, actions, and debug output share one context stack
-- memory is explicit, revisioned, and sqlite-backed

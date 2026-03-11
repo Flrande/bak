@@ -8,9 +8,8 @@ This legacy page is kept for compatibility. Prefer [docs/developer/security-priv
 2. Element `name`/`text` fields are minimized and passed through redaction rules.
 3. Potential secrets (email-like strings, OTP-like digits, long numeric sequences, token-like query strings) are replaced with redacted markers.
 4. Trace logs are redacted before write (for example `element.type.text` is stored as `[REDACTED]`, and snapshot base64 payloads are not persisted in trace entries).
-5. Snapshot images and traces stay local in `.bak-data` unless the user exports them.
+5. Snapshot images and traces stay local in the bak data directory unless the user exports them. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`.
 6. `bak export` excludes snapshot image folders by default; use `--include-snapshots` only when operators explicitly need visual artifacts.
-7. Memory capture does not silently create durable memories. Typed values are redacted in traces by default, and durable memories are only created after explicit draft promotion.
 
 Run `bak gc` to clean old traces/snapshots. The command is dry-run by default and requires `--force` to delete.
 

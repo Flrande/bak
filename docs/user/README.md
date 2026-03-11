@@ -4,8 +4,7 @@ Follow these pages in order when you are new to `bak`:
 
 1. [quickstart.md](./quickstart.md)
 2. [cli-guide.md](./cli-guide.md)
-3. [memory-guide.md](./memory-guide.md)
-4. [troubleshooting.md](./troubleshooting.md)
+3. [troubleshooting.md](./troubleshooting.md)
 
 For agent-specific setup and prompt handoff:
 

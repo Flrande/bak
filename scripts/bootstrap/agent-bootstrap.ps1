@@ -72,6 +72,23 @@ function Wait-TcpPort {
   return $false
 }
 
+function Get-DefaultDataDir {
+  $localAppData = [Environment]::GetFolderPath([System.Environment+SpecialFolder]::LocalApplicationData)
+  if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+    return (Join-Path $localAppData 'bak')
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    return (Join-Path $env:LOCALAPPDATA 'bak')
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+    return (Join-Path $env:APPDATA 'bak')
+  }
+
+  return (Join-Path (Get-Location) '.bak-data')
+}
+
 Write-Host "[bak-bootstrap] Installing global npm packages..."
 Invoke-Native -Description 'npm global install' -Command {
   npm install -g @flrande/bak-cli @flrande/bak-extension
@@ -87,7 +104,7 @@ if (-not (Test-Path -LiteralPath $bakCmd)) {
 $resolvedDataDir = if ($DataDir) {
   $DataDir
 } else {
-  Join-Path (Get-Location) '.bak-data'
+  Get-DefaultDataDir
 }
 New-Item -ItemType Directory -Force -Path $resolvedDataDir | Out-Null
 

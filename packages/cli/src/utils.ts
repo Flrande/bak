@@ -1,10 +1,46 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
-export function resolveDataDir(): string {
-  const configured = process.env.BAK_DATA_DIR;
-  const root = configured ? resolve(configured) : resolve(process.cwd(), '.bak-data');
+type ResolveDataDirOptions = {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  cwd?: string;
+  homeDir?: string;
+};
+
+export function defaultDataDir(options: ResolveDataDirOptions = {}): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const cwd = options.cwd ?? process.cwd();
+  const homeDir = options.homeDir ?? env.HOME ?? homedir();
+
+  if (platform === 'win32') {
+    const localAppData = env.LOCALAPPDATA ?? env.APPDATA;
+    if (localAppData) {
+      return resolve(localAppData, 'bak');
+    }
+  }
+
+  if (platform === 'darwin') {
+    return resolve(homeDir, 'Library', 'Application Support', 'bak');
+  }
+
+  if (env.XDG_DATA_HOME) {
+    return resolve(env.XDG_DATA_HOME, 'bak');
+  }
+
+  if (homeDir) {
+    return resolve(homeDir, '.local', 'share', 'bak');
+  }
+
+  return resolve(cwd, '.bak-data');
+}
+
+export function resolveDataDir(options: ResolveDataDirOptions = {}): string {
+  const env = options.env ?? process.env;
+  const root = env.BAK_DATA_DIR ? resolve(env.BAK_DATA_DIR) : defaultDataDir(options);
   mkdirSync(root, { recursive: true });
   return root;
 }

@@ -29,11 +29,6 @@ describe('ops tools', () => {
     expect(result.includesSnapshots).toBe(true);
     expect(result.includesDoctorReport).toBe(false);
     expect(result.includesIndex).toBe(true);
-    expect(result.includesHealingSummary).toBe(false);
-    expect(result.healingEventCount).toBe(0);
-    expect(result.healingFailureCount).toBe(0);
-    expect(result.includesMemory).toBe(false);
-    expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toEqual([]);
     expect(result.redacted).toBe(true);
     expect(existsSync(outPath)).toBe(true);
@@ -78,8 +73,6 @@ describe('ops tools', () => {
     });
 
     expect(report.checks.dataDirWritable.ok).toBe(true);
-    expect(report.checks.memoryBackend.ok).toBe(true);
-    expect(report.checks.healingTelemetry.ok).toBe(true);
     expect(report.checks.pairing.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.ok).toBe(false);
     expect(report.checks.rpcSessionInfo.severity).toBe('warn');
@@ -151,11 +144,6 @@ describe('ops tools', () => {
             message: 'cli/extension version drift detected (same major)',
             severity: 'warn'
           },
-          memoryBackend: {
-            ok: false,
-            message: 'memory backend fallback detected',
-            severity: 'warn'
-          },
           rpcConnectionHealth: {
             ok: false,
             message: 'extension heartbeat is stale'
@@ -166,12 +154,8 @@ describe('ops tools', () => {
 
     expect(result.includesDoctorReport).toBe(true);
     expect(result.includesIndex).toBe(true);
-    expect(result.includesHealingSummary).toBe(false);
-    expect(result.includesMemory).toBe(false);
-    expect(result.memoryBackend).toBeNull();
     expect(result.warnings).toContain('protocol compatibility warning: protocol version mismatch');
     expect(result.warnings).toContain('version compatibility warning: cli/extension version drift detected (same major)');
-    expect(result.warnings).toContain('memory backend warning: memory backend fallback detected');
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
@@ -194,85 +178,6 @@ describe('ops tools', () => {
 
     expect(result.includesDoctorReport).toBe(true);
     expect(result.warnings.some((message) => message.startsWith('protocol compatibility warning:'))).toBe(true);
-    expect(existsSync(outPath)).toBe(true);
-
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('includes memory snapshot when includeMemory is enabled', () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-test-'));
-    const outPath = join(dataDir, 'diag-memory.zip');
-
-    const result = exportDiagnosticZip({
-      dataDir,
-      outPath,
-      includeMemory: true,
-      memoryBackend: 'sqlite'
-    });
-
-    expect(result.includesMemory).toBe(true);
-    expect(result.includesHealingSummary).toBe(false);
-    expect(result.memoryBackend).toBe('sqlite');
-    expect(result.memoryExportError).toBeUndefined();
-    expect(result.warnings).toEqual([]);
-    expect(existsSync(outPath)).toBe(true);
-
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('exports an empty sqlite memory snapshot when no prior memory data exists', () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-memory-fail-test-'));
-    const outPath = join(dataDir, 'diag-memory-fail.zip');
-    const impossibleDataDir = join(dataDir, 'missing', 'child');
-
-    const result = exportDiagnosticZip({
-      dataDir: impossibleDataDir,
-      outPath,
-      includeMemory: true,
-      memoryBackend: 'sqlite'
-    });
-
-    expect(result.includesMemory).toBe(true);
-    expect(result.includesHealingSummary).toBe(false);
-    expect(result.memoryBackend).toBe('sqlite');
-    expect(result.memoryExportError).toBeUndefined();
-    expect(result.warnings).toEqual([]);
-    expect(existsSync(outPath)).toBe(true);
-
-    rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  it('aggregates healing trace events into diagnostic summary', () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-healing-test-'));
-    const tracesDir = join(dataDir, 'traces');
-    mkdirSync(tracesDir, { recursive: true });
-    const traceId = 'trace_heal_demo';
-    writeFileSync(
-      join(tracesDir, `${traceId}.jsonl`),
-      `${JSON.stringify({
-        traceId,
-        ts: new Date().toISOString(),
-        method: 'memory.healing',
-        params: {
-          skillId: 'skill_demo',
-          attempts: 2,
-          successes: 1,
-          failed: true
-        }
-      })}\n`,
-      'utf8'
-    );
-
-    const outPath = join(dataDir, 'diag-healing.zip');
-    const result = exportDiagnosticZip({
-      dataDir,
-      outPath,
-      traceId
-    });
-
-    expect(result.includesHealingSummary).toBe(true);
-    expect(result.healingEventCount).toBe(1);
-    expect(result.healingFailureCount).toBe(1);
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });

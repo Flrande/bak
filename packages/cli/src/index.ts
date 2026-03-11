@@ -6,6 +6,3 @@ export * from './gc.js';
 export * from './policy.js';
 export * from './doctor.js';
 export * from './diagnostic-export.js';
-export * from './memory/store.js';
-export * from './memory/sqlite-store.js';
-export * from './memory/factory.js';

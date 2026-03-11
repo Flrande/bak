@@ -1,9 +1,8 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { createMemoryStoreResolved, exportMemory, resolveMemoryBackend } from './memory/factory.js';
 import { redactText } from './privacy.js';
 import { ensureDir, resolveDataDir } from './utils.js';
 
@@ -13,8 +12,6 @@ export interface DiagnosticExportOptions {
   traceId?: string;
   doctorReport?: unknown;
   includeSnapshots?: boolean;
-  includeMemory?: boolean;
-  memoryBackend?: string;
 }
 
 export interface DiagnosticExportResult {
@@ -26,36 +23,8 @@ export interface DiagnosticExportResult {
   includesSnapshots: boolean;
   includesDoctorReport: boolean;
   includesIndex: boolean;
-  includesHealingSummary: boolean;
-  healingEventCount: number;
-  healingFailureCount: number;
-  includesMemory: boolean;
-  memoryBackend: string | null;
-  memoryExportError?: string;
   warnings: string[];
   fileCount: number;
-}
-
-interface HealingTraceEvent {
-  skillId: string;
-  attempts: number;
-  successes: number;
-  failed: boolean;
-}
-
-interface HealingSummary {
-  eventCount: number;
-  totalAttempts: number;
-  totalSuccesses: number;
-  totalFailures: number;
-  skills: Array<{
-    skillId: string;
-    events: number;
-    attempts: number;
-    successes: number;
-    failures: number;
-    successRate: number;
-  }>;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -87,19 +56,6 @@ function extractProtocolCompatibilityWarning(doctorReport: unknown): string | nu
   return message;
 }
 
-function extractMemoryBackendWarning(doctorReport: unknown): string | null {
-  const report = asRecord(doctorReport);
-  const checks = asRecord(report.checks);
-  const memoryBackendCheck = asRecord(checks.memoryBackend);
-  const ok = memoryBackendCheck.ok === true;
-  const severity = memoryBackendCheck.severity;
-  const message = typeof memoryBackendCheck.message === 'string' ? memoryBackendCheck.message : null;
-  if (ok || severity !== 'warn' || !message) {
-    return null;
-  }
-  return message;
-}
-
 function assertWithinDataDir(dataDir: string, candidate: string): void {
   const rel = relative(resolve(dataDir), resolve(candidate));
   if (rel.startsWith('..') || rel.includes(':')) {
@@ -124,103 +80,18 @@ function redactUnknown(value: unknown): unknown {
   return value;
 }
 
-function asNonNegativeNumber(input: unknown): number {
-  if (typeof input !== 'number' || !Number.isFinite(input)) {
-    return 0;
-  }
-  return Math.max(0, input);
-}
-
-function parseHealingTraceEvent(parsed: unknown): HealingTraceEvent | null {
-  const entry = asRecord(parsed);
-  if (entry.method !== 'memory.healing') {
-    return null;
-  }
-
-  const params = asRecord(entry.params);
-  const skillIdRaw = params.skillId;
-  const skillId = typeof skillIdRaw === 'string' && skillIdRaw.trim() ? skillIdRaw : 'unknown-skill';
-  const attempts = asNonNegativeNumber(params.attempts);
-  const successes = Math.min(attempts, asNonNegativeNumber(params.successes));
-  const failed = params.failed === true;
-
-  return {
-    skillId,
-    attempts,
-    successes,
-    failed
-  };
-}
-
-function summarizeHealingEvents(events: HealingTraceEvent[]): HealingSummary {
-  const bySkill = new Map<string, { events: number; attempts: number; successes: number; failures: number }>();
-
-  for (const event of events) {
-    const current = bySkill.get(event.skillId) ?? {
-      events: 0,
-      attempts: 0,
-      successes: 0,
-      failures: 0
-    };
-    current.events += 1;
-    current.attempts += event.attempts;
-    current.successes += event.successes;
-    current.failures += event.failed ? 1 : 0;
-    bySkill.set(event.skillId, current);
-  }
-
-  const skills = [...bySkill.entries()]
-    .map(([skillId, item]) => ({
-      skillId,
-      events: item.events,
-      attempts: item.attempts,
-      successes: item.successes,
-      failures: item.failures,
-      successRate: item.attempts > 0 ? item.successes / item.attempts : 0
-    }))
-    .sort((a, b) => {
-      if (b.events !== a.events) {
-        return b.events - a.events;
-      }
-      if (b.attempts !== a.attempts) {
-        return b.attempts - a.attempts;
-      }
-      return a.skillId.localeCompare(b.skillId);
-    });
-
-  const eventCount = events.length;
-  const totalAttempts = skills.reduce((sum, item) => sum + item.attempts, 0);
-  const totalSuccesses = skills.reduce((sum, item) => sum + item.successes, 0);
-  const totalFailures = skills.reduce((sum, item) => sum + item.failures, 0);
-
-  return {
-    eventCount,
-    totalAttempts,
-    totalSuccesses,
-    totalFailures,
-    skills
-  };
-}
-
-function copyAndRedactTrace(sourcePath: string, targetPath: string): HealingTraceEvent[] {
-  const healingEvents: HealingTraceEvent[] = [];
+function copyAndRedactTrace(sourcePath: string, targetPath: string): void {
   const lines = readFileSync(sourcePath, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => {
       try {
-        const parsed = JSON.parse(line) as unknown;
-        const healingEvent = parseHealingTraceEvent(parsed);
-        if (healingEvent) {
-          healingEvents.push(healingEvent);
-        }
-        return JSON.stringify(redactUnknown(parsed));
+        return JSON.stringify(redactUnknown(JSON.parse(line) as unknown));
       } catch {
         return redactText(line);
       }
     });
   writeFileSync(targetPath, `${lines.join('\n')}\n`, 'utf8');
-  return healingEvents;
 }
 
 function escapePwshLiteral(value: string): string {
@@ -293,13 +164,8 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
 
   try {
     let includesDoctorReport = false;
-    let includesHealingSummary = false;
     const includesSnapshots = options.includeSnapshots === true;
-    let includesMemory = false;
-    let memoryBackend: string | null = null;
-    let memoryExportError: string | undefined;
     const warnings: string[] = [];
-    const healingEvents: HealingTraceEvent[] = [];
     const tracesSource = join(dataDir, 'traces');
     const tracesTarget = join(stageDir, 'traces');
     mkdirSync(tracesTarget, { recursive: true });
@@ -320,12 +186,7 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
     for (const fileName of selectedTraceFiles) {
       const sourcePath = join(tracesSource, fileName);
       assertWithinDataDir(dataDir, sourcePath);
-      healingEvents.push(...copyAndRedactTrace(sourcePath, join(tracesTarget, fileName)));
-    }
-    const healingSummary = summarizeHealingEvents(healingEvents);
-    if (healingSummary.eventCount > 0) {
-      writeFileSync(join(stageDir, 'healing-summary.json'), `${JSON.stringify(healingSummary, null, 2)}\n`, 'utf8');
-      includesHealingSummary = true;
+      copyAndRedactTrace(sourcePath, join(tracesTarget, fileName));
     }
 
     const snapshotDirs = existsSync(snapshotSource)
@@ -357,26 +218,6 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       includesDoctorReport = true;
     }
 
-    if (options.includeMemory === true) {
-      const resolvedBackend = resolveMemoryBackend();
-      try {
-        const resolution = createMemoryStoreResolved({ dataDir });
-        memoryBackend = resolution.backend;
-        if (resolution.fallbackReason) {
-          warnings.push(
-            `memory backend fallback: requested=${resolution.requestedBackend} actual=${resolution.backend} reason=${resolution.fallbackReason}`
-          );
-        }
-        const payload = exportMemory(resolution.store, resolution.backend);
-        writeFileSync(join(stageDir, 'memory.json'), `${JSON.stringify(redactUnknown(payload), null, 2)}\n`, 'utf8');
-        includesMemory = true;
-      } catch (error) {
-        memoryBackend = resolvedBackend;
-        memoryExportError = error instanceof Error ? error.message : String(error);
-        warnings.push(`memory export skipped: ${memoryExportError}`);
-      }
-    }
-
     const versionWarning = extractVersionCompatibilityWarning(options.doctorReport);
     if (versionWarning) {
       warnings.push(`version compatibility warning: ${versionWarning}`);
@@ -387,26 +228,14 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       warnings.push(`protocol compatibility warning: ${protocolWarning}`);
     }
 
-    const memoryBackendWarning = extractMemoryBackendWarning(options.doctorReport);
-    if (memoryBackendWarning) {
-      warnings.push(`memory backend warning: ${memoryBackendWarning}`);
-    }
-
-    const indexPath = join(stageDir, 'index.json');
     writeFileSync(
-      indexPath,
+      join(stageDir, 'index.json'),
       `${JSON.stringify(
         {
           exportedAt: new Date().toISOString(),
           redacted: true,
           includesSnapshots,
           includesDoctorReport,
-          includesHealingSummary,
-          healingEventCount: healingSummary.eventCount,
-          healingFailureCount: healingSummary.totalFailures,
-          includesMemory,
-          memoryBackend,
-          memoryExportError: memoryExportError ?? null,
           warnings,
           traceFiles: selectedTraceFiles,
           snapshotDirs: includesSnapshots ? selectedSnapshotDirs.map((entry) => entry.name) : [],
@@ -418,9 +247,8 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       'utf8'
     );
 
-    const versionsPath = join(stageDir, 'versions.json');
     writeFileSync(
-      versionsPath,
+      join(stageDir, 'versions.json'),
       `${JSON.stringify(
         {
           exportedAt: new Date().toISOString(),
@@ -447,12 +275,6 @@ export function exportDiagnosticZip(options: DiagnosticExportOptions = {}): Diag
       includesSnapshots,
       includesDoctorReport,
       includesIndex: true,
-      includesHealingSummary,
-      healingEventCount: healingSummary.eventCount,
-      healingFailureCount: healingSummary.totalFailures,
-      includesMemory,
-      memoryBackend,
-      memoryExportError,
       warnings,
       fileCount
     };
