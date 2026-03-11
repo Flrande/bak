@@ -10,14 +10,19 @@ on:
 jobs:
   quality:
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.1
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: pnpm
+      - name: Enable Corepack pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.1 --activate
       - name: Install
         run: pnpm install --no-frozen-lockfile
       - name: Build
@@ -40,7 +45,7 @@ jobs:
         run: pnpm -w release:report
       - name: Upload E2E artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci-e2e-artifacts-${{ github.run_id }}
           if-no-files-found: ignore
