@@ -24,6 +24,16 @@
     "failureCaseId": "M005-F",
     "suite": "context"
   },
+  "context.get": {
+    "successCaseId": "M077-S",
+    "failureCaseId": "M077-F",
+    "suite": "context"
+  },
+  "context.set": {
+    "successCaseId": "M078-S",
+    "failureCaseId": "M078-F",
+    "suite": "context"
+  },
   "debug.dumpState": {
     "successCaseId": "M006-S",
     "failureCaseId": "M006-F",
@@ -237,6 +247,51 @@
   "session.create": {
     "successCaseId": "M069-S",
     "failureCaseId": "M069-F",
+    "suite": "session"
+  },
+  "session.ensure": {
+    "successCaseId": "M079-S",
+    "failureCaseId": "M079-F",
+    "suite": "session"
+  },
+  "session.focus": {
+    "successCaseId": "M080-S",
+    "failureCaseId": "M080-F",
+    "suite": "session"
+  },
+  "session.getActiveTab": {
+    "successCaseId": "M081-S",
+    "failureCaseId": "M081-F",
+    "suite": "session"
+  },
+  "session.info": {
+    "successCaseId": "M082-S",
+    "failureCaseId": "M082-F",
+    "suite": "session"
+  },
+  "session.list": {
+    "successCaseId": "M083-S",
+    "failureCaseId": "M083-F",
+    "suite": "session"
+  },
+  "session.listTabs": {
+    "successCaseId": "M084-S",
+    "failureCaseId": "M084-F",
+    "suite": "session"
+  },
+  "session.openTab": {
+    "successCaseId": "M085-S",
+    "failureCaseId": "M085-F",
+    "suite": "session"
+  },
+  "session.reset": {
+    "successCaseId": "M086-S",
+    "failureCaseId": "M086-F",
+    "suite": "session"
+  },
+  "session.setActiveTab": {
+    "successCaseId": "M087-S",
+    "failureCaseId": "M087-F",
     "suite": "session"
   },
   "runtime.info": {
