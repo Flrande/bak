@@ -581,7 +581,6 @@ export class BakService {
   }
 
   private clearTabContext(sessionId: string, tabId: number): SessionContextSnapshot {
-    const current = this.buildSessionContext(sessionId, tabId);
     const next: SessionContextSnapshot = {
       tabId,
       framePath: [],

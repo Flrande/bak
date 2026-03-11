@@ -256,7 +256,7 @@ export interface SessionBrowserState {
 
 export interface MethodMap {
   'runtime.info': {
-    params: {};
+    params: Record<string, never>;
     result: RuntimeInfoResult;
   };
   'session.create': {
@@ -270,7 +270,7 @@ export interface MethodMap {
     };
   };
   'session.list': {
-    params: {};
+    params: Record<string, never>;
     result: { sessions: SessionSummary[] };
   };
   'session.close': { params: { sessionId: string }; result: { closed: true } };
@@ -308,7 +308,7 @@ export interface MethodMap {
   };
 
   'tabs.list': {
-    params: {};
+    params: Record<string, never>;
     result: { tabs: TabInfo[] };
   };
   'tabs.focus': { params: { tabId: number }; result: { ok: true } };
@@ -317,7 +317,7 @@ export interface MethodMap {
     result: { tabId: number; windowId?: number; groupId?: number | null };
   };
   'tabs.close': { params: { tabId: number }; result: { ok: true } };
-  'tabs.getActive': { params: {}; result: { tab: TabInfo | null } };
+  'tabs.getActive': { params: Record<string, never>; result: { tab: TabInfo | null } };
   'tabs.get': { params: { tabId: number }; result: { tab: TabInfo } };
 
   'page.goto': { params: { sessionId: string; url: string; tabId?: number }; result: { ok: true } };
