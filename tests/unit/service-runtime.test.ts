@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -20,6 +20,7 @@ class FakeDriver extends StubDriver {
   workspaceInfoCalls = 0;
   workspaceListTabsCalls = 0;
   pageTitleCalls = 0;
+  pageSnapshotCalls = 0;
   bindingExists = true;
   contextSetBehaviors: Array<'success' | 'stale-not-found' | 'timeout'> = [];
   workspace: SessionBindingEnsureResult['workspace'] = {
@@ -134,7 +135,69 @@ class FakeDriver extends StubDriver {
       this.pageTitleCalls += 1;
       return { title: 'Example title' };
     }
+    if (method === 'debug.dumpState') {
+      return {
+        url: 'https://example.test/frame',
+        title: 'Frame Title',
+        context: {
+          framePath: ['#frame-a'],
+          shadowPath: ['#shadow-a']
+        },
+        dom: {
+          title: 'Frame Title',
+          url: 'https://example.test/frame',
+          forms: [],
+          tables: [],
+          landmarks: [],
+          dialogs: [],
+          iframes: []
+        },
+        text: [],
+        elements: [],
+        metrics: {
+          readyState: 'complete',
+          scrollX: 0,
+          scrollY: 0,
+          innerWidth: 1280,
+          innerHeight: 720,
+          documentWidth: 1280,
+          documentHeight: 720
+        },
+        viewport: {
+          width: 1280,
+          height: 720,
+          devicePixelRatio: 1
+        },
+        console: [],
+        network: []
+      };
+    }
     throw new Error(`Unexpected rawRequest: ${method}`);
+  }
+
+  async pageSnapshot(tabId?: number): Promise<{ imageBase64: string; elements: Array<{ eid: string; tag: string; name: string; text: string; bbox: { x: number; y: number; width: number; height: number }; selectors: { css: string | null; text: string | null; aria: string | null }; risk: 'low' | 'high'; role: string | null }>; tabId: number; url: string }> {
+    this.pageSnapshotCalls += 1;
+    return {
+      imageBase64: Buffer.from('fake-image', 'utf8').toString('base64'),
+      elements: [
+        {
+          eid: 'el-1',
+          tag: 'button',
+          role: 'button',
+          name: 'Save',
+          text: 'Save',
+          bbox: { x: 1, y: 2, width: 3, height: 4 },
+          selectors: {
+            css: '#save',
+            text: 'Save',
+            aria: 'button "Save"'
+          },
+          risk: 'low'
+        }
+      ],
+      tabId: tabId ?? 101,
+      url: 'https://example.test/frame'
+    };
   }
 
   private cloneWorkspace(): SessionBindingEnsureResult['workspace'] {
@@ -303,5 +366,24 @@ describe('service runtime session bindings', () => {
     ).rejects.toMatchObject({
       bakCode: BakErrorCode.E_TIMEOUT
     });
+  });
+
+  it('attaches a persisted snapshot when debug.dumpState requests one', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+    const dump = await service.invokeDynamic('debug.dumpState', {
+      sessionId: created.sessionId,
+      includeSnapshot: true
+    });
+
+    expect(driver.pageSnapshotCalls).toBe(1);
+    expect(dump.snapshot).toBeDefined();
+    expect(existsSync(dump.snapshot!.imagePath)).toBe(true);
+    expect(existsSync(dump.snapshot!.elementsPath)).toBe(true);
+    expect(dump.snapshot!.imageBase64).toBeUndefined();
+    expect(JSON.parse(readFileSync(dump.snapshot!.elementsPath, 'utf8'))).toHaveLength(1);
   });
 });

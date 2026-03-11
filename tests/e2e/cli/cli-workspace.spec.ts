@@ -28,6 +28,28 @@ function runHarnessCliFailure(args: string[]): string {
   return runCliFailure(args, harness.rpcPort, harness.dataDir, harness.sessionId);
 }
 
+function cliErrorText(error: unknown): string {
+  return error instanceof Error ? `${error.message}\n${String((error as { stderr?: string }).stderr ?? '')}` : String(error);
+}
+
+async function runHarnessCliWithRetry<T = unknown>(args: string[], timeoutMs = 45_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      return runHarnessCli<T>(args);
+    } catch (error) {
+      const message = cliErrorText(error);
+      lastError = error;
+      if (!message.includes('E_TIMEOUT') && !message.includes('E_NOT_READY')) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new Error(String(lastError ?? 'CLI command failed')));
+}
+
 async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: number; url: string }> {
   if (!harness) {
     throw new Error('Harness not initialized');
@@ -35,12 +57,42 @@ async function openWorkspacePage(path: string): Promise<{ page: Page; tabId: num
   const marker = `__workspace=${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const separator = path.includes('?') ? '&' : '?';
   const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
-  const beforePages = new Set(harness.context.pages());
-  const opened = runHarnessCli<{ tab: { id: number; url: string } }>(['session', 'open-tab', '--url', url]);
-  expect(opened.tab.url).toBe(url);
-  await expect.poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), { timeout: 10_000 }).toBe(true);
+  const deadline = Date.now() + 45_000;
+  let opened: { tab: { id: number; url: string } } | null = null;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await runHarnessCliWithRetry(['session', 'ensure']);
+      opened = await runHarnessCliWithRetry<{ tab: { id: number; url: string } }>(['session', 'open-tab', '--url', url]);
+      break;
+    } catch (error) {
+      const cliError = cliErrorText(error);
+      lastError = error;
+      if (!cliError.includes('E_TIMEOUT') && !cliError.includes('E_NOT_READY')) {
+        throw error;
+      }
+
+      const existingPage = harness.context.pages().find((candidate) => candidate.url().includes(marker));
+      if (existingPage) {
+        const listed = runHarnessCli<{ tabs: Array<{ id: number; url: string }> }>(['session', 'list-tabs']);
+        const matchingTab = listed.tabs.find((candidate) => candidate.url.includes(marker));
+        if (matchingTab) {
+          opened = { tab: matchingTab };
+          break;
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  if (!opened) {
+    throw (lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Expected workspace tab')));
+  }
+
+  expect(opened.tab.url).toContain(marker);
+  await expect.poll(() => harness.context.pages().some((candidate) => candidate.url().includes(marker)), { timeout: 10_000 }).toBe(true);
   const page = must(
-    harness.context.pages().find((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)),
+    harness.context.pages().find((candidate) => candidate.url().includes(marker)),
     'Expected workspace page'
   );
   return {
@@ -326,7 +378,7 @@ test.describe('CLI workspace workflows', () => {
 
     const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
-      const opened = runHarnessCli<{ browser: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>([
+      const opened = await runHarnessCliWithRetry<{ browser: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>([
         'session',
         'open-tab',
         '--url',

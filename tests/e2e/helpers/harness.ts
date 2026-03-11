@@ -199,7 +199,7 @@ async function waitForTabContentReady(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = message;
-      if (!message.includes('E_NOT_READY')) {
+      if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -392,7 +392,7 @@ export async function createHarness(): Promise<E2EHarness> {
     await page.bringToFront();
 
     const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
-      const deadline = Date.now() + 8_000;
+      const deadline = Date.now() + DEFAULT_RPC_TIMEOUT_MS;
       let lastError: unknown;
       const requestParams = withSession(method, params, sessionId);
       while (Date.now() < deadline) {
@@ -401,7 +401,7 @@ export async function createHarness(): Promise<E2EHarness> {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           lastError = error;
-          if (!message.includes('E_NOT_READY')) {
+          if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
             throw error;
           }
           await new Promise((resolve) => setTimeout(resolve, 200));

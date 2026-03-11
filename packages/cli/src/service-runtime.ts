@@ -1178,6 +1178,20 @@ export class BakService {
 
       const result = await this.driver.rawRequest(methodName, forwardArgs);
       if (
+        methodName === 'debug.dumpState' &&
+        typeof target.tabId === 'number' &&
+        args.includeSnapshot === true
+      ) {
+        return {
+          ...asRecord(result),
+          snapshot: await this.persistPageSnapshot(
+            target.tabId,
+            args.includeSnapshotBase64 === true,
+            session.traceId
+          )
+        } as MethodResult<TMethod>;
+      }
+      if (
         (methodName === 'context.set' ||
           methodName === 'context.enterFrame' ||
           methodName === 'context.exitFrame' ||
