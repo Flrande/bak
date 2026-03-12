@@ -116,6 +116,7 @@ let reconnectAttempt = 0;
 let lastError: RuntimeErrorDetails | null = null;
 let manualDisconnect = false;
 let sessionBindingStateMutationQueue: Promise<void> = Promise.resolve();
+let preserveHumanFocusDepth = 0;
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -719,10 +720,15 @@ async function preserveHumanFocus<T>(enabled: boolean, action: () => Promise<T>)
   }
 
   const focusContext = await captureFocusContext();
+  preserveHumanFocusDepth += 1;
   try {
     return await action();
   } finally {
-    await restoreFocusContext(focusContext);
+    try {
+      await restoreFocusContext(focusContext);
+    } finally {
+      preserveHumanFocusDepth = Math.max(0, preserveHumanFocusDepth - 1);
+    }
   }
 }
 
@@ -2440,25 +2446,38 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  void mutateSessionBindingStateMap((stateMap) => {
-    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
-    for (const [bindingId, state] of Object.entries(stateMap)) {
-      if (state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
-        continue;
+  if (preserveHumanFocusDepth > 0) {
+    return;
+  }
+  void chrome.windows
+    .get(activeInfo.windowId)
+    .then((window) => window.focused === true)
+    .catch(() => false)
+    .then((windowFocused) => {
+      if (!windowFocused) {
+        return [] as Array<{ bindingId: string; state: SessionBindingRecord }>;
       }
-      const nextState: SessionBindingRecord = {
-        ...state,
-        activeTabId: activeInfo.tabId
-      };
-      stateMap[bindingId] = nextState;
-      updates.push({ bindingId, state: nextState });
-    }
-    return updates;
-  }).then((updates) => {
-    for (const update of updates) {
-      emitSessionBindingUpdated(update.bindingId, 'tab-activated', update.state);
-    }
-  });
+      return mutateSessionBindingStateMap((stateMap) => {
+        const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
+        for (const [bindingId, state] of Object.entries(stateMap)) {
+          if (state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
+            continue;
+          }
+          const nextState: SessionBindingRecord = {
+            ...state,
+            activeTabId: activeInfo.tabId
+          };
+          stateMap[bindingId] = nextState;
+          updates.push({ bindingId, state: nextState });
+        }
+        return updates;
+      });
+    })
+    .then((updates) => {
+      for (const update of updates) {
+        emitSessionBindingUpdated(update.bindingId, 'tab-activated', update.state);
+      }
+    });
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {

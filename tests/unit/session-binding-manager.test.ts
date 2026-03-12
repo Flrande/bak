@@ -620,6 +620,25 @@ describe('session binding manager', () => {
     await expect(manager.getBindingInfo(BINDING_ID)).resolves.toBeNull();
   });
 
+  it('leaves unrelated tabs alone when closing a binding that shares a window', async () => {
+    const { browser, storage, manager } = await createManager();
+    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
+    const bindingWindowId = ensured.binding.windowId!;
+    const bindingTabId = ensured.binding.primaryTabId!;
+    const foreignTab = await browser.createTab({
+      windowId: bindingWindowId,
+      url: 'https://human.local/foreign',
+      active: false
+    });
+
+    await manager.close(BINDING_ID);
+
+    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
+    expect(browser.tabs.has(bindingTabId)).toBe(false);
+    expect(browser.tabs.has(foreignTab.id)).toBe(true);
+    expect(browser.windows.has(bindingWindowId)).toBe(true);
+  });
+
   it('uses an explicit label when creating the binding group', async () => {
     const { manager } = await createManager();
 

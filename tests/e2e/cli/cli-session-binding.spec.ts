@@ -96,8 +96,15 @@ async function openSessionPage(path: string, options: { active?: boolean } = {})
   expect(opened.tab.url).toContain(marker);
   if (options.active === true) {
     await expect
-      .poll(() => runHarnessCli<{ tab: { id: number } | null }>(['session', 'get-active-tab']).tab?.id ?? null, { timeout: 10_000 })
-      .toBe(opened.tab.id);
+      .poll(
+        () => runHarnessCli<{ tab: { id: number; url: string } | null }>(['session', 'get-active-tab']).tab?.url.includes(marker) ?? false,
+        { timeout: 10_000 }
+      )
+      .toBe(true);
+    const active = runHarnessCli<{ tab: { id: number; url: string } | null }>(['session', 'get-active-tab']).tab;
+    opened = {
+      tab: must(active, 'Expected an active session tab after open-tab --active')
+    };
   }
   await expect.poll(() => harness.context.pages().some((candidate) => candidate.url().includes(marker)), { timeout: 10_000 }).toBe(true);
   const page = must(
@@ -166,7 +173,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('keeps session binding inspection commands read-only before the first session binding tab exists', async () => {
+  test('keeps session binding inspection commands read-only before the first session binding tab exists while page commands auto-repair the binding', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -178,12 +185,15 @@ test.describe('CLI session binding workflows', () => {
       const beforePageCount = harness.context.pages().length;
       expect(beforeInfo.browser).toBeNull();
       expect(beforeActive.tab).toBeNull();
-      expect(runHarnessCliFailure(['page', 'url'])).toContain('Session has no active tab');
+      expect(runHarnessCliFailure(['page', 'url'])).toContain('Unsupported tab URL');
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
-      expect(harness.context.pages()).toHaveLength(beforePageCount);
+      expect(harness.context.pages().length).toBeGreaterThanOrEqual(beforePageCount);
 
-      const afterInfo = runHarnessCli<{ browser: null }>(['session', 'list-tabs']);
-      expect(afterInfo.browser).toBeNull();
+      const afterInfo = runHarnessCli<{ browser: { tabIds: number[]; activeTabId: number | null } | null; tabs: Array<{ url: string }> }>(['session', 'list-tabs']);
+      expect(afterInfo.browser).not.toBeNull();
+      expect(afterInfo.browser?.tabIds.length ?? 0).toBeGreaterThan(0);
+      expect(afterInfo.browser?.activeTabId).not.toBeNull();
+      expect(afterInfo.tabs.some((tab) => tab.url === 'about:blank')).toBe(true);
     } finally {
       await humanPage.close();
     }
@@ -317,7 +327,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('repairs missing group and tracked tabs without hijacking unrelated tabs in the session binding window', async () => {
+  test('auto-closes the session when the last tracked tab is manually closed without hijacking unrelated tabs in the old binding window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -326,34 +336,21 @@ test.describe('CLI session binding workflows', () => {
     try {
       const before = await sessionBrowserState();
       const bindingState = must(before.browser, 'Expected session browser metadata');
-      const originalGroupId = must(bindingState.groupId, 'Expected original group id');
-
-      const ungrouped = runHarnessCli<{ tabId: number }>([
-        'tabs',
-        'new',
-        '--window-id',
-        String(bindingState.windowId),
-        '--url',
-        'http://127.0.0.1:4173/network.html'
-      ]);
+      const marker = `__foreign=${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const foreign = await harness.createForeignTab(
+        must(bindingState.windowId, 'Expected binding window id'),
+        `http://127.0.0.1:4173/network.html?${marker}`
+      );
       const tracked = runHarnessCli<{ tabs: Array<{ id: number }> }>(['session', 'list-tabs']);
       for (const tab of tracked.tabs) {
-        runHarnessCli(['tabs', 'close', String(tab.id)]);
+        await harness.closeBrowserTab(tab.id);
       }
 
-      const repaired = runHarnessCli<{ browser: { groupId: number | null; tabIds: number[]; tabs: Array<{ id: number }> }; repaired: boolean; repairActions: string[] }>([
-        'session',
-        'ensure'
-      ]);
+      await expect.poll(() => runHarnessCliFailure(['session', 'ensure']), { timeout: 10_000 }).toContain('Session not found');
+      await expect.poll(() => runHarnessCliFailure(['page', 'url']), { timeout: 10_000 }).toContain('Session not found');
 
-      expect(repaired.repaired).toBe(true);
-      expect(repaired.browser.groupId).not.toBe(originalGroupId);
-      expect(repaired.browser.tabIds).toHaveLength(1);
-      expect(repaired.browser.tabIds).not.toContain(ungrouped.tabId);
-      expect(repaired.repairActions).toEqual(expect.arrayContaining(['recreated-group']));
-      expect(
-        repaired.repairActions.some((action) => action === 'created-primary-tab' || action === 'migrated-dirty-window')
-      ).toBe(true);
+      const allTabs = await harness.rpcCall<{ tabs: Array<{ id: number }> }>('tabs.list');
+      expect(allTabs.tabs.some((tab) => tab.id === foreign.tabId)).toBe(true);
     } finally {
       await opened.page.close().catch(() => undefined);
     }
@@ -449,30 +446,19 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('recreates the session binding window after the dedicated window is closed', async () => {
+  test('auto-closes the session when the dedicated window is manually closed', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
 
     const opened = await openSessionPage('/');
-    const before = await sessionBrowserState();
-    const windowId = before.browser?.windowId;
     const tracked = runHarnessCli<{ tabs: Array<{ id: number }> }>(['session', 'list-tabs']);
     for (const tab of tracked.tabs) {
-      runHarnessCli(['tabs', 'close', String(tab.id)]);
+      await harness.closeBrowserTab(tab.id);
     }
 
-    const repaired = runHarnessCli<{ browser: { windowId: number | null; tabIds: number[] }; repaired: boolean; repairActions: string[] }>([
-      'session',
-      'ensure'
-    ]);
-
-    expect(repaired.repaired).toBe(true);
-    expect(repaired.browser.windowId).not.toBeNull();
-    if (windowId !== null && windowId !== undefined) {
-      expect(repaired.browser.windowId).not.toBe(windowId);
-    }
-    expect(repaired.browser.tabIds.length).toBeGreaterThan(0);
+    await expect.poll(() => runHarnessCliFailure(['session', 'ensure']), { timeout: 10_000 }).toContain('Session not found');
+    await expect.poll(() => runHarnessCliFailure(['page', 'url']), { timeout: 10_000 }).toContain('Session not found');
   });
 
   test('rehomes a stale session binding that was incorrectly bound to the human window', async () => {
@@ -488,7 +474,7 @@ test.describe('CLI session binding workflows', () => {
     const marker = `__orphaned=${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const orphanedUrl = `http://127.0.0.1:4173/spa.html?${marker}`;
     const beforePages = new Set(harness.context.pages());
-    const orphaned = runHarnessCli<{ tabId: number }>(['tabs', 'new', '--window-id', String(humanWindowId), '--url', orphanedUrl]);
+    const orphaned = await harness.createForeignTab(humanWindowId, orphanedUrl);
     await expect
       .poll(() => harness.context.pages().some((candidate) => !beforePages.has(candidate) && candidate.url().includes(marker)), {
         timeout: 10_000
@@ -505,6 +491,8 @@ test.describe('CLI session binding workflows', () => {
       activeTabId: orphaned.tabId,
       primaryTabId: orphaned.tabId
     });
+    const listed = runHarnessCli<{ sessions: Array<{ sessionId: string }> }>(['session', 'list']);
+    expect(listed.sessions.some((session) => session.sessionId === harness.sessionId)).toBe(true);
 
     const opened = runHarnessCli<{ browser: { windowId: number | null }; tab: { id: number; windowId: number; url: string } }>([
       'session',

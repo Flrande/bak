@@ -89,6 +89,8 @@ export interface E2EHarness {
   findTabIdByUrl(urlPart: string): Promise<number>;
   openPage(path: string): Promise<{ page: Page; tabId: number }>;
   openHumanPage(path: string): Promise<{ page: Page }>;
+  createForeignTab(windowId: number, url: string): Promise<{ tabId: number }>;
+  closeBrowserTab(tabId: number): Promise<void>;
   assertTraceHas(method: string): void;
   disconnectBridge(): Promise<void>;
   reconnectBridge(): Promise<void>;
@@ -281,6 +283,7 @@ export async function createHarness(): Promise<E2EHarness> {
   const headless = process.env.BAK_E2E_HEADLESS !== '0';
   const rpcPort = await getFreePort();
   const bridgePort = await getFreePort();
+  const clientName = `e2e-harness-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
   let daemon: ChildProcess | undefined;
   let context: BrowserContext | undefined;
   let extensionId = '';
@@ -374,20 +377,30 @@ export async function createHarness(): Promise<E2EHarness> {
       )
       .toBe(true);
 
-    const createdSession = (await rpcCallInternal(rpcPort, 'session.create', {
-      clientName: 'e2e-harness'
-    })) as {
-      sessionId: string;
+    const persistSessionState = (): void => {
+      writeFileSync(
+        join(dataDir, 'e2e-session.json'),
+        JSON.stringify({
+          clientName,
+          sessionId
+        }),
+        'utf8'
+      );
     };
-    sessionId = createdSession.sessionId;
-    bindingId = createdSession.sessionId;
-    writeFileSync(
-      join(dataDir, 'e2e-session.json'),
-      JSON.stringify({
-        sessionId
-      }),
-      'utf8'
-    );
+
+    const resolveHarnessSession = async (): Promise<string> => {
+      const resolvedSession = (await rpcCallInternal(rpcPort, 'session.resolve', {
+        clientName
+      })) as {
+        sessionId: string;
+      };
+      sessionId = resolvedSession.sessionId;
+      bindingId = resolvedSession.sessionId;
+      persistSessionState();
+      return sessionId;
+    };
+
+    await resolveHarnessSession();
 
     const page = await context.newPage();
     await gotoWithRetry(page, 'http://127.0.0.1:4173/form.html', '#name-input');
@@ -396,13 +409,18 @@ export async function createHarness(): Promise<E2EHarness> {
     const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
       const deadline = Date.now() + DEFAULT_RPC_TIMEOUT_MS;
       let lastError: unknown;
-      const requestParams = withSession(method, params, sessionId);
+      let requestParams = withSession(method, params, sessionId);
       while (Date.now() < deadline) {
         try {
           return (await rpcCallInternal(rpcPort, method, requestParams)) as T;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           lastError = error;
+          if (isSessionScopedMethod(method) && message.includes('Session not found')) {
+            await resolveHarnessSession();
+            requestParams = withSession(method, params, sessionId);
+            continue;
+          }
           if (!message.includes('E_NOT_READY') && !message.includes('E_TIMEOUT')) {
             throw error;
           }
@@ -417,8 +435,23 @@ export async function createHarness(): Promise<E2EHarness> {
         await rpcCallInternal(rpcPort, method, withSession(method, params, sessionId));
         throw new Error(`Expected error for method: ${method}`);
       } catch (error) {
-        const fromError = (error as BakErrorResponse).bakCode;
         const rawMessage = error instanceof Error ? error.message : String(error);
+        if (isSessionScopedMethod(method) && rawMessage.includes('Session not found')) {
+          await resolveHarnessSession();
+          try {
+            await rpcCallInternal(rpcPort, method, withSession(method, params, sessionId));
+            throw new Error(`Expected error for method: ${method}`);
+          } catch (retryError) {
+            const retryBakCode = (retryError as BakErrorResponse).bakCode;
+            const retryRawMessage = retryError instanceof Error ? retryError.message : String(retryError);
+            const retryInferred = retryRawMessage.match(/\bE_[A-Z_]+\b/)?.[0];
+            return {
+              bakCode: retryBakCode ?? retryInferred ?? 'UNKNOWN',
+              message: retryRawMessage
+            };
+          }
+        }
+        const fromError = (error as BakErrorResponse).bakCode;
         const inferred = rawMessage.match(/\bE_[A-Z_]+\b/)?.[0];
         const bakCode = fromError ?? inferred ?? 'UNKNOWN';
         return {
@@ -447,6 +480,35 @@ export async function createHarness(): Promise<E2EHarness> {
       return { page: target };
     };
 
+    const createForeignTab = async (windowId: number, url: string): Promise<{ tabId: number }> => {
+      let createdTabId = 0;
+      await withPopup(async (popup) => {
+        createdTabId = await popup.evaluate(
+          async ({ targetWindowId, targetUrl }) => {
+            const tab = await chrome.tabs.create({
+              windowId: targetWindowId,
+              url: targetUrl,
+              active: false
+            });
+            if (typeof tab.id !== 'number') {
+              throw new Error('Created tab is missing id');
+            }
+            return tab.id;
+          },
+          { targetWindowId: windowId, targetUrl: url }
+        );
+      });
+      return { tabId: createdTabId };
+    };
+
+    const closeBrowserTab = async (tabId: number): Promise<void> => {
+      await withPopup(async (popup) => {
+        await popup.evaluate(async (targetTabId) => {
+          await chrome.tabs.remove(targetTabId);
+        }, tabId);
+      });
+    };
+
     const openPage = async (path: string): Promise<{ page: Page; tabId: number }> => {
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
@@ -456,6 +518,7 @@ export async function createHarness(): Promise<E2EHarness> {
       let lastError: unknown;
       while (Date.now() < deadline) {
         try {
+          await resolveHarnessSession();
           await rpcCall('session.ensure');
           opened = (await rpcCall<{ tab: { id: number; url: string } }>('session.openTab', {
             url
@@ -609,8 +672,12 @@ export async function createHarness(): Promise<E2EHarness> {
     return {
       dataDir,
       rpcPort,
-      sessionId,
-      bindingId,
+      get sessionId() {
+        return sessionId;
+      },
+      get bindingId() {
+        return bindingId;
+      },
       context,
       page,
       rpcCall,
@@ -618,6 +685,8 @@ export async function createHarness(): Promise<E2EHarness> {
       findTabIdByUrl,
       openPage,
       openHumanPage,
+      createForeignTab,
+      closeBrowserTab,
       assertTraceHas,
       disconnectBridge,
       reconnectBridge,

@@ -516,10 +516,12 @@ class SessionBindingManager {
     // Clear persisted state before closing the window so tab/window removal
     // listeners cannot race and resurrect an empty binding record.
     await this.storage.delete(bindingId);
-    if (state.windowId !== null) {
-      const existingWindow = await this.browser.getWindow(state.windowId);
-      if (existingWindow) {
-        await this.browser.closeWindow(state.windowId);
+    const trackedTabs = await this.readLooseTrackedTabs(this.collectCandidateTabIds(state));
+    for (const trackedTab of trackedTabs) {
+      try {
+        await this.browser.closeTab(trackedTab.id);
+      } catch {
+        // Ignore tabs that were already removed before explicit close.
       }
     }
     return { ok: true };
@@ -780,6 +782,10 @@ class SessionBindingManager {
     state.tabIds = recreatedTabs.map((tab) => tab.id);
     state.primaryTabId = nextPrimaryTabId;
     state.activeTabId = nextActiveTabId;
+    await this.storage.save({
+      ...state,
+      tabIds: [...state.tabIds]
+    });
 
     for (const bindingTab of ownership.bindingTabs) {
       await this.browser.closeTab(bindingTab.id);
