@@ -1727,10 +1727,6 @@ function timestampCandidateMatchesFromText(text: string, patterns?: string[]): T
   return [...collected.values()];
 }
 
-function timestampCandidatesFromText(text: string, patterns?: string[]): string[] {
-  return timestampCandidateMatchesFromText(text, patterns).map((candidate) => candidate.value);
-}
-
 function listInlineScripts(): Array<{ content: string; suspectedVars: string[] }> {
   return Array.from(document.scripts)
     .filter((script) => !script.src)
