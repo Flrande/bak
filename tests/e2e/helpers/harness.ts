@@ -92,7 +92,7 @@ export interface E2EHarness {
   assertTraceHas(method: string): void;
   disconnectBridge(): Promise<void>;
   reconnectBridge(): Promise<void>;
-  setWorkspaceState(state: unknown | null): Promise<void>;
+  setSessionBindingState(state: unknown | null): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -483,7 +483,7 @@ export async function createHarness(): Promise<E2EHarness> {
 
       const target = context.pages().find((candidate) => candidate.url().includes(marker));
       if (!target) {
-        throw new Error(`workspace page not found for ${url}`);
+        throw new Error(`session page not found for ${url}`);
       }
       await waitForTabContentReady(rpcPort, opened.tab.id, sessionId);
       return { page: target, tabId: opened.tab.id };
@@ -540,16 +540,16 @@ export async function createHarness(): Promise<E2EHarness> {
         .toBe(true);
     };
 
-    const setWorkspaceState = async (state: unknown | null): Promise<void> => {
+    const setSessionBindingState = async (state: unknown | null): Promise<void> => {
       await withPopup(async (popup) => {
         await popup.evaluate(
-          async ({ targetWorkspaceId, workspaceState }) => {
+          async ({ targetBindingId, bindingState }) => {
             const stored = (await chrome.storage.local.get('sessionBindings')) as {
               sessionBindings?: Record<string, unknown>;
             };
             const sessionBindings = { ...(stored.sessionBindings ?? {}) };
-            if (workspaceState === null) {
-              delete sessionBindings[targetWorkspaceId];
+            if (bindingState === null) {
+              delete sessionBindings[targetBindingId];
               if (Object.keys(sessionBindings).length === 0) {
                 await chrome.storage.local.remove('sessionBindings');
                 return;
@@ -557,10 +557,10 @@ export async function createHarness(): Promise<E2EHarness> {
               await chrome.storage.local.set({ sessionBindings });
               return;
             }
-            sessionBindings[targetWorkspaceId] = workspaceState;
+            sessionBindings[targetBindingId] = bindingState;
             await chrome.storage.local.set({ sessionBindings });
           },
-          { targetWorkspaceId: bindingId, workspaceState: state }
+          { targetBindingId: bindingId, bindingState: state }
         );
       });
     };
@@ -621,7 +621,7 @@ export async function createHarness(): Promise<E2EHarness> {
       assertTraceHas,
       disconnectBridge,
       reconnectBridge,
-      setWorkspaceState,
+      setSessionBindingState,
       dispose
     };
   } catch (error) {

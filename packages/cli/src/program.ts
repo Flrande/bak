@@ -735,6 +735,7 @@ addStructuredHelp(
         .command('extract')
         .description('Extract a global variable path from page world without allowing arbitrary function calls')
         .requiredOption('--path <path>', 'globalThis path such as market_data.QQQ.quotes.changePercent')
+        .option('--resolver <resolver>', 'auto|globalThis|lexical', 'auto')
         .option('--scope <scope>', 'current|main|all-frames')
         .option('--max-bytes <bytes>', 'max serialized result size in bytes')
     )
@@ -742,11 +743,12 @@ addStructuredHelp(
   {
     notes: [
       'Use page extract first when you know the variable path and want the safer read-only option.',
-      'Paths start from globalThis and support dotted segments plus array indexes.'
+      'auto tries globalThis first, then falls back to lexical page-world bindings when the path is not on window.',
+      'Paths support dotted segments plus array indexes.'
     ],
     examples: [
-      'bak page extract --path "table_data" --rpc-ws-port 17374',
-      'bak page extract --path "market_data.QQQ.quotes.changePercent" --scope main --rpc-ws-port 17374'
+      'bak page extract --path "table_data" --resolver auto --rpc-ws-port 17374',
+      'bak page extract --path "market_data.QQQ.quotes.changePercent" --resolver lexical --scope main --rpc-ws-port 17374'
     ]
   }
 ).action(async (options) =>
@@ -755,6 +757,7 @@ addStructuredHelp(
     {
       ...targetParams(options),
       path: String(options.path),
+      resolver: options.resolver ? String(options.resolver) : undefined,
       scope: parseScope(options.scope),
       maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes')
     },
@@ -961,6 +964,7 @@ addStructuredHelp(
         .description('Replay a captured network request through the current page context')
         .requiredOption('--request-id <id>', 'captured request id')
         .option('--mode <mode>', 'raw|json', 'raw')
+        .option('--with-schema <mode>', 'auto')
         .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
         .option('--max-bytes <bytes>', 'max response body bytes to retain')
         .option('--requires-confirm', 'confirm that replaying the captured request is safe', false)
@@ -969,7 +973,7 @@ addStructuredHelp(
   {
     examples: [
       'bak network replay --request-id req_123 --rpc-ws-port 17374',
-      'bak network replay --request-id req_123 --mode json --max-bytes 8192 --rpc-ws-port 17374'
+      'bak network replay --request-id req_123 --mode json --with-schema auto --max-bytes 8192 --rpc-ws-port 17374'
     ]
   }
 ).action(async (options) =>
@@ -979,6 +983,7 @@ addStructuredHelp(
       ...targetParams(options),
       id: String(options.requestId),
       mode: options.mode ? String(options.mode) : undefined,
+      withSchema: options.withSchema ? String(options.withSchema) : undefined,
       timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
       maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes'),
       requiresConfirm: options.requiresConfirm === true
@@ -1104,7 +1109,7 @@ addStructuredHelp(inspect, {
 addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('page-data').description('Summarize likely inline data variables, tables, and recent requests'))), {
   examples: ['bak inspect page-data --rpc-ws-port 17374']
 }).action(async (options) => invoke('inspect.pageData', { ...targetParams(options) }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('live-updates').description('Summarize recent mutations, timers, and recent network cadence'))), {
+addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('live-updates').description('Summarize recent mutations, timers, and network cadence'))), {
   examples: ['bak inspect live-updates --rpc-ws-port 17374']
 }).action(async (options) => invoke('inspect.liveUpdates', { ...targetParams(options) }, parseRpcPort(options)));
 addStructuredHelp(

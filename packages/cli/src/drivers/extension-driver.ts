@@ -15,7 +15,7 @@ import type { ExtensionBridge } from './extension-bridge.js';
 const BRIDGE_TIMEOUT_GRACE_MS = 1_500;
 const BRIDGE_TIMEOUT_MIN_MS = 1_000;
 const NAVIGATION_BRIDGE_TIMEOUT_MS = 30_000;
-const WORKSPACE_BRIDGE_TIMEOUT_MS = 30_000;
+const SESSION_BINDING_BRIDGE_TIMEOUT_MS = 30_000;
 
 function normalizeTimeoutMs(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
@@ -146,42 +146,42 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('ui.selectCandidate', { candidates, tabId }, 60_000);
   }
 
-  workspaceEnsure(params: { workspaceId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
-    return this.bridge.request('workspace.ensure', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
+  sessionBindingEnsure(params: { bindingId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+    return this.bridge.request('sessionBinding.ensure', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceInfo(params: { workspaceId?: string } = {}): Promise<{ workspace: SessionBindingEnsureResult['workspace'] | null }> {
-    return this.bridge.request('workspace.info', params);
+  sessionBindingInfo(params: { bindingId?: string } = {}): Promise<{ browser: SessionBindingEnsureResult['browser'] | null }> {
+    return this.bridge.request('sessionBinding.info', params);
   }
 
-  workspaceOpenTab(
-    params: { workspaceId?: string; url?: string; active?: boolean; focus?: boolean } = {}
+  sessionBindingOpenTab(
+    params: { bindingId?: string; url?: string; active?: boolean; focus?: boolean } = {}
   ): Promise<SessionBindingOpenTabResult> {
-    return this.bridge.request('workspace.openTab', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
+    return this.bridge.request('sessionBinding.openTab', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceListTabs(params: { workspaceId?: string } = {}): Promise<SessionBindingListTabsResult> {
-    return this.bridge.request('workspace.listTabs', params);
+  sessionBindingListTabs(params: { bindingId?: string } = {}): Promise<SessionBindingListTabsResult> {
+    return this.bridge.request('sessionBinding.listTabs', params);
   }
 
-  workspaceGetActiveTab(params: { workspaceId?: string } = {}): Promise<SessionBindingActiveTabResult> {
-    return this.bridge.request('workspace.getActiveTab', params);
+  sessionBindingGetActiveTab(params: { bindingId?: string } = {}): Promise<SessionBindingActiveTabResult> {
+    return this.bridge.request('sessionBinding.getActiveTab', params);
   }
 
-  workspaceSetActiveTab(params: { workspaceId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
-    return this.bridge.request('workspace.setActiveTab', params);
+  sessionBindingSetActiveTab(params: { bindingId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
+    return this.bridge.request('sessionBinding.setActiveTab', params);
   }
 
-  workspaceFocus(params: { workspaceId?: string } = {}): Promise<SessionBindingFocusResult> {
-    return this.bridge.request('workspace.focus', params);
+  sessionBindingFocus(params: { bindingId?: string } = {}): Promise<SessionBindingFocusResult> {
+    return this.bridge.request('sessionBinding.focus', params);
   }
 
-  workspaceReset(params: { workspaceId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
-    return this.bridge.request('workspace.reset', params, WORKSPACE_BRIDGE_TIMEOUT_MS);
+  sessionBindingReset(params: { bindingId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+    return this.bridge.request('sessionBinding.reset', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
 
-  workspaceClose(params: { workspaceId?: string } = {}): Promise<{ ok: true }> {
-    return this.bridge.request('workspace.close', params);
+  sessionBindingClose(params: { bindingId?: string } = {}): Promise<{ ok: true }> {
+    return this.bridge.request('sessionBinding.close', params);
   }
 
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult> {

@@ -17,8 +17,9 @@ import { BridgeError } from '../../packages/cli/src/drivers/extension-bridge.js'
 import { StubDriver } from '../../packages/cli/src/drivers/stub-drivers.js';
 
 class FakeDriver extends StubDriver {
-  workspaceInfoCalls = 0;
-  workspaceListTabsCalls = 0;
+  nextTabId = 303;
+  sessionBindingInfoCalls = 0;
+  sessionBindingListTabsCalls = 0;
   pageTitleCalls = 0;
   pageSnapshotCalls = 0;
   rawRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -28,7 +29,7 @@ class FakeDriver extends StubDriver {
   };
   bindingExists = true;
   contextSetBehaviors: Array<'success' | 'stale-not-found' | 'timeout'> = [];
-  workspace: SessionBindingEnsureResult['workspace'] = {
+  browser: SessionBindingEnsureResult['browser'] = {
     windowId: 1,
     groupId: 2,
     tabIds: [101, 202],
@@ -78,46 +79,63 @@ class FakeDriver extends StubDriver {
     };
   }
 
-  async workspaceEnsure(): Promise<SessionBindingEnsureResult> {
+  async sessionBindingEnsure(): Promise<SessionBindingEnsureResult> {
     this.bindingExists = true;
     return {
-      workspace: this.cloneWorkspace(),
+      browser: this.cloneBrowser(),
       created: false,
       repaired: false,
       repairActions: []
     };
   }
 
-  async workspaceInfo(): Promise<{ workspace: SessionBindingEnsureResult['workspace'] | null }> {
-    this.workspaceInfoCalls += 1;
+  async sessionBindingInfo(): Promise<{ browser: SessionBindingEnsureResult['browser'] | null }> {
+    this.sessionBindingInfoCalls += 1;
     return {
-      workspace: this.bindingExists ? this.cloneWorkspace() : null
+      browser: this.bindingExists ? this.cloneBrowser() : null
     };
   }
 
-  async workspaceListTabs(params: { workspaceId?: string } = {}): Promise<SessionBindingListTabsResult> {
-    this.workspaceListTabsCalls += 1;
+  async sessionBindingListTabs(params: { bindingId?: string } = {}): Promise<SessionBindingListTabsResult> {
+    this.sessionBindingListTabsCalls += 1;
     if (!this.bindingExists) {
-      throw new BridgeError('E_NOT_FOUND', `Workspace ${params.workspaceId ?? 'unknown'} does not exist`);
+      throw new BridgeError('E_NOT_FOUND', `Binding ${params.bindingId ?? 'unknown'} does not exist`);
     }
     return {
-      workspace: this.cloneWorkspace(),
+      browser: this.cloneBrowser(),
       tabs: this.cloneTabs()
     };
   }
 
-  async workspaceSetActiveTab(params: { workspaceId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
-    const tab = this.workspace.tabs.find((candidate) => candidate.id === params.tabId);
+  async sessionBindingOpenTab(params: { bindingId?: string; url?: string; active?: boolean }): Promise<SessionBindingOpenTabResult> {
+    const tab: BrowserTab = {
+      id: this.nextTabId++,
+      title: params.url ?? 'about:blank',
+      url: params.url ?? 'about:blank',
+      active: params.active === true,
+      windowId: this.browser.windowId ?? 1,
+      groupId: this.browser.groupId
+    };
+    this.browser.tabIds = [...this.browser.tabIds, tab.id];
+    this.browser.tabs = [...this.browser.tabs, tab];
+    return {
+      browser: this.cloneBrowser(),
+      tab: { ...tab }
+    };
+  }
+
+  async sessionBindingSetActiveTab(params: { bindingId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
+    const tab = this.browser.tabs.find((candidate) => candidate.id === params.tabId);
     if (!tab) {
-      throw new BridgeError('E_NOT_FOUND', `Tab ${params.tabId} does not belong to workspace ${params.workspaceId ?? 'unknown'}`);
+      throw new BridgeError('E_NOT_FOUND', `Tab ${params.tabId} does not belong to binding ${params.bindingId ?? 'unknown'}`);
     }
-    this.workspace.activeTabId = tab.id;
-    this.workspace.tabs = this.workspace.tabs.map((candidate) => ({
+    this.browser.activeTabId = tab.id;
+    this.browser.tabs = this.browser.tabs.map((candidate) => ({
       ...candidate,
       active: candidate.id === tab.id
     }));
     return {
-      workspace: this.cloneWorkspace(),
+      browser: this.cloneBrowser(),
       tab: { ...tab, active: true }
     };
   }
@@ -247,16 +265,16 @@ class FakeDriver extends StubDriver {
     };
   }
 
-  private cloneWorkspace(): SessionBindingEnsureResult['workspace'] {
+  private cloneBrowser(): SessionBindingEnsureResult['browser'] {
     return {
-      ...this.workspace,
-      tabIds: [...this.workspace.tabIds],
+      ...this.browser,
+      tabIds: [...this.browser.tabIds],
       tabs: this.cloneTabs()
     };
   }
 
   private cloneTabs(): BrowserTab[] {
-    return this.workspace.tabs.map((tab) => ({ ...tab }));
+    return this.browser.tabs.map((tab) => ({ ...tab }));
   }
 }
 
@@ -297,7 +315,7 @@ function createService(driver: FakeDriver): BakService {
 }
 
 describe('service runtime session bindings', () => {
-  it('uses workspace.listTabs instead of workspace.info for session tab reads', async () => {
+  it('uses session binding tab listing instead of binding info for session tab reads', async () => {
     const driver = new FakeDriver();
     const service = createService(driver);
 
@@ -308,8 +326,8 @@ describe('service runtime session bindings', () => {
 
     expect(tabs.tabs.map((tab) => tab.id)).toEqual([101, 202]);
     expect(active.tab?.id).toBe(101);
-    expect(driver.workspaceListTabsCalls).toBeGreaterThanOrEqual(2);
-    expect(driver.workspaceInfoCalls).toBe(0);
+    expect(driver.sessionBindingListTabsCalls).toBeGreaterThanOrEqual(2);
+    expect(driver.sessionBindingInfoCalls).toBe(0);
   });
 
   it('refreshes lastSeenAt for static session commands', async () => {
@@ -389,6 +407,48 @@ describe('service runtime session bindings', () => {
       framePath: [],
       shadowPath: []
     });
+  });
+
+  it('uses the opened tab as the session current tab when session.openTab is explicit about activation', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    const opened = await service.invoke('session.openTab', {
+      sessionId: created.sessionId,
+      url: 'https://example.test/third',
+      active: true
+    });
+    const active = await service.invoke('session.getActiveTab', { sessionId: created.sessionId });
+    await service.invokeDynamic('page.title', { sessionId: created.sessionId });
+
+    expect(opened.browser.activeTabId).toBe(opened.tab.id);
+    expect(active.tab?.id).toBe(opened.tab.id);
+    expect(driver.rawRequests.at(-1)).toMatchObject({
+      method: 'page.title',
+      params: { tabId: opened.tab.id }
+    });
+  });
+
+  it('keeps the previous session current tab when session.openTab creates a background tab', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    const opened = await service.invoke('session.openTab', {
+      sessionId: created.sessionId,
+      url: 'https://example.test/background',
+      active: false
+    });
+    const active = await service.invoke('session.getActiveTab', { sessionId: created.sessionId });
+
+    expect(opened.browser.activeTabId).toBe(101);
+    expect(active.tab?.id).toBe(101);
+    expect(opened.tab.id).not.toBe(101);
   });
 
   it('surfaces transport failures while restoring context during session.setActiveTab', async () => {

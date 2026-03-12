@@ -32,7 +32,7 @@ function setDirTime(path: string, mtimeMs: number): void {
   utimesSync(path, time, time);
 }
 
-function seedWorkspace(root: string): void {
+function seedProjectRoot(root: string): void {
   writeFile(join(root, 'packages', 'protocol', 'src', 'index.ts'), 'export const protocol = true;', 1_000);
   writeFile(join(root, 'packages', 'protocol', 'package.json'), '{}', 1_000);
   writeFile(join(root, 'packages', 'protocol', 'tsconfig.json'), '{}', 1_000);
@@ -150,7 +150,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('detects a stale cli dist without forcing an extension rebuild', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     writeFile(join(root, 'packages', 'cli', 'src', 'index.ts'), 'export const cli = "updated";', 3_000);
 
     const plan = detectRuntimeBuildPlan(root);
@@ -164,7 +164,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('detects extension public asset changes and plans an extension rebuild', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     writeFile(join(root, 'packages', 'extension', 'public', 'manifest.json'), '{"manifest_version":3,"name":"Updated"}', 3_000);
 
     const plan = detectRuntimeBuildPlan(root);
@@ -178,7 +178,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing cli runtime outputs as stale even when the build stamp exists', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'packages', 'cli', 'dist', 'bin.js'));
 
     const plan = detectRuntimeBuildPlan(root);
@@ -192,7 +192,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing cli chunk outputs as stale even when the build stamp exists', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'packages', 'cli', 'dist', 'chunk-FAKE.js'));
 
     const plan = detectRuntimeBuildPlan(root);
@@ -206,7 +206,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing extension runtime outputs as stale even when the build stamp exists', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'packages', 'extension', 'dist', 'manifest.json'));
 
     const plan = detectRuntimeBuildPlan(root);
@@ -220,7 +220,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('detects stale test-site dist without forcing unrelated rebuilds', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     writeFile(join(root, 'apps', 'test-sites', 'src', 'main.ts'), 'export const site = "updated";', 3_000);
 
     const plan = detectRuntimeBuildPlan(root, { includeTestSites: true });
@@ -234,7 +234,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing Playwright-used controlled page output as stale even when index form spa and the build stamp remain', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'apps', 'test-sites', 'dist', 'controlled.html'));
 
     const plan = detectRuntimeBuildPlan(root, { includeTestSites: true });
@@ -248,7 +248,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing Playwright-used iframe host output as stale even when index form spa and the build stamp remain', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'apps', 'test-sites', 'dist', 'iframe-host.html'));
 
     const plan = detectRuntimeBuildPlan(root, { includeTestSites: true });
@@ -262,7 +262,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('treats missing test-site built assets as stale even when html and the build stamp exist', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     rmSync(join(root, 'apps', 'test-sites', 'dist', 'assets', 'main-test.js'));
 
     const plan = detectRuntimeBuildPlan(root, { includeTestSites: true });
@@ -276,7 +276,7 @@ describe('e2e runtime freshness helper', () => {
 
   it('rechecks freshness on repeated calls within one process', () => {
     const root = makeTempRoot();
-    seedWorkspace(root);
+    seedProjectRoot(root);
     const builtTargets: RuntimeTargetName[] = [];
     const runner: RuntimeBuildRunner = (_root, target) => {
       builtTargets.push(target);

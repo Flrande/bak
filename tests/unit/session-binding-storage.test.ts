@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LEGACY_STORAGE_KEY_WORKSPACE,
-  LEGACY_STORAGE_KEY_WORKSPACES,
   resolveSessionBindingStateMap,
   STORAGE_KEY_SESSION_BINDINGS
 } from '../../packages/extension/src/session-binding-storage.js';
@@ -18,16 +16,10 @@ const bindingRecord = {
 };
 
 describe('session binding storage', () => {
-  it('prefers current sessionBindings state', () => {
+  it('reads current sessionBindings state', () => {
     const stateMap = resolveSessionBindingStateMap({
       [STORAGE_KEY_SESSION_BINDINGS]: {
         'session-a': bindingRecord
-      },
-      [LEGACY_STORAGE_KEY_WORKSPACES]: {
-        'session-b': {
-          ...bindingRecord,
-          id: 'session-b'
-        }
       }
     });
 
@@ -35,20 +27,17 @@ describe('session binding storage', () => {
     expect(stateMap['session-a']).toEqual(bindingRecord);
   });
 
-  it('migrates the legacy single-record agentWorkspace key', () => {
+  it('returns an empty map when the current key is missing', () => {
     const stateMap = resolveSessionBindingStateMap({
-      [LEGACY_STORAGE_KEY_WORKSPACE]: bindingRecord
+      otherKey: bindingRecord
     });
 
-    expect(stateMap).toEqual({
-      'session-a': bindingRecord
-    });
+    expect(stateMap).toEqual({});
   });
 
-  it('does not fall back to legacy state when the current key is present but empty', () => {
+  it('returns an empty map when the current key is present but empty', () => {
     const stateMap = resolveSessionBindingStateMap({
-      [STORAGE_KEY_SESSION_BINDINGS]: {},
-      [LEGACY_STORAGE_KEY_WORKSPACE]: bindingRecord
+      [STORAGE_KEY_SESSION_BINDINGS]: {}
     });
 
     expect(stateMap).toEqual({});

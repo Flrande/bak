@@ -73,7 +73,7 @@ export class SessionManager {
     if (session.activeTabId !== null && !validTabIds.has(session.activeTabId)) {
       session.activeTabId = null;
     }
-    if (binding.activeTabId !== null) {
+    if (binding.activeTabId !== null && session.activeTabId === null) {
       session.activeTabId = binding.activeTabId;
       this.ensureTabContext(session, binding.activeTabId);
     }

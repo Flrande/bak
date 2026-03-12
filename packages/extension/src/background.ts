@@ -6,7 +6,9 @@ import type {
   PageExecutionScope,
   PageFetchResponse,
   PageFrameResult,
-  PageFreshnessResult
+  PageFreshnessResult,
+  TableHandle,
+  TableSchema
 } from '@flrande/bak-protocol';
 import {
   clearNetworkEntries,
@@ -22,21 +24,16 @@ import {
 } from './network-debugger.js';
 import { isSupportedAutomationUrl } from './url-policy.js';
 import { computeReconnectDelayMs } from './reconnect.js';
-import {
-  LEGACY_STORAGE_KEY_WORKSPACE,
-  LEGACY_STORAGE_KEY_WORKSPACES,
-  resolveSessionBindingStateMap,
-  STORAGE_KEY_SESSION_BINDINGS
-} from './session-binding-storage.js';
+import { resolveSessionBindingStateMap, STORAGE_KEY_SESSION_BINDINGS } from './session-binding-storage.js';
 import { containsRedactionMarker } from './privacy.js';
 import {
-  type WorkspaceBrowser as SessionBindingBrowser,
-  type WorkspaceColor as SessionBindingColor,
-  type WorkspaceRecord as SessionBindingRecord,
-  type WorkspaceTab as SessionBindingTab,
-  type WorkspaceWindow as SessionBindingWindow,
-  WorkspaceManager as SessionBindingManager
-} from './workspace.js';
+  type SessionBindingBrowser,
+  type SessionBindingColor,
+  type SessionBindingRecord,
+  type SessionBindingTab,
+  type SessionBindingWindow,
+  SessionBindingManager
+} from './session-binding.js';
 
 interface CliRequest {
   id: string;
@@ -74,6 +71,30 @@ const STORAGE_KEY_DEBUG_RICH_TEXT = 'debugRichText';
 const DEFAULT_TAB_LOAD_TIMEOUT_MS = 40_000;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const DATA_TIMESTAMP_CONTEXT_PATTERN =
+  /\b(updated|update|updatedat|asof|timestamp|generated|generatedat|refresh|freshness|latest|last|quote|trade|price|flow|market|time|snapshot|signal)\b/i;
+const CONTRACT_TIMESTAMP_CONTEXT_PATTERN =
+  /\b(expiry|expiration|expires|option|contract|strike|maturity|dte|call|put|exercise)\b/i;
+const EVENT_TIMESTAMP_CONTEXT_PATTERN = /\b(earnings|event|report|dividend|split|meeting|fomc|release|filing)\b/i;
+
+interface TimestampEvidenceCandidate {
+  value: string;
+  source: 'visible' | 'inline' | 'page-data' | 'network';
+  context?: string;
+  path?: string;
+  category?: 'data' | 'contract' | 'event' | 'unknown';
+}
+
+interface PageDataCandidateProbe {
+  name: string;
+  resolver: 'globalThis' | 'lexical';
+  sample: unknown;
+  timestamps: Array<{
+    path: string;
+    value: string;
+    category: 'data' | 'contract' | 'event' | 'unknown';
+  }>;
+}
 const REPLAY_FORBIDDEN_HEADER_NAMES = new Set([
   'accept-encoding',
   'authorization',
@@ -93,6 +114,7 @@ let nextReconnectInMs: number | null = null;
 let reconnectAttempt = 0;
 let lastError: RuntimeErrorDetails | null = null;
 let manualDisconnect = false;
+let sessionBindingStateMutationQueue: Promise<void> = Promise.resolve();
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -156,10 +178,10 @@ function normalizeUnhandledError(error: unknown): CliResponse['error'] {
   if (lower.includes('no tab with id') || lower.includes('no window with id')) {
     return toError('E_NOT_FOUND', message);
   }
-  if (lower.includes('workspace') && lower.includes('does not exist')) {
+  if (lower.includes('binding') && lower.includes('does not exist')) {
     return toError('E_NOT_FOUND', message);
   }
-  if (lower.includes('does not belong to workspace') || lower.includes('is missing from workspace')) {
+  if (lower.includes('does not belong to binding') || lower.includes('is missing from binding')) {
     return toError('E_NOT_FOUND', message);
   }
   if (lower.includes('invalid url') || lower.includes('url is invalid')) {
@@ -186,43 +208,64 @@ function toTabInfo(tab: chrome.tabs.Tab): SessionBindingTab {
   };
 }
 
-async function loadWorkspaceStateMap(): Promise<Record<string, SessionBindingRecord>> {
-  const stored = await chrome.storage.local.get([
-    STORAGE_KEY_SESSION_BINDINGS,
-    LEGACY_STORAGE_KEY_WORKSPACES,
-    LEGACY_STORAGE_KEY_WORKSPACE
-  ]);
+async function readSessionBindingStateMap(): Promise<Record<string, SessionBindingRecord>> {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_SESSION_BINDINGS]);
   return resolveSessionBindingStateMap(stored);
 }
 
-async function loadWorkspaceState(workspaceId: string): Promise<SessionBindingRecord | null> {
-  const stateMap = await loadWorkspaceStateMap();
-  return stateMap[workspaceId] ?? null;
-}
-
-async function listWorkspaceStates(): Promise<SessionBindingRecord[]> {
-  return Object.values(await loadWorkspaceStateMap());
-}
-
-async function saveWorkspaceState(state: SessionBindingRecord): Promise<void> {
-  const stateMap = await loadWorkspaceStateMap();
-  stateMap[state.id] = state;
-  await chrome.storage.local.set({ [STORAGE_KEY_SESSION_BINDINGS]: stateMap });
-  await chrome.storage.local.remove([LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
-}
-
-async function deleteWorkspaceState(workspaceId: string): Promise<void> {
-  const stateMap = await loadWorkspaceStateMap();
-  delete stateMap[workspaceId];
+async function flushSessionBindingStateMap(stateMap: Record<string, SessionBindingRecord>): Promise<void> {
   if (Object.keys(stateMap).length === 0) {
-    await chrome.storage.local.remove([STORAGE_KEY_SESSION_BINDINGS, LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
+    await chrome.storage.local.remove([STORAGE_KEY_SESSION_BINDINGS]);
     return;
   }
   await chrome.storage.local.set({ [STORAGE_KEY_SESSION_BINDINGS]: stateMap });
-  await chrome.storage.local.remove([LEGACY_STORAGE_KEY_WORKSPACES, LEGACY_STORAGE_KEY_WORKSPACE]);
 }
 
-const workspaceBrowser: SessionBindingBrowser = {
+async function runSessionBindingStateMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const run = sessionBindingStateMutationQueue.then(operation, operation);
+  sessionBindingStateMutationQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function mutateSessionBindingStateMap<T>(mutator: (stateMap: Record<string, SessionBindingRecord>) => Promise<T> | T): Promise<T> {
+  return await runSessionBindingStateMutation(async () => {
+    const stateMap = await readSessionBindingStateMap();
+    const result = await mutator(stateMap);
+    await flushSessionBindingStateMap(stateMap);
+    return result;
+  });
+}
+
+async function loadSessionBindingStateMap(): Promise<Record<string, SessionBindingRecord>> {
+  await sessionBindingStateMutationQueue;
+  return await readSessionBindingStateMap();
+}
+
+async function loadSessionBindingState(bindingId: string): Promise<SessionBindingRecord | null> {
+  const stateMap = await loadSessionBindingStateMap();
+  return stateMap[bindingId] ?? null;
+}
+
+async function listSessionBindingStates(): Promise<SessionBindingRecord[]> {
+  return Object.values(await loadSessionBindingStateMap());
+}
+
+async function saveSessionBindingState(state: SessionBindingRecord): Promise<void> {
+  await mutateSessionBindingStateMap((stateMap) => {
+    stateMap[state.id] = state;
+  });
+}
+
+async function deleteSessionBindingState(bindingId: string): Promise<void> {
+  await mutateSessionBindingStateMap((stateMap) => {
+    delete stateMap[bindingId];
+  });
+}
+
+const sessionBindingBrowser: SessionBindingBrowser = {
   async getTab(tabId) {
     try {
       return toTabInfo(await chrome.tabs.get(tabId));
@@ -363,12 +406,12 @@ const workspaceBrowser: SessionBindingBrowser = {
 
 const bindingManager = new SessionBindingManager(
   {
-    load: loadWorkspaceState,
-    save: saveWorkspaceState,
-    delete: deleteWorkspaceState,
-    list: listWorkspaceStates
+    load: loadSessionBindingState,
+    save: saveSessionBindingState,
+    delete: deleteSessionBindingState,
+    list: listSessionBindingStates
   },
-  workspaceBrowser
+  sessionBindingBrowser
 );
 
 async function waitForTabComplete(tabId: number, timeoutMs = DEFAULT_TAB_LOAD_TIMEOUT_MS): Promise<void> {
@@ -475,7 +518,7 @@ function normalizeComparableTabUrl(url: string): string {
   }
 }
 
-async function finalizeOpenedWorkspaceTab(
+async function finalizeOpenedSessionBindingTab(
   opened: Awaited<ReturnType<SessionBindingManager['openTab']>>,
   expectedUrl?: string
 ): Promise<Awaited<ReturnType<SessionBindingManager['openTab']>>> {
@@ -498,15 +541,15 @@ async function finalizeOpenedWorkspaceTab(
       url: effectiveUrl
     };
   } catch {
-    refreshedTab = (await workspaceBrowser.getTab(opened.tab.id)) ?? opened.tab;
+    refreshedTab = (await sessionBindingBrowser.getTab(opened.tab.id)) ?? opened.tab;
   }
-  const refreshedWorkspace = (await bindingManager.getWorkspaceInfo(opened.workspace.id)) ?? {
-    ...opened.workspace,
-    tabs: opened.workspace.tabs.map((tab) => (tab.id === refreshedTab.id ? refreshedTab : tab))
+  const refreshedBinding = (await bindingManager.getBindingInfo(opened.binding.id)) ?? {
+    ...opened.binding,
+    tabs: opened.binding.tabs.map((tab) => (tab.id === refreshedTab.id ? refreshedTab : tab))
   };
 
   return {
-    workspace: refreshedWorkspace,
+    binding: refreshedBinding,
     tab: refreshedTab
   };
 }
@@ -515,7 +558,7 @@ interface WithTabOptions {
   requireSupportedAutomationUrl?: boolean;
 }
 
-async function withTab(target: { tabId?: number; workspaceId?: string } = {}, options: WithTabOptions = {}): Promise<chrome.tabs.Tab> {
+async function withTab(target: { tabId?: number; bindingId?: string } = {}, options: WithTabOptions = {}): Promise<chrome.tabs.Tab> {
   const requireSupportedAutomationUrl = options.requireSupportedAutomationUrl !== false;
   const validate = (tab: chrome.tabs.Tab): chrome.tabs.Tab => {
     if (!tab.id) {
@@ -537,7 +580,7 @@ async function withTab(target: { tabId?: number; workspaceId?: string } = {}, op
 
   const resolved = await bindingManager.resolveTarget({
     tabId: target.tabId,
-    workspaceId: typeof target.workspaceId === 'string' ? target.workspaceId : undefined,
+    bindingId: typeof target.bindingId === 'string' ? target.bindingId : undefined,
     createIfMissing: false
   });
   const tab = await chrome.tabs.get(resolved.tab.id);
@@ -719,6 +762,7 @@ async function executePageWorld<T>(
         framePath,
         expr: typeof params.expr === 'string' ? params.expr : '',
         path: typeof params.path === 'string' ? params.path : '',
+        resolver: typeof params.resolver === 'string' ? params.resolver : undefined,
         url: typeof params.url === 'string' ? params.url : '',
         method: typeof params.method === 'string' ? params.method : 'GET',
         headers: typeof params.headers === 'object' && params.headers !== null ? params.headers : undefined,
@@ -804,6 +848,64 @@ async function executePageWorld<T>(
         return currentWindow;
       };
 
+      const buildPathExpression = (path: string): string =>
+        parsePath(path)
+          .map((segment, index) => {
+            if (typeof segment === 'number') {
+              return `[${segment}]`;
+            }
+            if (index === 0) {
+              return segment;
+            }
+            return `.${segment}`;
+          })
+          .join('');
+
+      const readPath = (targetWindow: Window, path: string): unknown => {
+        const segments = parsePath(path);
+        let current: unknown = targetWindow;
+        for (const segment of segments) {
+          if (current === null || current === undefined || !(segment in (current as Record<string | number, unknown>))) {
+            throw { code: 'E_NOT_FOUND', message: `path not found: ${path}` };
+          }
+          current = (current as Record<string | number, unknown>)[segment];
+        }
+        return current;
+      };
+
+      const resolveExtractValue = (
+        targetWindow: Window & { eval: (expr: string) => unknown },
+        path: string,
+        resolver: unknown
+      ): { resolver: 'globalThis' | 'lexical'; value: unknown } => {
+        const strategy = resolver === 'globalThis' || resolver === 'lexical' ? resolver : 'auto';
+        const lexicalExpression = buildPathExpression(path);
+        const readLexical = (): unknown => {
+          try {
+            return targetWindow.eval(lexicalExpression);
+          } catch (error) {
+            if (error instanceof ReferenceError) {
+              throw { code: 'E_NOT_FOUND', message: `path not found: ${path}` };
+            }
+            throw error;
+          }
+        };
+        if (strategy === 'globalThis') {
+          return { resolver: 'globalThis', value: readPath(targetWindow, path) };
+        }
+        if (strategy === 'lexical') {
+          return { resolver: 'lexical', value: readLexical() };
+        }
+        try {
+          return { resolver: 'globalThis', value: readPath(targetWindow, path) };
+        } catch (error) {
+          if (typeof error !== 'object' || error === null || (error as { code?: string }).code !== 'E_NOT_FOUND') {
+            throw error;
+          }
+        }
+        return { resolver: 'lexical', value: readLexical() };
+      };
+
       try {
         const targetWindow = payload.scope === 'main' ? window : payload.scope === 'current' ? resolveFrameWindow(payload.framePath ?? []) : window;
         if (payload.action === 'eval') {
@@ -812,16 +914,15 @@ async function executePageWorld<T>(
           return { url: targetWindow.location.href, framePath: payload.scope === 'current' ? payload.framePath ?? [] : [], value: serialized.value, bytes: serialized.bytes };
         }
         if (payload.action === 'extract') {
-          const segments = parsePath(payload.path);
-          let current: unknown = targetWindow;
-          for (const segment of segments) {
-            if (current === null || current === undefined || !(segment in (current as Record<string | number, unknown>))) {
-              throw { code: 'E_NOT_FOUND', message: `path not found: ${payload.path}` };
-            }
-            current = (current as Record<string | number, unknown>)[segment];
-          }
-          const serialized = serializeValue(current, payload.maxBytes);
-          return { url: targetWindow.location.href, framePath: payload.scope === 'current' ? payload.framePath ?? [] : [], value: serialized.value, bytes: serialized.bytes };
+          const extracted = resolveExtractValue(targetWindow as Window & { eval: (expr: string) => unknown }, payload.path, payload.resolver);
+          const serialized = serializeValue(extracted.value, payload.maxBytes);
+          return {
+            url: targetWindow.location.href,
+            framePath: payload.scope === 'current' ? payload.framePath ?? [] : [],
+            value: serialized.value,
+            bytes: serialized.bytes,
+            resolver: extracted.resolver
+          };
         }
         if (payload.action === 'fetch') {
           const headers = { ...(payload.headers ?? {}) } as Record<string, string>;
@@ -988,6 +1089,34 @@ function replayHeadersFromEntry(entry: NetworkEntry): Record<string, string> | u
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+function collectTimestampMatchesFromText(text: string, source: TimestampEvidenceCandidate['source'], patterns?: string[]): TimestampEvidenceCandidate[] {
+  const regexes = (
+    patterns ?? [
+      String.raw`\b20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b`,
+      String.raw`\b20\d{2}-\d{2}-\d{2}\b`,
+      String.raw`\b20\d{2}\/\d{2}\/\d{2}\b`
+    ]
+  ).map((pattern) => new RegExp(pattern, 'gi'));
+  const collected = new Map<string, TimestampEvidenceCandidate>();
+  for (const regex of regexes) {
+    for (const match of text.matchAll(regex)) {
+      const value = match[0];
+      if (!value) {
+        continue;
+      }
+      const index = match.index ?? text.indexOf(value);
+      const start = Math.max(0, index - 28);
+      const end = Math.min(text.length, index + value.length + 28);
+      const context = text.slice(start, end).replace(/\s+/g, ' ').trim();
+      const key = `${value}::${context}`;
+      if (!collected.has(key)) {
+        collected.set(key, { value, source, context });
+      }
+    }
+  }
+  return [...collected.values()];
+}
+
 function parseTimestampCandidate(value: string, now = Date.now()): number | null {
   const normalized = value.trim().toLowerCase();
   if (!normalized) {
@@ -1003,13 +1132,71 @@ function parseTimestampCandidate(value: string, now = Date.now()): number | null
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function extractLatestTimestamp(values: string[] | undefined, now = Date.now()): number | null {
-  if (!Array.isArray(values) || values.length === 0) {
+function nearestPatternDistance(text: string, anchor: string, pattern: RegExp): number | null {
+  const normalizedText = text.toLowerCase();
+  const normalizedAnchor = anchor.toLowerCase();
+  const anchorIndex = normalizedText.indexOf(normalizedAnchor);
+  if (anchorIndex < 0) {
     return null;
   }
+  const regex = new RegExp(pattern.source, 'gi');
+  let match: RegExpExecArray | null;
+  let best: number | null = null;
+  while ((match = regex.exec(normalizedText)) !== null) {
+    best = best === null ? Math.abs(anchorIndex - match.index) : Math.min(best, Math.abs(anchorIndex - match.index));
+  }
+  return best;
+}
+
+function classifyTimestampCandidate(candidate: TimestampEvidenceCandidate, now = Date.now()): PageFreshnessResult['evidence']['classifiedTimestamps'][number]['category'] {
+  const normalizedPath = (candidate.path ?? '').toLowerCase();
+  if (DATA_TIMESTAMP_CONTEXT_PATTERN.test(normalizedPath)) {
+    return 'data';
+  }
+  if (CONTRACT_TIMESTAMP_CONTEXT_PATTERN.test(normalizedPath)) {
+    return 'contract';
+  }
+  if (EVENT_TIMESTAMP_CONTEXT_PATTERN.test(normalizedPath)) {
+    return 'event';
+  }
+
+  const context = candidate.context ?? '';
+  const distances = [
+    { category: 'data' as const, distance: nearestPatternDistance(context, candidate.value, DATA_TIMESTAMP_CONTEXT_PATTERN) },
+    { category: 'contract' as const, distance: nearestPatternDistance(context, candidate.value, CONTRACT_TIMESTAMP_CONTEXT_PATTERN) },
+    { category: 'event' as const, distance: nearestPatternDistance(context, candidate.value, EVENT_TIMESTAMP_CONTEXT_PATTERN) }
+  ].filter((entry): entry is { category: 'data' | 'contract' | 'event'; distance: number } => typeof entry.distance === 'number');
+  if (distances.length > 0) {
+    distances.sort((left, right) => left.distance - right.distance);
+    return distances[0]!.category;
+  }
+  const parsed = parseTimestampCandidate(candidate.value, now);
+  return typeof parsed === 'number' && parsed > now + 36 * 60 * 60 * 1000 ? 'contract' : 'unknown';
+}
+
+function normalizeTimestampCandidates(
+  candidates: TimestampEvidenceCandidate[],
+  now = Date.now()
+): PageFreshnessResult['evidence']['classifiedTimestamps'] {
+  return candidates.map((candidate) => ({
+    value: candidate.value,
+    source: candidate.source,
+    category: candidate.category ?? classifyTimestampCandidate(candidate, now),
+    context: candidate.context,
+    path: candidate.path
+  }));
+}
+
+function latestTimestampFromCandidates(
+  candidates: Array<{ value: string; category: PageFreshnessResult['evidence']['classifiedTimestamps'][number]['category'] }>,
+  now = Date.now()
+): number | null {
   let latest: number | null = null;
-  for (const value of values) {
-    const parsed = parseTimestampCandidate(value, now);
+  for (const candidate of candidates) {
+    if (candidate.category === 'contract' || candidate.category === 'event') {
+      continue;
+    }
+    const parsed = parseTimestampCandidate(candidate.value, now);
     if (parsed === null) {
       continue;
     }
@@ -1020,6 +1207,8 @@ function extractLatestTimestamp(values: string[] | undefined, now = Date.now()):
 
 function computeFreshnessAssessment(input: {
   latestInlineDataTimestamp: number | null;
+  latestPageDataTimestamp: number | null;
+  latestNetworkDataTimestamp: number | null;
   latestNetworkTimestamp: number | null;
   domVisibleTimestamp: number | null;
   lastMutationAt: number | null;
@@ -1027,19 +1216,29 @@ function computeFreshnessAssessment(input: {
   staleWindowMs: number;
 }): PageFreshnessResult['assessment'] {
   const now = Date.now();
-  const latestDataTimestamp = [input.latestInlineDataTimestamp, input.domVisibleTimestamp]
+  const latestPageVisibleTimestamp = [input.latestPageDataTimestamp, input.latestInlineDataTimestamp, input.domVisibleTimestamp]
     .filter((value): value is number => typeof value === 'number')
     .sort((left, right) => right - left)[0] ?? null;
-  if (latestDataTimestamp !== null && now - latestDataTimestamp <= input.freshWindowMs) {
+  if (latestPageVisibleTimestamp !== null && now - latestPageVisibleTimestamp <= input.freshWindowMs) {
     return 'fresh';
+  }
+  const networkHasFreshData =
+    typeof input.latestNetworkDataTimestamp === 'number' && now - input.latestNetworkDataTimestamp <= input.freshWindowMs;
+  if (networkHasFreshData) {
+    return 'lagged';
   }
   const recentSignals = [input.latestNetworkTimestamp, input.lastMutationAt]
     .filter((value): value is number => typeof value === 'number')
     .some((value) => now - value <= input.freshWindowMs);
-  if (recentSignals && latestDataTimestamp !== null && now - latestDataTimestamp > input.freshWindowMs) {
+  if (recentSignals && latestPageVisibleTimestamp !== null && now - latestPageVisibleTimestamp > input.freshWindowMs) {
     return 'lagged';
   }
-  const staleSignals = [input.latestNetworkTimestamp, input.lastMutationAt, latestDataTimestamp]
+  const staleSignals = [
+    input.latestNetworkTimestamp,
+    input.lastMutationAt,
+    latestPageVisibleTimestamp,
+    input.latestNetworkDataTimestamp
+  ]
     .filter((value): value is number => typeof value === 'number');
   if (staleSignals.length > 0 && staleSignals.every((value) => now - value > input.staleWindowMs)) {
     return 'stale';
@@ -1051,25 +1250,192 @@ async function collectPageInspection(tabId: number, params: Record<string, unkno
   return (await forwardContentRpc(tabId, 'bak.internal.inspectState', params)) as Record<string, unknown>;
 }
 
+async function probePageDataCandidatesForTab(tabId: number, inspection: Record<string, unknown>): Promise<PageDataCandidateProbe[]> {
+  const candidateNames = [
+    ...(Array.isArray(inspection.suspiciousGlobals) ? inspection.suspiciousGlobals.map(String) : []),
+    ...(Array.isArray(inspection.globalsPreview) ? inspection.globalsPreview.map(String) : [])
+  ]
+    .filter((name, index, array) => /^[A-Za-z_$][\w$]*$/.test(name) && array.indexOf(name) === index)
+    .slice(0, 16);
+  if (candidateNames.length === 0) {
+    return [];
+  }
+
+  const expr = `(() => {
+    const candidates = ${JSON.stringify(candidateNames)};
+    const dataPattern = /\\b(updated|update|updatedat|asof|timestamp|generated|generatedat|refresh|latest|last|quote|trade|price|flow|market|time|snapshot|signal)\\b/i;
+    const contractPattern = /\\b(expiry|expiration|expires|option|contract|strike|maturity|dte|call|put|exercise)\\b/i;
+    const eventPattern = /\\b(earnings|event|report|dividend|split|meeting|fomc|release|filing)\\b/i;
+    const isTimestampString = (value) => typeof value === 'string' && value.trim().length > 0 && !Number.isNaN(Date.parse(value.trim()));
+    const classify = (path, value) => {
+      const normalized = String(path || '').toLowerCase();
+      if (dataPattern.test(normalized)) return 'data';
+      if (contractPattern.test(normalized)) return 'contract';
+      if (eventPattern.test(normalized)) return 'event';
+      const parsed = Date.parse(String(value || '').trim());
+      return Number.isFinite(parsed) && parsed > Date.now() + 36 * 60 * 60 * 1000 ? 'contract' : 'unknown';
+    };
+    const sampleValue = (value, depth = 0) => {
+      if (depth >= 2 || value == null || typeof value !== 'object') {
+        if (typeof value === 'string') {
+          return value.length > 160 ? value.slice(0, 160) : value;
+        }
+        if (typeof value === 'function') {
+          return '[Function]';
+        }
+        return value;
+      }
+      if (Array.isArray(value)) {
+        return value.slice(0, 3).map((item) => sampleValue(item, depth + 1));
+      }
+      const sampled = {};
+      for (const key of Object.keys(value).slice(0, 8)) {
+        try {
+          sampled[key] = sampleValue(value[key], depth + 1);
+        } catch {
+          sampled[key] = '[Unreadable]';
+        }
+      }
+      return sampled;
+    };
+    const collectTimestamps = (value, path, depth, collected) => {
+      if (collected.length >= 16) return;
+      if (isTimestampString(value)) {
+        collected.push({ path, value: String(value), category: classify(path, value) });
+        return;
+      }
+      if (depth >= 3) return;
+      if (Array.isArray(value)) {
+        value.slice(0, 3).forEach((item, index) => collectTimestamps(item, path + '[' + index + ']', depth + 1, collected));
+        return;
+      }
+      if (value && typeof value === 'object') {
+        Object.keys(value)
+          .slice(0, 8)
+          .forEach((key) => {
+            try {
+              collectTimestamps(value[key], path ? path + '.' + key : key, depth + 1, collected);
+            } catch {
+              // Ignore unreadable nested properties.
+            }
+          });
+      }
+    };
+    const readCandidate = (name) => {
+      if (name in globalThis) {
+        return { resolver: 'globalThis', value: globalThis[name] };
+      }
+      return { resolver: 'lexical', value: globalThis.eval(name) };
+    };
+    const results = [];
+    for (const name of candidates) {
+      try {
+        const resolved = readCandidate(name);
+        const timestamps = [];
+        collectTimestamps(resolved.value, name, 0, timestamps);
+        results.push({
+          name,
+          resolver: resolved.resolver,
+          sample: sampleValue(resolved.value),
+          timestamps
+        });
+      } catch {
+        // Ignore inaccessible candidates.
+      }
+    }
+    return results;
+  })()`;
+
+  try {
+    const evaluated = await executePageWorld<PageDataCandidateProbe[]>(tabId, 'eval', {
+      expr,
+      scope: 'current',
+      maxBytes: 64 * 1024
+    });
+    const frameResult = evaluated.result ?? evaluated.results?.find((candidate) => candidate.value || candidate.error);
+    return Array.isArray(frameResult?.value) ? frameResult.value : [];
+  } catch {
+    return [];
+  }
+}
+
 async function buildFreshnessForTab(tabId: number, params: Record<string, unknown> = {}): Promise<PageFreshnessResult> {
   const inspection = await collectPageInspection(tabId, params);
-  const visibleTimestamps = Array.isArray(inspection.visibleTimestamps) ? inspection.visibleTimestamps.map(String) : [];
-  const inlineTimestamps = Array.isArray(inspection.inlineTimestamps) ? inspection.inlineTimestamps.map(String) : [];
+  const probedPageDataCandidates = await probePageDataCandidatesForTab(tabId, inspection);
   const now = Date.now();
   const freshWindowMs = typeof params.freshWindowMs === 'number' ? Math.max(1, Math.floor(params.freshWindowMs)) : 15 * 60 * 1000;
   const staleWindowMs = typeof params.staleWindowMs === 'number' ? Math.max(freshWindowMs, Math.floor(params.staleWindowMs)) : 24 * 60 * 60 * 1000;
-  const latestInlineDataTimestamp = extractLatestTimestamp(inlineTimestamps, now);
-  const domVisibleTimestamp = extractLatestTimestamp(visibleTimestamps, now);
+  const visibleCandidates = normalizeTimestampCandidates(
+    Array.isArray(inspection.visibleTimestampCandidates)
+      ? inspection.visibleTimestampCandidates
+          .filter((candidate): candidate is Record<string, unknown> => typeof candidate === 'object' && candidate !== null)
+          .map((candidate) => ({
+            value: String(candidate.value ?? ''),
+            context: typeof candidate.context === 'string' ? candidate.context : undefined,
+            source: 'visible' as const
+          }))
+      : Array.isArray(inspection.visibleTimestamps)
+        ? inspection.visibleTimestamps.map((value) => ({ value: String(value), source: 'visible' as const }))
+        : [],
+    now
+  );
+  const inlineCandidates = normalizeTimestampCandidates(
+    Array.isArray(inspection.inlineTimestampCandidates)
+      ? inspection.inlineTimestampCandidates
+          .filter((candidate): candidate is Record<string, unknown> => typeof candidate === 'object' && candidate !== null)
+          .map((candidate) => ({
+            value: String(candidate.value ?? ''),
+            context: typeof candidate.context === 'string' ? candidate.context : undefined,
+            source: 'inline' as const
+          }))
+      : Array.isArray(inspection.inlineTimestamps)
+        ? inspection.inlineTimestamps.map((value) => ({ value: String(value), source: 'inline' as const }))
+        : [],
+    now
+  );
+  const pageDataCandidates = probedPageDataCandidates.flatMap((candidate) =>
+    Array.isArray(candidate.timestamps)
+      ? candidate.timestamps.map((timestamp) => ({
+          value: String(timestamp.value ?? ''),
+          source: 'page-data' as const,
+          path: typeof timestamp.path === 'string' ? timestamp.path : candidate.name,
+          category:
+            timestamp.category === 'data' ||
+            timestamp.category === 'contract' ||
+            timestamp.category === 'event' ||
+            timestamp.category === 'unknown'
+              ? timestamp.category
+              : 'unknown'
+        }))
+      : []
+  );
+  const networkEntries = listNetworkEntries(tabId, { limit: 25 });
+  const networkCandidates = normalizeTimestampCandidates(
+    networkEntries.flatMap((entry) => {
+      const previews = [entry.responseBodyPreview, entry.requestBodyPreview].filter((value): value is string => typeof value === 'string');
+      return previews.flatMap((preview) => collectTimestampMatchesFromText(preview, 'network', Array.isArray(params.patterns) ? params.patterns.map(String) : undefined));
+    }),
+    now
+  );
+  const latestInlineDataTimestamp = latestTimestampFromCandidates(inlineCandidates, now);
+  const latestPageDataTimestamp = latestTimestampFromCandidates(pageDataCandidates, now);
+  const latestNetworkDataTimestamp = latestTimestampFromCandidates(networkCandidates, now);
+  const domVisibleTimestamp = latestTimestampFromCandidates(visibleCandidates, now);
   const latestNetworkTs = latestNetworkTimestamp(tabId);
   const lastMutationAt = typeof inspection.lastMutationAt === 'number' ? inspection.lastMutationAt : null;
+  const allCandidates = [...visibleCandidates, ...inlineCandidates, ...pageDataCandidates, ...networkCandidates];
   return {
     pageLoadedAt: typeof inspection.pageLoadedAt === 'number' ? inspection.pageLoadedAt : null,
     lastMutationAt,
     latestNetworkTimestamp: latestNetworkTs,
     latestInlineDataTimestamp,
+    latestPageDataTimestamp,
+    latestNetworkDataTimestamp,
     domVisibleTimestamp,
     assessment: computeFreshnessAssessment({
       latestInlineDataTimestamp,
+      latestPageDataTimestamp,
+      latestNetworkDataTimestamp,
       latestNetworkTimestamp: latestNetworkTs,
       domVisibleTimestamp,
       lastMutationAt,
@@ -1077,18 +1443,141 @@ async function buildFreshnessForTab(tabId: number, params: Record<string, unknow
       staleWindowMs
     }),
     evidence: {
-      visibleTimestamps,
-      inlineTimestamps,
+      visibleTimestamps: visibleCandidates.map((candidate) => candidate.value),
+      inlineTimestamps: inlineCandidates.map((candidate) => candidate.value),
+      pageDataTimestamps: pageDataCandidates.map((candidate) => candidate.value),
+      networkDataTimestamps: networkCandidates.map((candidate) => candidate.value),
+      classifiedTimestamps: allCandidates,
       networkSampleIds: recentNetworkSampleIds(tabId)
     }
   };
+}
+
+function summarizeNetworkCadence(entries: NetworkEntry[]): Record<string, unknown> {
+  const relevant = entries
+    .filter((entry) => entry.kind === 'fetch' || entry.kind === 'xhr')
+    .slice()
+    .sort((left, right) => left.ts - right.ts);
+  if (relevant.length === 0) {
+    return {
+      sampleCount: 0,
+      classification: 'none',
+      averageIntervalMs: null,
+      medianIntervalMs: null,
+      latestGapMs: null,
+      endpoints: []
+    };
+  }
+  const intervals: number[] = [];
+  for (let index = 1; index < relevant.length; index += 1) {
+    intervals.push(Math.max(0, relevant[index]!.ts - relevant[index - 1]!.ts));
+  }
+  const sortedIntervals = intervals.slice().sort((left, right) => left - right);
+  const averageIntervalMs =
+    intervals.length > 0 ? Math.round(intervals.reduce((sum, value) => sum + value, 0) / intervals.length) : null;
+  const medianIntervalMs =
+    sortedIntervals.length > 0 ? sortedIntervals[Math.floor(sortedIntervals.length / 2)] ?? null : null;
+  const latestGapMs = Math.max(0, Date.now() - relevant[relevant.length - 1]!.ts);
+  const classification =
+    relevant.length >= 3 && medianIntervalMs !== null && medianIntervalMs <= 30_000
+      ? 'polling'
+      : relevant.length >= 2
+        ? 'bursty'
+        : 'single-request';
+  return {
+    sampleCount: relevant.length,
+    classification,
+    averageIntervalMs,
+    medianIntervalMs,
+    latestGapMs,
+    endpoints: [...new Set(relevant.slice(-5).map((entry) => entry.url))].slice(0, 5)
+  };
+}
+
+function extractReplayRowsCandidate(json: unknown): { rows: unknown[]; source: string } | null {
+  if (Array.isArray(json)) {
+    return { rows: json, source: '$' };
+  }
+  if (typeof json !== 'object' || json === null) {
+    return null;
+  }
+  const record = json as Record<string, unknown>;
+  const preferredKeys = ['data', 'rows', 'results', 'items'];
+  for (const key of preferredKeys) {
+    if (Array.isArray(record[key])) {
+      return { rows: record[key] as unknown[], source: `$.${key}` };
+    }
+  }
+  return null;
+}
+
+async function enrichReplayWithSchema(tabId: number, response: PageFetchResponse): Promise<PageFetchResponse> {
+  const candidate = extractReplayRowsCandidate(response.json);
+  if (!candidate || candidate.rows.length === 0) {
+    return response;
+  }
+
+  const firstRow = candidate.rows[0];
+  const tablesResult = (await forwardContentRpc(tabId, 'table.list', {})) as { tables?: TableHandle[] };
+  const tables = Array.isArray(tablesResult.tables) ? tablesResult.tables : [];
+  if (tables.length === 0) {
+    return response;
+  }
+
+  const schemas: Array<{ table: TableHandle; schema: TableSchema }> = [];
+  for (const table of tables) {
+    const schemaResult = (await forwardContentRpc(tabId, 'table.schema', { table: table.id })) as {
+      table?: TableHandle;
+      schema?: TableSchema;
+    };
+    if (schemaResult.schema && Array.isArray(schemaResult.schema.columns)) {
+      schemas.push({ table: schemaResult.table ?? table, schema: schemaResult.schema });
+    }
+  }
+
+  if (schemas.length === 0) {
+    return response;
+  }
+
+  if (Array.isArray(firstRow)) {
+    const matchingSchema = schemas.find(({ schema }) => schema.columns.length === firstRow.length) ?? schemas[0];
+    if (!matchingSchema) {
+      return response;
+    }
+    const mappedRows = candidate.rows
+      .filter((row): row is unknown[] => Array.isArray(row))
+      .map((row) => {
+        const mapped: Record<string, unknown> = {};
+        matchingSchema.schema.columns.forEach((column, index) => {
+          mapped[column.label] = row[index];
+        });
+        return mapped;
+      });
+    return {
+      ...response,
+      table: matchingSchema.table,
+      schema: matchingSchema.schema,
+      mappedRows,
+      mappingSource: candidate.source
+    };
+  }
+
+  if (typeof firstRow === 'object' && firstRow !== null) {
+    return {
+      ...response,
+      mappedRows: candidate.rows.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null),
+      mappingSource: candidate.source
+    };
+  }
+
+  return response;
 }
 
 async function handleRequest(request: CliRequest): Promise<unknown> {
   const params = request.params ?? {};
   const target = {
     tabId: typeof params.tabId === 'number' ? params.tabId : undefined,
-    workspaceId: typeof params.workspaceId === 'string' ? params.workspaceId : undefined
+    bindingId: typeof params.bindingId === 'string' ? params.bindingId : undefined
   };
 
   const rpcForwardMethods = new Set([
@@ -1191,63 +1680,92 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       await chrome.tabs.remove(tabId);
       return { ok: true };
     }
-    case 'workspace.ensure': {
+    case 'sessionBinding.ensure': {
       return preserveHumanFocus(params.focus !== true, async () => {
-        const result = await bindingManager.ensureWorkspace({
-          workspaceId: String(params.workspaceId ?? ''),
+        const result = await bindingManager.ensureBinding({
+          bindingId: String(params.bindingId ?? ''),
           focus: params.focus === true,
           initialUrl: typeof params.url === 'string' ? params.url : undefined
         });
-        for (const tab of result.workspace.tabs) {
+        for (const tab of result.binding.tabs) {
           void ensureNetworkDebugger(tab.id).catch(() => undefined);
         }
-        return result;
+        return {
+          browser: result.binding,
+          created: result.created,
+          repaired: result.repaired,
+          repairActions: result.repairActions
+        };
       });
     }
-    case 'workspace.info': {
+    case 'sessionBinding.info': {
       return {
-        workspace: await bindingManager.getWorkspaceInfo(String(params.workspaceId ?? ''))
+        browser: await bindingManager.getBindingInfo(String(params.bindingId ?? ''))
       };
     }
-    case 'workspace.openTab': {
+    case 'sessionBinding.openTab': {
       const expectedUrl = typeof params.url === 'string' ? params.url : undefined;
       const opened = await preserveHumanFocus(params.focus !== true, async () => {
         return await bindingManager.openTab({
-          workspaceId: String(params.workspaceId ?? ''),
+          bindingId: String(params.bindingId ?? ''),
           url: expectedUrl,
           active: params.active === true,
           focus: params.focus === true
         });
       });
-      const finalized = await finalizeOpenedWorkspaceTab(opened, expectedUrl);
+      const finalized = await finalizeOpenedSessionBindingTab(opened, expectedUrl);
       void ensureNetworkDebugger(finalized.tab.id).catch(() => undefined);
-      return finalized;
+      return {
+        browser: finalized.binding,
+        tab: finalized.tab
+      };
     }
-    case 'workspace.listTabs': {
-      return await bindingManager.listTabs(String(params.workspaceId ?? ''));
+    case 'sessionBinding.listTabs': {
+      const listed = await bindingManager.listTabs(String(params.bindingId ?? ''));
+      return {
+        browser: listed.binding,
+        tabs: listed.tabs
+      };
     }
-    case 'workspace.getActiveTab': {
-      return await bindingManager.getActiveTab(String(params.workspaceId ?? ''));
+    case 'sessionBinding.getActiveTab': {
+      const active = await bindingManager.getActiveTab(String(params.bindingId ?? ''));
+      return {
+        browser: active.binding,
+        tab: active.tab
+      };
     }
-    case 'workspace.setActiveTab': {
-      const result = await bindingManager.setActiveTab(Number(params.tabId), String(params.workspaceId ?? ''));
+    case 'sessionBinding.setActiveTab': {
+      const result = await bindingManager.setActiveTab(Number(params.tabId), String(params.bindingId ?? ''));
       void ensureNetworkDebugger(result.tab.id).catch(() => undefined);
-      return result;
+      return {
+        browser: result.binding,
+        tab: result.tab
+      };
     }
-    case 'workspace.focus': {
-      return await bindingManager.focus(String(params.workspaceId ?? ''));
+    case 'sessionBinding.focus': {
+      const result = await bindingManager.focus(String(params.bindingId ?? ''));
+      return {
+        ok: true,
+        browser: result.binding
+      };
     }
-    case 'workspace.reset': {
+    case 'sessionBinding.reset': {
       return await preserveHumanFocus(params.focus !== true, async () => {
-        return await bindingManager.reset({
-          workspaceId: String(params.workspaceId ?? ''),
+        const result = await bindingManager.reset({
+          bindingId: String(params.bindingId ?? ''),
           focus: params.focus === true,
           initialUrl: typeof params.url === 'string' ? params.url : undefined
         });
+        return {
+          browser: result.binding,
+          created: result.created,
+          repaired: result.repaired,
+          repairActions: result.repairActions
+        };
       });
     }
-    case 'workspace.close': {
-      return await bindingManager.close(String(params.workspaceId ?? ''));
+    case 'sessionBinding.close': {
+      return await bindingManager.close(String(params.bindingId ?? ''));
     }
     case 'page.goto': {
       return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
@@ -1556,7 +2074,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         if (!first) {
           throw toError('E_EXECUTION', 'network replay returned no response payload');
         }
-        return first;
+        return params.withSchema === 'auto' && params.mode === 'json' ? await enrichReplayWithSchema(tab.id!, first) : first;
       });
     }
     case 'page.freshness': {
@@ -1632,15 +2150,17 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         const tab = await withTab(target);
         await ensureNetworkDebugger(tab.id!).catch(() => undefined);
         const inspection = await collectPageInspection(tab.id!, params);
+        const pageDataCandidates = await probePageDataCandidatesForTab(tab.id!, inspection);
         const network = listNetworkEntries(tab.id!, { limit: 10 });
         return {
           suspiciousGlobals: inspection.suspiciousGlobals ?? [],
           tables: inspection.tables ?? [],
           visibleTimestamps: inspection.visibleTimestamps ?? [],
           inlineTimestamps: inspection.inlineTimestamps ?? [],
+          pageDataCandidates,
           recentNetwork: network,
           recommendedNextSteps: [
-            'bak page extract --path table_data',
+            'bak page extract --path table_data --resolver auto',
             'bak network search --pattern table_data',
             'bak page freshness'
           ]
@@ -1657,6 +2177,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           lastMutationAt: inspection.lastMutationAt ?? null,
           timers: inspection.timers ?? { timeouts: 0, intervals: 0 },
           networkCount: network.length,
+          networkCadence: summarizeNetworkCadence(network),
           recentNetwork: network.slice(0, 10)
         };
       });
@@ -1668,8 +2189,13 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         return {
           ...freshness,
           lagMs:
-            typeof freshness.latestNetworkTimestamp === 'number' && typeof freshness.latestInlineDataTimestamp === 'number'
-              ? Math.max(0, freshness.latestNetworkTimestamp - freshness.latestInlineDataTimestamp)
+            typeof freshness.latestNetworkTimestamp === 'number' &&
+            typeof (freshness.latestPageDataTimestamp ?? freshness.latestInlineDataTimestamp) === 'number'
+              ? Math.max(
+                  0,
+                  freshness.latestNetworkTimestamp -
+                    (freshness.latestPageDataTimestamp ?? freshness.latestInlineDataTimestamp ?? freshness.latestNetworkTimestamp)
+                )
               : null
         };
       });
@@ -1824,50 +2350,50 @@ async function connectWebSocket(): Promise<void> {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   dropNetworkCapture(tabId);
-  void listWorkspaceStates().then(async (states) => {
-    for (const state of states) {
+  void mutateSessionBindingStateMap((stateMap) => {
+    for (const [bindingId, state] of Object.entries(stateMap)) {
       if (!state.tabIds.includes(tabId)) {
         continue;
       }
       const nextTabIds = state.tabIds.filter((id) => id !== tabId);
-      await saveWorkspaceState({
+      stateMap[bindingId] = {
         ...state,
         tabIds: nextTabIds,
         activeTabId: state.activeTabId === tabId ? null : state.activeTabId,
         primaryTabId: state.primaryTabId === tabId ? null : state.primaryTabId
-      });
+      };
     }
   });
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  void listWorkspaceStates().then(async (states) => {
-    for (const state of states) {
+  void mutateSessionBindingStateMap((stateMap) => {
+    for (const [bindingId, state] of Object.entries(stateMap)) {
       if (state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
         continue;
       }
-      await saveWorkspaceState({
+      stateMap[bindingId] = {
         ...state,
         activeTabId: activeInfo.tabId
-      });
+      };
     }
   });
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
-  void listWorkspaceStates().then(async (states) => {
-    for (const state of states) {
+  void mutateSessionBindingStateMap((stateMap) => {
+    for (const [bindingId, state] of Object.entries(stateMap)) {
       if (state.windowId !== windowId) {
         continue;
       }
-      await saveWorkspaceState({
+      stateMap[bindingId] = {
         ...state,
         windowId: null,
         groupId: null,
         tabIds: [],
         activeTabId: null,
         primaryTabId: null
-      });
+      };
     }
   });
 });

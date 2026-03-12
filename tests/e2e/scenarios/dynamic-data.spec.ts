@@ -14,6 +14,8 @@ function singlePageValue<T>(payload: unknown): T {
 }
 
 test.describe('dynamic data e2e', () => {
+  test.describe.configure({ timeout: 90_000 });
+
   test.beforeAll(async () => {
     harness = await createHarness();
   });
@@ -50,6 +52,13 @@ test.describe('dynamic data e2e', () => {
       const tableData = singlePageValue<Array<{ id: number; name: string }>>(extracted);
       expect(tableData).toHaveLength(3);
       expect(tableData[0]?.name).toBe('Alpha');
+
+      const lexicalExtract = (await harness.rpcCall('page.extract', {
+        tabId: tablePage.tabId,
+        path: 'lexical_market_snapshot.QQQ.quotes.changePercent',
+        resolver: 'auto'
+      })) as unknown;
+      expect(singlePageValue<number>(lexicalExtract)).toBe(2.34);
 
       const evaluated = (await harness.rpcCall('page.eval', {
         tabId: tablePage.tabId,
@@ -98,9 +107,37 @@ test.describe('dynamic data e2e', () => {
       })) as {
         suspiciousGlobals: string[];
         tables: Array<{ id: string }>;
+        pageDataCandidates?: Array<{ name: string; resolver: string }>;
       };
       expect(inspected.suspiciousGlobals).toEqual(expect.arrayContaining(['table_data', 'market_data']));
       expect(inspected.tables.length).toBeGreaterThan(0);
+      expect(inspected.pageDataCandidates).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'lexical_market_snapshot', resolver: 'lexical' })])
+      );
+
+      await tablePage.page.evaluate(async () => {
+        const response = await fetch('/api/table-rows');
+        await response.json();
+      });
+      const tableReplaySearch = (await harness.rpcCall('network.search', {
+        tabId: tablePage.tabId,
+        pattern: 'table-rows',
+        limit: 5
+      })) as {
+        entries: Array<{ id: string }>;
+      };
+      expect(tableReplaySearch.entries.length).toBeGreaterThan(0);
+      const replayWithSchema = (await harness.rpcCall('network.replay', {
+        tabId: tablePage.tabId,
+        id: tableReplaySearch.entries[0]!.id,
+        mode: 'json',
+        withSchema: 'auto'
+      })) as {
+        schema?: { columns: Array<{ label: string }> };
+        mappedRows?: Array<Record<string, unknown>>;
+      };
+      expect(replayWithSchema.schema?.columns.map((column) => column.label)).toEqual(['ID', 'Name', 'Action']);
+      expect(replayWithSchema.mappedRows?.[1]?.Name).toBe('Beta');
 
       const iframePage = await harness.openPage('/iframe-host.html');
       try {
@@ -299,11 +336,16 @@ test.describe('dynamic data e2e', () => {
       })) as {
         assessment: string;
         latestInlineDataTimestamp: number | null;
+        latestPageDataTimestamp: number | null;
+        latestNetworkDataTimestamp: number | null;
         latestNetworkTimestamp: number | null;
       };
       expect(freshness.assessment).toBe('lagged');
       expect(freshness.latestInlineDataTimestamp).not.toBeNull();
+      expect(freshness.latestPageDataTimestamp).not.toBeNull();
+      expect(freshness.latestNetworkDataTimestamp).not.toBeNull();
       expect(freshness.latestNetworkTimestamp).not.toBeNull();
+      expect(freshness.latestInlineDataTimestamp!).toBeLessThan(Date.now() + 36 * 60 * 60 * 1000);
 
       const relativeFreshness = (await harness.rpcCall('page.freshness', {
         tabId,
@@ -337,9 +379,12 @@ test.describe('dynamic data e2e', () => {
         tabId
       })) as {
         networkCount: number;
+        networkCadence?: { sampleCount: number; classification: string };
         recentNetwork: unknown[];
       };
       expect(liveUpdates.networkCount).toBeGreaterThan(0);
+      expect(liveUpdates.networkCadence?.sampleCount).toBeGreaterThan(0);
+      expect(liveUpdates.networkCadence?.classification).not.toBe('none');
       expect(liveUpdates.recentNetwork.length).toBeGreaterThan(0);
 
       const dump = (await harness.rpcCall('debug.dumpState', {

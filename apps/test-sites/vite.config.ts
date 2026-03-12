@@ -77,6 +77,18 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
     return true;
   }
 
+  if (url.pathname === '/api/table-rows') {
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify([
+        [1, 'Alpha', 'Delete'],
+        [2, 'Beta', 'Delete'],
+        [3, 'Gamma', 'Delete']
+      ])
+    );
+    return true;
+  }
+
   response.statusCode = 404;
   response.end(JSON.stringify({ ok: false, message: 'not found' }));
   return true;

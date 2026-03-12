@@ -259,7 +259,7 @@ export class BakService {
     if (this.driver.isConnected()) {
       for (const session of this.sessions.list()) {
         try {
-          await this.driver.workspaceClose({ workspaceId: session.bindingId });
+          await this.driver.sessionBindingClose({ bindingId: session.bindingId });
         } catch {
           // Ignore close failures during shutdown.
         }
@@ -704,10 +704,13 @@ export class BakService {
     return this.updateContextFromResult(sessionId, tabId, 'context.set', result);
   }
 
-  private async listSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['workspaceListTabs']>>> {
-    const listing = await this.driver.workspaceListTabs({ workspaceId: session.bindingId });
-    this.sessions.syncBinding(session.sessionId, listing.workspace);
-    return listing;
+  private async listSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['sessionBindingListTabs']>>> {
+    const listing = await this.driver.sessionBindingListTabs({ bindingId: session.bindingId });
+    this.sessions.syncBinding(session.sessionId, listing.browser);
+    return {
+      ...listing,
+      browser: this.hydrateSessionBrowserState(session.sessionId, listing.browser)
+    };
   }
 
   private syncSessionBrowserState(sessionId: string, browser: SessionBrowserState): SessionState {
@@ -715,6 +718,13 @@ export class BakService {
       tabIds: browser.tabIds,
       activeTabId: browser.activeTabId
     });
+  }
+
+  private hydrateSessionBrowserState(sessionId: string, browser: SessionBrowserState): SessionBrowserState {
+    return {
+      ...browser,
+      activeTabId: this.getSession(sessionId).activeTabId
+    };
   }
 
   private clearSessionBindingState(sessionId: string): SessionState {
@@ -726,7 +736,7 @@ export class BakService {
       return true;
     }
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-    return message.includes(`workspace ${bindingId}`.toLowerCase()) && message.includes('does not exist');
+    return message.includes(`binding ${bindingId}`.toLowerCase()) && message.includes('does not exist');
   }
 
   private isRecoverableContextRestoreError(error: unknown): boolean {
@@ -744,7 +754,7 @@ export class BakService {
     return error.code === 'E_NOT_FOUND' || error.code === 'E_NOT_READY' || error.code === 'E_PERMISSION';
   }
 
-  private async safeListSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['workspaceListTabs']>> | null> {
+  private async safeListSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['sessionBindingListTabs']>> | null> {
     if (!session.bindingInitialized) {
       return null;
     }
@@ -806,8 +816,8 @@ export class BakService {
       });
     }
 
-    const active = await this.driver.workspaceGetActiveTab({ workspaceId: session.bindingId });
-    this.sessions.syncBinding(sessionId, active.workspace);
+    const active = await this.driver.sessionBindingGetActiveTab({ bindingId: session.bindingId });
+    this.sessions.syncBinding(sessionId, active.browser);
     if (active.tab) {
       return {
         session: this.getSession(sessionId),
@@ -906,9 +916,9 @@ export class BakService {
         return this.withTrace(session.traceId, method, params, async () => {
           if (this.driver.isConnected()) {
             try {
-              await this.driver.workspaceClose({ workspaceId: session.bindingId });
+              await this.driver.sessionBindingClose({ bindingId: session.bindingId });
             } catch {
-              // Continue closing the session even if the workspace is already gone.
+              // Continue closing the session even if the binding is already gone.
             }
           }
           this.sessions.close(sessionId);
@@ -949,14 +959,15 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.touchSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          const result = await this.driver.workspaceEnsure({
-            workspaceId: session.bindingId,
+          const result = await this.driver.sessionBindingEnsure({
+            bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
             focus: args.focus === true
           });
-          this.syncSessionBrowserState(sessionId, result.workspace);
+          this.syncSessionBrowserState(sessionId, result.browser);
+          const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
-            browser: result.workspace,
+            browser,
             created: result.created,
             repaired: result.repaired,
             repairActions: result.repairActions
@@ -969,16 +980,20 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.touchSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          const result = await this.driver.workspaceOpenTab({
-            workspaceId: session.bindingId,
+          const result = await this.driver.sessionBindingOpenTab({
+            bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
             active: args.active === true,
             focus: args.focus === true
           });
-          this.syncSessionBrowserState(sessionId, result.workspace);
+          this.syncSessionBrowserState(sessionId, result.browser);
+          if (args.active === true || args.focus === true) {
+            this.sessions.setActiveTab(sessionId, result.tab.id);
+          }
           this.clearTabContext(sessionId, result.tab.id);
+          const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
-            browser: result.workspace,
+            browser,
             tab: result.tab
           } as MethodResult<TMethod>;
         });
@@ -997,7 +1012,7 @@ export class BakService {
             } as MethodResult<TMethod>;
           }
           return {
-            browser: listing.workspace,
+            browser: listing.browser,
             tabs: listing.tabs
           } as MethodResult<TMethod>;
         });
@@ -1017,7 +1032,7 @@ export class BakService {
           }
           const current = this.getSession(sessionId);
           return {
-            browser: listing.workspace,
+            browser: this.hydrateSessionBrowserState(sessionId, listing.browser),
             tab: listing.tabs.find((tab) => tab.id === current.activeTabId) ?? null
           } as MethodResult<TMethod>;
         });
@@ -1028,11 +1043,12 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.touchSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          const result = await this.driver.workspaceSetActiveTab({
-            workspaceId: session.bindingId,
+          const result = await this.driver.sessionBindingSetActiveTab({
+            bindingId: session.bindingId,
             tabId: Number(args.tabId)
           });
-          this.syncSessionBrowserState(sessionId, result.workspace);
+          this.syncSessionBrowserState(sessionId, result.browser);
+          this.sessions.setActiveTab(sessionId, result.tab.id);
           try {
             await this.applyStoredContext(sessionId, result.tab.id);
           } catch (error) {
@@ -1042,8 +1058,9 @@ export class BakService {
             // The binding changed successfully; clear the stale snapshot so later calls can rebuild it.
             this.clearTabContext(sessionId, result.tab.id);
           }
+          const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
-            browser: result.workspace,
+            browser,
             tab: result.tab
           } as MethodResult<TMethod>;
         });
@@ -1054,11 +1071,12 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.touchSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          const result = await this.driver.workspaceFocus({ workspaceId: session.bindingId });
-          this.syncSessionBrowserState(sessionId, result.workspace);
+          const result = await this.driver.sessionBindingFocus({ bindingId: session.bindingId });
+          this.syncSessionBrowserState(sessionId, result.browser);
+          const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
             ok: true,
-            browser: result.workspace
+            browser
           } as MethodResult<TMethod>;
         });
       }
@@ -1068,17 +1086,18 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.touchSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          const result = await this.driver.workspaceReset({
-            workspaceId: session.bindingId,
+          const result = await this.driver.sessionBindingReset({
+            bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
             focus: args.focus === true
           });
-          this.syncSessionBrowserState(sessionId, result.workspace);
-          for (const tabId of result.workspace.tabIds) {
+          this.syncSessionBrowserState(sessionId, result.browser);
+          for (const tabId of result.browser.tabIds) {
             this.clearTabContext(sessionId, tabId);
           }
+          const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
-            browser: result.workspace,
+            browser,
             created: result.created,
             repaired: result.repaired,
             repairActions: result.repairActions

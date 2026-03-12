@@ -193,6 +193,7 @@ export interface PageFrameResult<T = unknown> {
   value?: T;
   truncated?: boolean;
   bytes?: number;
+  resolver?: 'globalThis' | 'lexical';
   error?: PageMethodError;
 }
 
@@ -212,6 +213,10 @@ export interface PageFetchResponse {
   json?: unknown;
   bytes?: number;
   truncated?: boolean;
+  table?: TableHandle;
+  schema?: TableSchema;
+  mappedRows?: Array<Record<string, unknown>>;
+  mappingSource?: string;
 }
 
 export interface TableHandle {
@@ -234,16 +239,33 @@ export interface TableSchema {
 
 export type TableExtractionMode = 'dataSource' | 'scroll' | 'visibleOnly';
 
+export type PageExtractResolver = 'auto' | 'globalThis' | 'lexical';
+
+export type FreshnessTimestampCategory = 'data' | 'contract' | 'event' | 'unknown';
+
+export interface FreshnessEvidenceItem {
+  value: string;
+  source: 'visible' | 'inline' | 'page-data' | 'network';
+  category: FreshnessTimestampCategory;
+  context?: string;
+  path?: string;
+}
+
 export interface PageFreshnessResult {
   pageLoadedAt: number | null;
   lastMutationAt: number | null;
   latestNetworkTimestamp: number | null;
   latestInlineDataTimestamp: number | null;
+  latestPageDataTimestamp: number | null;
+  latestNetworkDataTimestamp: number | null;
   domVisibleTimestamp: number | null;
   assessment: 'fresh' | 'lagged' | 'stale' | 'unknown';
   evidence: {
     visibleTimestamps: string[];
     inlineTimestamps: string[];
+    pageDataTimestamps: string[];
+    networkDataTimestamps: string[];
+    classifiedTimestamps: FreshnessEvidenceItem[];
     networkSampleIds: string[];
   };
 }
@@ -474,7 +496,14 @@ export interface MethodMap {
     result: PageValueResult<unknown>;
   };
   'page.extract': {
-    params: { sessionId: string; tabId?: number; path: string; scope?: PageExecutionScope; maxBytes?: number };
+    params: {
+      sessionId: string;
+      tabId?: number;
+      path: string;
+      scope?: PageExecutionScope;
+      maxBytes?: number;
+      resolver?: PageExtractResolver;
+    };
     result: PageValueResult<unknown>;
   };
   'page.fetch': {
@@ -636,6 +665,7 @@ export interface MethodMap {
       mode?: 'raw' | 'json';
       timeoutMs?: number;
       maxBytes?: number;
+      withSchema?: 'auto';
       requiresConfirm?: boolean;
     };
     result: PageFetchResponse;

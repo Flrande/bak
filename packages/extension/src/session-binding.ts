@@ -1,10 +1,13 @@
-export const DEFAULT_WORKSPACE_LABEL = 'bak agent';
-export const DEFAULT_WORKSPACE_COLOR = 'blue';
-export const DEFAULT_WORKSPACE_URL = 'about:blank';
+export const DEFAULT_SESSION_BINDING_LABEL = 'bak agent';
+export const DEFAULT_SESSION_BINDING_COLOR = 'blue';
+export const DEFAULT_SESSION_BINDING_URL = 'about:blank';
+const WINDOW_LOOKUP_TIMEOUT_MS = 1_500;
+const GROUP_LOOKUP_TIMEOUT_MS = 1_000;
+const WINDOW_TABS_LOOKUP_TIMEOUT_MS = 1_500;
 
-export type WorkspaceColor = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange';
+export type SessionBindingColor = 'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange';
 
-export interface WorkspaceTab {
+export interface SessionBindingTab {
   id: number;
   title: string;
   url: string;
@@ -13,23 +16,23 @@ export interface WorkspaceTab {
   groupId: number | null;
 }
 
-export interface WorkspaceWindow {
+export interface SessionBindingWindow {
   id: number;
   focused: boolean;
 }
 
-export interface WorkspaceGroup {
+export interface SessionBindingGroup {
   id: number;
   windowId: number;
   title: string;
-  color: WorkspaceColor;
+  color: SessionBindingColor;
   collapsed: boolean;
 }
 
-export interface WorkspaceRecord {
+export interface SessionBindingRecord {
   id: string;
   label: string;
-  color: WorkspaceColor;
+  color: SessionBindingColor;
   windowId: number | null;
   groupId: number | null;
   tabIds: number[];
@@ -37,99 +40,99 @@ export interface WorkspaceRecord {
   primaryTabId: number | null;
 }
 
-export interface WorkspaceInfo extends WorkspaceRecord {
-  tabs: WorkspaceTab[];
+export interface SessionBindingInfo extends SessionBindingRecord {
+  tabs: SessionBindingTab[];
 }
 
-export interface WorkspaceEnsureResult {
-  workspace: WorkspaceInfo;
+export interface SessionBindingEnsureResult {
+  binding: SessionBindingInfo;
   created: boolean;
   repaired: boolean;
   repairActions: string[];
 }
 
-export interface WorkspaceTargetResolution {
-  tab: WorkspaceTab;
-  workspace: WorkspaceInfo | null;
-  resolution: 'explicit-tab' | 'explicit-workspace' | 'default-workspace' | 'browser-active';
-  createdWorkspace: boolean;
+export interface SessionBindingTargetResolution {
+  tab: SessionBindingTab;
+  binding: SessionBindingInfo | null;
+  resolution: 'explicit-tab' | 'explicit-binding' | 'default-binding' | 'browser-active';
+  createdBinding: boolean;
   repaired: boolean;
   repairActions: string[];
 }
 
-export interface WorkspaceStorage {
-  load(workspaceId: string): Promise<WorkspaceRecord | null>;
-  save(state: WorkspaceRecord): Promise<void>;
-  delete(workspaceId: string): Promise<void>;
-  list(): Promise<WorkspaceRecord[]>;
+export interface SessionBindingStorage {
+  load(bindingId: string): Promise<SessionBindingRecord | null>;
+  save(state: SessionBindingRecord): Promise<void>;
+  delete(bindingId: string): Promise<void>;
+  list(): Promise<SessionBindingRecord[]>;
 }
 
-export interface WorkspaceBrowser {
-  getTab(tabId: number): Promise<WorkspaceTab | null>;
-  getActiveTab(): Promise<WorkspaceTab | null>;
-  listTabs(filter?: { windowId?: number }): Promise<WorkspaceTab[]>;
-  createTab(options: { windowId?: number; url?: string; active?: boolean }): Promise<WorkspaceTab>;
-  updateTab(tabId: number, options: { active?: boolean; url?: string }): Promise<WorkspaceTab>;
+export interface SessionBindingBrowser {
+  getTab(tabId: number): Promise<SessionBindingTab | null>;
+  getActiveTab(): Promise<SessionBindingTab | null>;
+  listTabs(filter?: { windowId?: number }): Promise<SessionBindingTab[]>;
+  createTab(options: { windowId?: number; url?: string; active?: boolean }): Promise<SessionBindingTab>;
+  updateTab(tabId: number, options: { active?: boolean; url?: string }): Promise<SessionBindingTab>;
   closeTab(tabId: number): Promise<void>;
-  getWindow(windowId: number): Promise<WorkspaceWindow | null>;
-  createWindow(options: { url?: string; focused?: boolean }): Promise<WorkspaceWindow>;
-  updateWindow(windowId: number, options: { focused?: boolean }): Promise<WorkspaceWindow>;
+  getWindow(windowId: number): Promise<SessionBindingWindow | null>;
+  createWindow(options: { url?: string; focused?: boolean }): Promise<SessionBindingWindow>;
+  updateWindow(windowId: number, options: { focused?: boolean }): Promise<SessionBindingWindow>;
   closeWindow(windowId: number): Promise<void>;
-  getGroup(groupId: number): Promise<WorkspaceGroup | null>;
+  getGroup(groupId: number): Promise<SessionBindingGroup | null>;
   groupTabs(tabIds: number[], groupId?: number): Promise<number>;
-  updateGroup(groupId: number, options: { title?: string; color?: WorkspaceColor; collapsed?: boolean }): Promise<WorkspaceGroup>;
+  updateGroup(groupId: number, options: { title?: string; color?: SessionBindingColor; collapsed?: boolean }): Promise<SessionBindingGroup>;
 }
 
-interface WorkspaceWindowOwnership {
-  workspaceTabs: WorkspaceTab[];
-  foreignTabs: WorkspaceTab[];
+interface SessionBindingWindowOwnership {
+  bindingTabs: SessionBindingTab[];
+  foreignTabs: SessionBindingTab[];
 }
 
-export interface WorkspaceEnsureOptions {
-  workspaceId?: string;
+export interface SessionBindingEnsureOptions {
+  bindingId?: string;
   focus?: boolean;
   initialUrl?: string;
 }
 
-export interface WorkspaceOpenTabOptions {
-  workspaceId?: string;
+export interface SessionBindingOpenTabOptions {
+  bindingId?: string;
   url?: string;
   active?: boolean;
   focus?: boolean;
 }
 
-export interface WorkspaceResolveTargetOptions {
+export interface SessionBindingResolveTargetOptions {
   tabId?: number;
-  workspaceId?: string;
+  bindingId?: string;
   createIfMissing?: boolean;
 }
 
 class SessionBindingManager {
-  private readonly storage: WorkspaceStorage;
-  private readonly browser: WorkspaceBrowser;
+  private readonly storage: SessionBindingStorage;
+  private readonly browser: SessionBindingBrowser;
 
-  constructor(storage: WorkspaceStorage, browser: WorkspaceBrowser) {
+  constructor(storage: SessionBindingStorage, browser: SessionBindingBrowser) {
     this.storage = storage;
     this.browser = browser;
   }
 
-  async getWorkspaceInfo(workspaceId: string): Promise<WorkspaceInfo | null> {
-    return this.inspectWorkspace(workspaceId);
+  async getBindingInfo(bindingId: string): Promise<SessionBindingInfo | null> {
+    return this.inspectBinding(bindingId);
   }
 
-  async ensureWorkspace(options: WorkspaceEnsureOptions = {}): Promise<WorkspaceEnsureResult> {
-    const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
+  async ensureBinding(options: SessionBindingEnsureOptions = {}): Promise<SessionBindingEnsureResult> {
+    const bindingId = this.normalizeBindingId(options.bindingId);
     const repairActions: string[] = [];
-    const initialUrl = options.initialUrl ?? DEFAULT_WORKSPACE_URL;
-    const persisted = await this.storage.load(workspaceId);
+    const initialUrl = options.initialUrl ?? DEFAULT_SESSION_BINDING_URL;
+    const persisted = await this.storage.load(bindingId);
     const created = !persisted;
-    let state = this.normalizeState(persisted, workspaceId);
+    let state = this.normalizeState(persisted, bindingId);
 
     const originalWindowId = state.windowId;
     let window = state.windowId !== null ? await this.waitForWindow(state.windowId) : null;
-    let tabs: WorkspaceTab[] = [];
+    let tabs: SessionBindingTab[] = [];
     if (!window) {
-      const rebound = await this.rebindWorkspaceWindow(state);
+      const rebound = await this.rebindBindingWindow(state);
       if (rebound) {
         window = rebound.window;
         tabs = rebound.tabs;
@@ -161,7 +164,7 @@ class SessionBindingManager {
     }
 
     tabs = tabs.length > 0 ? tabs : await this.readTrackedTabs(state.tabIds, state.windowId);
-    const recoveredTabs = await this.recoverWorkspaceTabs(state, tabs);
+    const recoveredTabs = await this.recoverBindingTabs(state, tabs);
     if (recoveredTabs.length > tabs.length) {
       tabs = recoveredTabs;
       repairActions.push('recovered-tracked-tabs');
@@ -172,9 +175,9 @@ class SessionBindingManager {
     state.tabIds = tabs.map((tab) => tab.id);
 
     if (state.windowId !== null) {
-      const ownership = await this.inspectWorkspaceWindowOwnership(state, state.windowId);
+      const ownership = await this.inspectBindingWindowOwnership(state, state.windowId);
       if (ownership.foreignTabs.length > 0) {
-        const migrated = await this.moveWorkspaceIntoDedicatedWindow(state, ownership, initialUrl);
+        const migrated = await this.moveBindingIntoDedicatedWindow(state, ownership, initialUrl);
         window = migrated.window;
         tabs = migrated.tabs;
         state.tabIds = tabs.map((tab) => tab.id);
@@ -183,7 +186,7 @@ class SessionBindingManager {
     }
 
     if (tabs.length === 0) {
-      const primary = await this.createWorkspaceTab({
+      const primary = await this.createBindingTab({
         windowId: state.windowId,
         url: initialUrl,
         active: true
@@ -205,7 +208,7 @@ class SessionBindingManager {
       repairActions.push('reassigned-active-tab');
     }
 
-    let group = state.groupId !== null ? await this.browser.getGroup(state.groupId) : null;
+    let group = state.groupId !== null ? await this.waitForGroup(state.groupId) : null;
     if (!group || group.windowId !== state.windowId) {
       const groupId = await this.browser.groupTabs(tabs.map((tab) => tab.id));
       group = await this.browser.updateGroup(groupId, {
@@ -230,7 +233,7 @@ class SessionBindingManager {
     }
 
     tabs = await this.readTrackedTabs(state.tabIds, state.windowId);
-    tabs = await this.recoverWorkspaceTabs(state, tabs);
+    tabs = await this.recoverBindingTabs(state, tabs);
     const activeTab = state.activeTabId !== null ? await this.waitForTrackedTab(state.activeTabId, state.windowId) : null;
     if (activeTab && !tabs.some((tab) => tab.id === activeTab.id)) {
       tabs = [...tabs, activeTab];
@@ -253,7 +256,7 @@ class SessionBindingManager {
     await this.storage.save(state);
 
     return {
-      workspace: {
+      binding: {
         ...state,
         tabs
       },
@@ -263,17 +266,17 @@ class SessionBindingManager {
     };
   }
 
-  async openTab(options: WorkspaceOpenTabOptions = {}): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab }> {
-    const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
-    const hadWorkspace = (await this.loadWorkspaceRecord(workspaceId)) !== null;
-    const ensured = await this.ensureWorkspace({
-      workspaceId,
+  async openTab(options: SessionBindingOpenTabOptions = {}): Promise<{ binding: SessionBindingInfo; tab: SessionBindingTab }> {
+    const bindingId = this.normalizeBindingId(options.bindingId);
+    const hadBinding = (await this.loadBindingRecord(bindingId)) !== null;
+    const ensured = await this.ensureBinding({
+      bindingId,
       focus: false,
-      initialUrl: hadWorkspace ? options.url ?? DEFAULT_WORKSPACE_URL : DEFAULT_WORKSPACE_URL
+      initialUrl: hadBinding ? options.url ?? DEFAULT_SESSION_BINDING_URL : DEFAULT_SESSION_BINDING_URL
     });
-    let state = { ...ensured.workspace, tabIds: [...ensured.workspace.tabIds], tabs: [...ensured.workspace.tabs] };
+    let state = { ...ensured.binding, tabIds: [...ensured.binding.tabIds], tabs: [...ensured.binding.tabs] };
     if (state.windowId !== null && state.tabs.length === 0) {
-      const rebound = await this.rebindWorkspaceWindow(state);
+      const rebound = await this.rebindBindingWindow(state);
       if (rebound) {
         state.windowId = rebound.window.id;
         state.tabs = rebound.tabs;
@@ -281,7 +284,7 @@ class SessionBindingManager {
       }
     }
     const active = options.active === true;
-    const desiredUrl = options.url ?? DEFAULT_WORKSPACE_URL;
+    const desiredUrl = options.url ?? DEFAULT_SESSION_BINDING_URL;
     let reusablePrimaryTab = await this.resolveReusablePrimaryTab(
       state,
       ensured.created ||
@@ -290,14 +293,14 @@ class SessionBindingManager {
         ensured.repairActions.includes('migrated-dirty-window')
     );
 
-    let createdTab: WorkspaceTab;
+    let createdTab: SessionBindingTab;
     try {
       createdTab = reusablePrimaryTab
         ? await this.browser.updateTab(reusablePrimaryTab.id, {
             url: desiredUrl,
             active
           })
-        : await this.createWorkspaceTab({
+        : await this.createBindingTab({
             windowId: state.windowId,
             url: desiredUrl,
             active
@@ -306,19 +309,19 @@ class SessionBindingManager {
       if (!this.isMissingWindowError(error)) {
         throw error;
       }
-      const repaired = await this.ensureWorkspace({
-        workspaceId,
+      const repaired = await this.ensureBinding({
+        bindingId,
         focus: false,
         initialUrl: desiredUrl
       });
-      state = { ...repaired.workspace };
+      state = { ...repaired.binding };
       reusablePrimaryTab = await this.resolveReusablePrimaryTab(state, true);
       createdTab = reusablePrimaryTab
         ? await this.browser.updateTab(reusablePrimaryTab.id, {
             url: desiredUrl,
             active
           })
-        : await this.createWorkspaceTab({
+        : await this.createBindingTab({
             windowId: state.windowId,
             url: desiredUrl,
             active
@@ -331,14 +334,14 @@ class SessionBindingManager {
       color: state.color,
       collapsed: false
     });
-    const nextState: WorkspaceRecord = {
+    const nextState: SessionBindingRecord = {
       id: state.id,
       label: state.label,
       color: state.color,
       windowId: state.windowId,
       groupId,
       tabIds: nextTabIds,
-      activeTabId: createdTab.id,
+      activeTabId: active || options.focus === true ? createdTab.id : state.activeTabId ?? state.primaryTabId ?? createdTab.id,
       primaryTabId: state.primaryTabId ?? createdTab.id
     };
 
@@ -351,7 +354,7 @@ class SessionBindingManager {
     const tabs = await this.readTrackedTabs(nextState.tabIds, nextState.windowId);
     const tab = tabs.find((item) => item.id === createdTab.id) ?? createdTab;
     return {
-      workspace: {
+      binding: {
         ...nextState,
         tabs
       },
@@ -359,58 +362,58 @@ class SessionBindingManager {
     };
   }
 
-  async listTabs(workspaceId: string): Promise<{ workspace: WorkspaceInfo; tabs: WorkspaceTab[] }> {
-    const ensured = await this.inspectWorkspace(workspaceId);
+  async listTabs(bindingId: string): Promise<{ binding: SessionBindingInfo; tabs: SessionBindingTab[] }> {
+    const ensured = await this.inspectBinding(bindingId);
     if (!ensured) {
-      throw new Error(`Workspace ${workspaceId} does not exist`);
+      throw new Error(`Binding ${bindingId} does not exist`);
     }
     return {
-      workspace: ensured,
+      binding: ensured,
       tabs: ensured.tabs
     };
   }
 
-  async getActiveTab(workspaceId: string): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab | null }> {
-    const ensured = await this.inspectWorkspace(workspaceId);
+  async getActiveTab(bindingId: string): Promise<{ binding: SessionBindingInfo; tab: SessionBindingTab | null }> {
+    const ensured = await this.inspectBinding(bindingId);
     if (!ensured) {
-      const normalizedWorkspaceId = this.normalizeWorkspaceId(workspaceId);
+      const normalizedBindingId = this.normalizeBindingId(bindingId);
       return {
-        workspace: {
-          ...this.normalizeState(null, normalizedWorkspaceId),
+        binding: {
+          ...this.normalizeState(null, normalizedBindingId),
           tabs: []
         },
         tab: null
       };
     }
     return {
-      workspace: ensured,
+      binding: ensured,
       tab: ensured.tabs.find((tab) => tab.id === ensured.activeTabId) ?? null
     };
   }
 
-  async setActiveTab(tabId: number, workspaceId: string): Promise<{ workspace: WorkspaceInfo; tab: WorkspaceTab }> {
-    const ensured = await this.ensureWorkspace({ workspaceId });
-    if (!ensured.workspace.tabIds.includes(tabId)) {
-      throw new Error(`Tab ${tabId} does not belong to workspace ${workspaceId}`);
+  async setActiveTab(tabId: number, bindingId: string): Promise<{ binding: SessionBindingInfo; tab: SessionBindingTab }> {
+    const ensured = await this.ensureBinding({ bindingId });
+    if (!ensured.binding.tabIds.includes(tabId)) {
+      throw new Error(`Tab ${tabId} does not belong to binding ${bindingId}`);
     }
-    const nextState: WorkspaceRecord = {
-      id: ensured.workspace.id,
-      label: ensured.workspace.label,
-      color: ensured.workspace.color,
-      windowId: ensured.workspace.windowId,
-      groupId: ensured.workspace.groupId,
-      tabIds: [...ensured.workspace.tabIds],
+    const nextState: SessionBindingRecord = {
+      id: ensured.binding.id,
+      label: ensured.binding.label,
+      color: ensured.binding.color,
+      windowId: ensured.binding.windowId,
+      groupId: ensured.binding.groupId,
+      tabIds: [...ensured.binding.tabIds],
       activeTabId: tabId,
-      primaryTabId: ensured.workspace.primaryTabId ?? tabId
+      primaryTabId: ensured.binding.primaryTabId ?? tabId
     };
     await this.storage.save(nextState);
     const tabs = await this.readTrackedTabs(nextState.tabIds, nextState.windowId);
     const tab = tabs.find((item) => item.id === tabId);
     if (!tab) {
-      throw new Error(`Tab ${tabId} is missing from workspace ${workspaceId}`);
+      throw new Error(`Tab ${tabId} is missing from binding ${bindingId}`);
     }
     return {
-      workspace: {
+      binding: {
         ...nextState,
         tabs
       },
@@ -418,36 +421,36 @@ class SessionBindingManager {
     };
   }
 
-  async focus(workspaceId: string): Promise<{ ok: true; workspace: WorkspaceInfo }> {
-    const ensured = await this.ensureWorkspace({ workspaceId, focus: false });
-    if (ensured.workspace.activeTabId !== null) {
-      await this.browser.updateTab(ensured.workspace.activeTabId, { active: true });
+  async focus(bindingId: string): Promise<{ ok: true; binding: SessionBindingInfo }> {
+    const ensured = await this.ensureBinding({ bindingId, focus: false });
+    if (ensured.binding.activeTabId !== null) {
+      await this.browser.updateTab(ensured.binding.activeTabId, { active: true });
     }
-    if (ensured.workspace.windowId !== null) {
-      await this.browser.updateWindow(ensured.workspace.windowId, { focused: true });
+    if (ensured.binding.windowId !== null) {
+      await this.browser.updateWindow(ensured.binding.windowId, { focused: true });
     }
-    const refreshed = await this.ensureWorkspace({ workspaceId, focus: false });
-    return { ok: true, workspace: refreshed.workspace };
+    const refreshed = await this.ensureBinding({ bindingId, focus: false });
+    return { ok: true, binding: refreshed.binding };
   }
 
-  async reset(options: WorkspaceEnsureOptions = {}): Promise<WorkspaceEnsureResult> {
-    const workspaceId = this.normalizeWorkspaceId(options.workspaceId);
-    await this.close(workspaceId);
-    return this.ensureWorkspace({
+  async reset(options: SessionBindingEnsureOptions = {}): Promise<SessionBindingEnsureResult> {
+    const bindingId = this.normalizeBindingId(options.bindingId);
+    await this.close(bindingId);
+    return this.ensureBinding({
       ...options,
-      workspaceId
+      bindingId
     });
   }
 
-  async close(workspaceId: string): Promise<{ ok: true }> {
-    const state = await this.loadWorkspaceRecord(workspaceId);
+  async close(bindingId: string): Promise<{ ok: true }> {
+    const state = await this.loadBindingRecord(bindingId);
     if (!state) {
-      await this.storage.delete(workspaceId);
+      await this.storage.delete(bindingId);
       return { ok: true };
     }
     // Clear persisted state before closing the window so tab/window removal
-    // listeners cannot race and resurrect an empty workspace record.
-    await this.storage.delete(workspaceId);
+    // listeners cannot race and resurrect an empty binding record.
+    await this.storage.delete(bindingId);
     if (state.windowId !== null) {
       const existingWindow = await this.browser.getWindow(state.windowId);
       if (existingWindow) {
@@ -457,7 +460,7 @@ class SessionBindingManager {
     return { ok: true };
   }
 
-  async resolveTarget(options: WorkspaceResolveTargetOptions = {}): Promise<WorkspaceTargetResolution> {
+  async resolveTarget(options: SessionBindingResolveTargetOptions = {}): Promise<SessionBindingTargetResolution> {
     if (typeof options.tabId === 'number') {
       const explicitTab = await this.browser.getTab(options.tabId);
       if (!explicitTab) {
@@ -465,21 +468,21 @@ class SessionBindingManager {
       }
       return {
         tab: explicitTab,
-        workspace: null,
+        binding: null,
         resolution: 'explicit-tab',
-        createdWorkspace: false,
+        createdBinding: false,
         repaired: false,
         repairActions: []
       };
     }
 
-    const explicitWorkspaceId = typeof options.workspaceId === 'string' ? this.normalizeWorkspaceId(options.workspaceId) : undefined;
-    if (explicitWorkspaceId) {
-      const ensured = await this.ensureWorkspace({
-        workspaceId: explicitWorkspaceId,
+    const explicitBindingId = typeof options.bindingId === 'string' ? this.normalizeBindingId(options.bindingId) : undefined;
+    if (explicitBindingId) {
+      const ensured = await this.ensureBinding({
+        bindingId: explicitBindingId,
         focus: false
       });
-      return this.buildWorkspaceResolution(ensured, 'explicit-workspace');
+      return this.buildBindingResolution(ensured, 'explicit-binding');
     }
 
     if (options.createIfMissing !== true) {
@@ -489,30 +492,30 @@ class SessionBindingManager {
       }
       return {
         tab: activeTab,
-        workspace: null,
+        binding: null,
         resolution: 'browser-active',
-        createdWorkspace: false,
+        createdBinding: false,
         repaired: false,
         repairActions: []
       };
     }
 
-    throw new Error('workspaceId is required when createIfMissing is true');
+    throw new Error('bindingId is required when createIfMissing is true');
   }
 
-  private normalizeWorkspaceId(workspaceId?: string): string {
-    const candidate = workspaceId?.trim();
+  private normalizeBindingId(bindingId?: string): string {
+    const candidate = bindingId?.trim();
     if (!candidate) {
-      throw new Error('workspaceId is required');
+      throw new Error('bindingId is required');
     }
     return candidate;
   }
 
-  private normalizeState(state: WorkspaceRecord | null, workspaceId: string): WorkspaceRecord {
+  private normalizeState(state: SessionBindingRecord | null, bindingId: string): SessionBindingRecord {
     return {
-      id: workspaceId,
-      label: state?.label ?? DEFAULT_WORKSPACE_LABEL,
-      color: state?.color ?? DEFAULT_WORKSPACE_COLOR,
+      id: bindingId,
+      label: state?.label ?? DEFAULT_SESSION_BINDING_LABEL,
+      color: state?.color ?? DEFAULT_SESSION_BINDING_COLOR,
       windowId: state?.windowId ?? null,
       groupId: state?.groupId ?? null,
       tabIds: state?.tabIds ?? [],
@@ -521,43 +524,43 @@ class SessionBindingManager {
     };
   }
 
-  async listWorkspaceRecords(): Promise<WorkspaceRecord[]> {
+  async listBindingRecords(): Promise<SessionBindingRecord[]> {
     return await this.storage.list();
   }
 
-  private async loadWorkspaceRecord(workspaceId: string): Promise<WorkspaceRecord | null> {
-    const normalizedWorkspaceId = this.normalizeWorkspaceId(workspaceId);
-    const state = await this.storage.load(normalizedWorkspaceId);
-    if (!state || state.id !== normalizedWorkspaceId) {
+  private async loadBindingRecord(bindingId: string): Promise<SessionBindingRecord | null> {
+    const normalizedBindingId = this.normalizeBindingId(bindingId);
+    const state = await this.storage.load(normalizedBindingId);
+    if (!state || state.id !== normalizedBindingId) {
       return null;
     }
-    return this.normalizeState(state, normalizedWorkspaceId);
+    return this.normalizeState(state, normalizedBindingId);
   }
 
-  private async buildWorkspaceResolution(
-    ensured: WorkspaceEnsureResult,
-    resolution: 'explicit-workspace' | 'default-workspace'
-  ): Promise<WorkspaceTargetResolution> {
-    const tab = ensured.workspace.tabs.find((item) => item.id === ensured.workspace.activeTabId) ?? ensured.workspace.tabs[0] ?? null;
+  private async buildBindingResolution(
+    ensured: SessionBindingEnsureResult,
+    resolution: 'explicit-binding' | 'default-binding'
+  ): Promise<SessionBindingTargetResolution> {
+    const tab = ensured.binding.tabs.find((item) => item.id === ensured.binding.activeTabId) ?? ensured.binding.tabs[0] ?? null;
     if (tab) {
       return {
         tab,
-        workspace: ensured.workspace,
+        binding: ensured.binding,
         resolution,
-        createdWorkspace: ensured.created,
+        createdBinding: ensured.created,
         repaired: ensured.repaired,
         repairActions: ensured.repairActions
       };
     }
 
-    if (ensured.workspace.activeTabId !== null) {
-      const activeWorkspaceTab = await this.waitForTrackedTab(ensured.workspace.activeTabId, ensured.workspace.windowId);
-      if (activeWorkspaceTab) {
+    if (ensured.binding.activeTabId !== null) {
+      const activeBindingTab = await this.waitForTrackedTab(ensured.binding.activeTabId, ensured.binding.windowId);
+      if (activeBindingTab) {
         return {
-          tab: activeWorkspaceTab,
-          workspace: ensured.workspace,
+          tab: activeBindingTab,
+          binding: ensured.binding,
           resolution,
-          createdWorkspace: ensured.created,
+          createdBinding: ensured.created,
           repaired: ensured.repaired,
           repairActions: ensured.repairActions
         };
@@ -570,15 +573,15 @@ class SessionBindingManager {
     }
     return {
       tab: activeTab,
-      workspace: null,
+      binding: null,
       resolution: 'browser-active',
-      createdWorkspace: ensured.created,
+      createdBinding: ensured.created,
       repaired: ensured.repaired,
       repairActions: ensured.repairActions
     };
   }
 
-  private async readTrackedTabs(tabIds: number[], windowId: number | null): Promise<WorkspaceTab[]> {
+  private async readTrackedTabs(tabIds: number[], windowId: number | null): Promise<SessionBindingTab[]> {
     const tabs = (
       await Promise.all(
         tabIds.map(async (tabId) => {
@@ -592,26 +595,26 @@ class SessionBindingManager {
           return tab;
         })
       )
-    ).filter((tab): tab is WorkspaceTab => tab !== null);
+    ).filter((tab): tab is SessionBindingTab => tab !== null);
     return tabs;
   }
 
-  private async readLooseTrackedTabs(tabIds: number[]): Promise<WorkspaceTab[]> {
+  private async readLooseTrackedTabs(tabIds: number[]): Promise<SessionBindingTab[]> {
     const tabs = (
       await Promise.all(
         tabIds.map(async (tabId) => {
           return await this.browser.getTab(tabId);
         })
       )
-    ).filter((tab): tab is WorkspaceTab => tab !== null);
+    ).filter((tab): tab is SessionBindingTab => tab !== null);
     return tabs;
   }
 
-  private collectCandidateTabIds(state: WorkspaceRecord): number[] {
+  private collectCandidateTabIds(state: SessionBindingRecord): number[] {
     return [...new Set(state.tabIds.concat([state.activeTabId, state.primaryTabId].filter((value): value is number => typeof value === 'number')))];
   }
 
-  private async rebindWorkspaceWindow(state: WorkspaceRecord): Promise<{ window: WorkspaceWindow; tabs: WorkspaceTab[] } | null> {
+  private async rebindBindingWindow(state: SessionBindingRecord): Promise<{ window: SessionBindingWindow; tabs: SessionBindingTab[] } | null> {
     const candidateWindowIds: number[] = [];
     const pushWindowId = (windowId: number | null | undefined): void => {
       if (typeof windowId !== 'number') {
@@ -622,7 +625,7 @@ class SessionBindingManager {
       }
     };
 
-    const group = state.groupId !== null ? await this.browser.getGroup(state.groupId) : null;
+    const group = state.groupId !== null ? await this.waitForGroup(state.groupId) : null;
     pushWindowId(group?.windowId);
 
     const trackedTabs = await this.readLooseTrackedTabs(this.collectCandidateTabIds(state));
@@ -637,7 +640,7 @@ class SessionBindingManager {
       }
       let tabs = await this.readTrackedTabs(this.collectCandidateTabIds(state), candidateWindowId);
       if (tabs.length === 0 && group?.id !== null && group?.windowId === candidateWindowId) {
-        const windowTabs = await this.waitForWindowTabs(candidateWindowId, 750);
+        const windowTabs = await this.waitForWindowTabs(candidateWindowId, WINDOW_TABS_LOOKUP_TIMEOUT_MS);
         tabs = windowTabs.filter((tab) => tab.groupId === group.id);
       }
       if (tabs.length === 0) {
@@ -659,27 +662,27 @@ class SessionBindingManager {
     return null;
   }
 
-  private async inspectWorkspaceWindowOwnership(state: WorkspaceRecord, windowId: number): Promise<WorkspaceWindowOwnership> {
+  private async inspectBindingWindowOwnership(state: SessionBindingRecord, windowId: number): Promise<SessionBindingWindowOwnership> {
     const windowTabs = await this.waitForWindowTabs(windowId, 500);
     const trackedIds = new Set(this.collectCandidateTabIds(state));
     return {
-      workspaceTabs: windowTabs.filter((tab) => trackedIds.has(tab.id) || (state.groupId !== null && tab.groupId === state.groupId)),
+      bindingTabs: windowTabs.filter((tab) => trackedIds.has(tab.id) || (state.groupId !== null && tab.groupId === state.groupId)),
       foreignTabs: windowTabs.filter((tab) => !trackedIds.has(tab.id) && (state.groupId === null || tab.groupId !== state.groupId))
     };
   }
 
-  private async moveWorkspaceIntoDedicatedWindow(
-    state: WorkspaceRecord,
-    ownership: WorkspaceWindowOwnership,
+  private async moveBindingIntoDedicatedWindow(
+    state: SessionBindingRecord,
+    ownership: SessionBindingWindowOwnership,
     initialUrl: string
-  ): Promise<{ window: WorkspaceWindow; tabs: WorkspaceTab[] }> {
-    const sourceTabs = this.orderWorkspaceTabsForMigration(state, ownership.workspaceTabs);
+  ): Promise<{ window: SessionBindingWindow; tabs: SessionBindingTab[] }> {
+    const sourceTabs = this.orderSessionBindingTabsForMigration(state, ownership.bindingTabs);
     const seedUrl = sourceTabs[0]?.url ?? initialUrl;
     const window = await this.browser.createWindow({
-      url: seedUrl || DEFAULT_WORKSPACE_URL,
+      url: seedUrl || DEFAULT_SESSION_BINDING_URL,
       focused: false
     });
-    const recreatedTabs = await this.waitForWindowTabs(window.id);
+      const recreatedTabs = await this.waitForWindowTabs(window.id);
     const firstTab = recreatedTabs[0] ?? null;
     const tabIdMap = new Map<number, number>();
     if (sourceTabs[0] && firstTab) {
@@ -687,7 +690,7 @@ class SessionBindingManager {
     }
 
     for (const sourceTab of sourceTabs.slice(1)) {
-      const recreated = await this.createWorkspaceTab({
+      const recreated = await this.createBindingTab({
         windowId: window.id,
         url: sourceTab.url,
         active: false
@@ -713,8 +716,8 @@ class SessionBindingManager {
     state.primaryTabId = nextPrimaryTabId;
     state.activeTabId = nextActiveTabId;
 
-    for (const workspaceTab of ownership.workspaceTabs) {
-      await this.browser.closeTab(workspaceTab.id);
+    for (const bindingTab of ownership.bindingTabs) {
+      await this.browser.closeTab(bindingTab.id);
     }
 
     return {
@@ -723,8 +726,8 @@ class SessionBindingManager {
     };
   }
 
-  private orderWorkspaceTabsForMigration(state: WorkspaceRecord, tabs: WorkspaceTab[]): WorkspaceTab[] {
-    const ordered: WorkspaceTab[] = [];
+  private orderSessionBindingTabsForMigration(state: SessionBindingRecord, tabs: SessionBindingTab[]): SessionBindingTab[] {
+    const ordered: SessionBindingTab[] = [];
     const seen = new Set<number>();
     const pushById = (tabId: number | null): void => {
       if (typeof tabId !== 'number') {
@@ -750,7 +753,7 @@ class SessionBindingManager {
     return ordered;
   }
 
-  private async recoverWorkspaceTabs(state: WorkspaceRecord, existingTabs: WorkspaceTab[]): Promise<WorkspaceTab[]> {
+  private async recoverBindingTabs(state: SessionBindingRecord, existingTabs: SessionBindingTab[]): Promise<SessionBindingTab[]> {
     if (state.windowId === null) {
       return existingTabs;
     }
@@ -782,9 +785,9 @@ class SessionBindingManager {
     return existingTabs;
   }
 
-  private async createWorkspaceTab(options: { windowId: number | null; url: string; active: boolean }): Promise<WorkspaceTab> {
+  private async createBindingTab(options: { windowId: number | null; url: string; active: boolean }): Promise<SessionBindingTab> {
     if (options.windowId === null) {
-      throw new Error('Workspace window is unavailable');
+      throw new Error('Binding window is unavailable');
     }
 
     const deadline = Date.now() + 1_500;
@@ -809,8 +812,8 @@ class SessionBindingManager {
     throw lastError ?? new Error(`No window with id: ${options.windowId}.`);
   }
 
-  private async inspectWorkspace(workspaceId: string): Promise<WorkspaceInfo | null> {
-    const state = await this.loadWorkspaceRecord(workspaceId);
+  private async inspectBinding(bindingId: string): Promise<SessionBindingInfo | null> {
+    const state = await this.loadBindingRecord(bindingId);
     if (!state) {
       return null;
     }
@@ -834,36 +837,36 @@ class SessionBindingManager {
     };
   }
 
-  private async resolveReusablePrimaryTab(workspace: WorkspaceInfo, allowReuse: boolean): Promise<WorkspaceTab | null> {
-    if (workspace.windowId === null) {
+  private async resolveReusablePrimaryTab(binding: SessionBindingInfo, allowReuse: boolean): Promise<SessionBindingTab | null> {
+    if (binding.windowId === null) {
       return null;
     }
-    if (workspace.primaryTabId !== null) {
-      const trackedPrimary = workspace.tabs.find((tab) => tab.id === workspace.primaryTabId) ?? (await this.waitForTrackedTab(workspace.primaryTabId, workspace.windowId));
-      if (trackedPrimary && (allowReuse || this.isReusableBlankWorkspaceTab(trackedPrimary, workspace))) {
+    if (binding.primaryTabId !== null) {
+      const trackedPrimary = binding.tabs.find((tab) => tab.id === binding.primaryTabId) ?? (await this.waitForTrackedTab(binding.primaryTabId, binding.windowId));
+      if (trackedPrimary && (allowReuse || this.isReusableBlankSessionBindingTab(trackedPrimary, binding))) {
         return trackedPrimary;
       }
     }
-    const windowTabs = await this.waitForWindowTabs(workspace.windowId, 750);
+    const windowTabs = await this.waitForWindowTabs(binding.windowId, WINDOW_TABS_LOOKUP_TIMEOUT_MS);
     if (windowTabs.length !== 1) {
       return null;
     }
     const candidate = windowTabs[0]!;
-    if (allowReuse || this.isReusableBlankWorkspaceTab(candidate, workspace)) {
+    if (allowReuse || this.isReusableBlankSessionBindingTab(candidate, binding)) {
       return candidate;
     }
     return null;
   }
 
-  private isReusableBlankWorkspaceTab(tab: WorkspaceTab, workspace: WorkspaceInfo): boolean {
-    if (workspace.tabIds.length > 1) {
+  private isReusableBlankSessionBindingTab(tab: SessionBindingTab, binding: SessionBindingInfo): boolean {
+    if (binding.tabIds.length > 1) {
       return false;
     }
     const normalizedUrl = tab.url.trim().toLowerCase();
-    return normalizedUrl === '' || normalizedUrl === DEFAULT_WORKSPACE_URL;
+    return normalizedUrl === '' || normalizedUrl === DEFAULT_SESSION_BINDING_URL;
   }
 
-  private async waitForWindow(windowId: number, timeoutMs = 750): Promise<WorkspaceWindow | null> {
+  private async waitForWindow(windowId: number, timeoutMs = WINDOW_LOOKUP_TIMEOUT_MS): Promise<SessionBindingWindow | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const window = await this.browser.getWindow(windowId);
@@ -875,7 +878,19 @@ class SessionBindingManager {
     return null;
   }
 
-  private async waitForTrackedTab(tabId: number, windowId: number | null, timeoutMs = 1_000): Promise<WorkspaceTab | null> {
+  private async waitForGroup(groupId: number, timeoutMs = GROUP_LOOKUP_TIMEOUT_MS): Promise<SessionBindingGroup | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const group = await this.browser.getGroup(groupId);
+      if (group) {
+        return group;
+      }
+      await this.delay(50);
+    }
+    return null;
+  }
+
+  private async waitForTrackedTab(tabId: number, windowId: number | null, timeoutMs = 1_000): Promise<SessionBindingTab | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const tab = await this.browser.getTab(tabId);
@@ -887,7 +902,7 @@ class SessionBindingManager {
     return null;
   }
 
-  private async waitForWindowTabs(windowId: number, timeoutMs = 1_000): Promise<WorkspaceTab[]> {
+  private async waitForWindowTabs(windowId: number, timeoutMs = WINDOW_TABS_LOOKUP_TIMEOUT_MS): Promise<SessionBindingTab[]> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const tabs = await this.browser.listTabs({ windowId });
@@ -909,4 +924,4 @@ class SessionBindingManager {
   }
 }
 
-export { SessionBindingManager, SessionBindingManager as WorkspaceManager };
+export { SessionBindingManager };

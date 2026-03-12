@@ -101,40 +101,40 @@ export abstract class StubDriver implements BrowserDriver {
     return this.unavailable('userSelectCandidate');
   }
 
-  workspaceEnsure() {
-    return this.unavailable('workspaceEnsure');
+  sessionBindingEnsure() {
+    return this.unavailable('sessionBindingEnsure');
   }
 
-  workspaceInfo() {
-    return this.unavailable('workspaceInfo');
+  sessionBindingInfo() {
+    return this.unavailable('sessionBindingInfo');
   }
 
-  workspaceOpenTab() {
-    return this.unavailable('workspaceOpenTab');
+  sessionBindingOpenTab() {
+    return this.unavailable('sessionBindingOpenTab');
   }
 
-  workspaceListTabs() {
-    return this.unavailable('workspaceListTabs');
+  sessionBindingListTabs() {
+    return this.unavailable('sessionBindingListTabs');
   }
 
-  workspaceGetActiveTab() {
-    return this.unavailable('workspaceGetActiveTab');
+  sessionBindingGetActiveTab() {
+    return this.unavailable('sessionBindingGetActiveTab');
   }
 
-  workspaceSetActiveTab() {
-    return this.unavailable('workspaceSetActiveTab');
+  sessionBindingSetActiveTab() {
+    return this.unavailable('sessionBindingSetActiveTab');
   }
 
-  workspaceFocus() {
-    return this.unavailable('workspaceFocus');
+  sessionBindingFocus() {
+    return this.unavailable('sessionBindingFocus');
   }
 
-  workspaceReset() {
-    return this.unavailable('workspaceReset');
+  sessionBindingReset() {
+    return this.unavailable('sessionBindingReset');
   }
 
-  workspaceClose() {
-    return this.unavailable('workspaceClose');
+  sessionBindingClose() {
+    return this.unavailable('sessionBindingClose');
   }
 
   rawRequest() {

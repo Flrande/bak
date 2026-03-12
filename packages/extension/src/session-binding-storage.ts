@@ -1,10 +1,8 @@
-import type { WorkspaceRecord } from './workspace.js';
+import type { SessionBindingRecord } from './session-binding.js';
 
 export const STORAGE_KEY_SESSION_BINDINGS = 'sessionBindings';
-export const LEGACY_STORAGE_KEY_WORKSPACES = 'agentWorkspaces';
-export const LEGACY_STORAGE_KEY_WORKSPACE = 'agentWorkspace';
 
-function isWorkspaceRecord(value: unknown): value is WorkspaceRecord {
+function isSessionBindingRecord(value: unknown): value is SessionBindingRecord {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
@@ -19,26 +17,26 @@ function isWorkspaceRecord(value: unknown): value is WorkspaceRecord {
   );
 }
 
-function cloneWorkspaceRecord(state: WorkspaceRecord): WorkspaceRecord {
+function cloneSessionBindingRecord(state: SessionBindingRecord): SessionBindingRecord {
   return {
     ...state,
     tabIds: [...state.tabIds]
   };
 }
 
-function normalizeWorkspaceRecordMap(value: unknown): { found: boolean; map: Record<string, WorkspaceRecord> } {
+function normalizeSessionBindingRecordMap(value: unknown): { found: boolean; map: Record<string, SessionBindingRecord> } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return {
       found: false,
       map: {}
     };
   }
-  const normalizedEntries: Array<readonly [string, WorkspaceRecord]> = [];
-  for (const [workspaceId, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (!isWorkspaceRecord(entry)) {
+  const normalizedEntries: Array<readonly [string, SessionBindingRecord]> = [];
+  for (const [bindingId, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!isSessionBindingRecord(entry)) {
       continue;
     }
-    normalizedEntries.push([workspaceId, cloneWorkspaceRecord(entry)] as const);
+    normalizedEntries.push([bindingId, cloneSessionBindingRecord(entry)] as const);
   }
   return {
     found: true,
@@ -46,23 +44,7 @@ function normalizeWorkspaceRecordMap(value: unknown): { found: boolean; map: Rec
   };
 }
 
-export function resolveSessionBindingStateMap(stored: Record<string, unknown>): Record<string, WorkspaceRecord> {
-  const current = normalizeWorkspaceRecordMap(stored[STORAGE_KEY_SESSION_BINDINGS]);
-  if (current.found) {
-    return current.map;
-  }
-
-  const legacyMap = normalizeWorkspaceRecordMap(stored[LEGACY_STORAGE_KEY_WORKSPACES]);
-  if (legacyMap.found) {
-    return legacyMap.map;
-  }
-
-  const legacySingle = stored[LEGACY_STORAGE_KEY_WORKSPACE];
-  if (isWorkspaceRecord(legacySingle)) {
-    return {
-      [legacySingle.id]: cloneWorkspaceRecord(legacySingle)
-    };
-  }
-
-  return {};
+export function resolveSessionBindingStateMap(stored: Record<string, unknown>): Record<string, SessionBindingRecord> {
+  const current = normalizeSessionBindingRecordMap(stored[STORAGE_KEY_SESSION_BINDINGS]);
+  return current.found ? current.map : {};
 }

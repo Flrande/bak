@@ -94,6 +94,13 @@ let performanceBaselineMs = 0;
 const pageLoadedAt = Math.round(performance.timeOrigin || Date.now());
 let lastMutationAt = Date.now();
 
+const DISCOVERY_GLOBAL_PATTERN = /(data|table|json|state|store|market|quote|flow|row|timestamp|snapshot|book|signal)/i;
+
+interface TimestampCandidateMatch {
+  value: string;
+  context: string;
+}
+
 function isHtmlElement(node: Element | null): node is HTMLElement {
   if (!node) {
     return false;
@@ -1692,19 +1699,36 @@ function currentContextSnapshot(): { tabId: null; framePath: string[]; shadowPat
   };
 }
 
-function timestampCandidatesFromText(text: string, patterns?: string[]): string[] {
-  const regexes = (patterns ?? [String.raw`\b20\d{2}-\d{2}-\d{2}\b`, String.raw`\b20\d{2}\/\d{2}\/\d{2}\b`]).map(
-    (pattern) => new RegExp(pattern, 'gi')
-  );
-  const collected = new Set<string>();
+function timestampCandidateMatchesFromText(text: string, patterns?: string[]): TimestampCandidateMatch[] {
+  const regexes = (
+    patterns ?? [
+      String.raw`\b20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b`,
+      String.raw`\b20\d{2}-\d{2}-\d{2}\b`,
+      String.raw`\b20\d{2}\/\d{2}\/\d{2}\b`
+    ]
+  ).map((pattern) => new RegExp(pattern, 'gi'));
+  const collected = new Map<string, TimestampCandidateMatch>();
   for (const regex of regexes) {
     for (const match of text.matchAll(regex)) {
-      if (match[0]) {
-        collected.add(match[0]);
+      const value = match[0];
+      if (!value) {
+        continue;
+      }
+      const index = match.index ?? text.indexOf(value);
+      const start = Math.max(0, index - 28);
+      const end = Math.min(text.length, index + value.length + 28);
+      const context = text.slice(start, end).replace(/\s+/g, ' ').trim();
+      const key = `${value}::${context}`;
+      if (!collected.has(key)) {
+        collected.set(key, { value, context });
       }
     }
   }
-  return [...collected];
+  return [...collected.values()];
+}
+
+function timestampCandidatesFromText(text: string, patterns?: string[]): string[] {
+  return timestampCandidateMatchesFromText(text, patterns).map((candidate) => candidate.value);
 }
 
 function listInlineScripts(): Array<{ content: string; suspectedVars: string[] }> {
@@ -1712,9 +1736,9 @@ function listInlineScripts(): Array<{ content: string; suspectedVars: string[] }
     .filter((script) => !script.src)
     .map((script) => {
       const content = script.textContent ?? '';
-      const suspectedVars = [...content.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*(?:data|table|json|state|store)[A-Za-z_$\w]*)/gi)].map(
-        (match) => match[1] ?? ''
-      ).filter(Boolean);
+      const suspectedVars = [...content.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)]
+        .map((match) => match[1] ?? '')
+        .filter((candidate) => DISCOVERY_GLOBAL_PATTERN.test(candidate));
       return { content, suspectedVars };
     });
 }
@@ -2028,6 +2052,20 @@ function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>
     }
     return segments;
   };
+  const buildPathExpression = (path) => {
+    const segments = parsePath(path);
+    return segments
+      .map((segment, index) => {
+        if (typeof segment === 'number') {
+          return '[' + segment + ']';
+        }
+        if (index === 0) {
+          return segment;
+        }
+        return '.' + segment;
+      })
+      .join('');
+  };
   const readPath = (targetWindow, path) => {
     const segments = parsePath(path);
     let current = targetWindow;
@@ -2038,6 +2076,34 @@ function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>
       current = current[segment];
     }
     return current;
+  };
+  const resolveExtractValue = (targetWindow, path, resolver) => {
+    const strategy = resolver === 'globalThis' || resolver === 'lexical' ? resolver : 'auto';
+    const lexicalExpression = buildPathExpression(path);
+    const readLexical = () => {
+      try {
+        return targetWindow.eval(lexicalExpression);
+      } catch (error) {
+        if (error instanceof ReferenceError) {
+          throw { code: 'E_NOT_FOUND', message: 'path not found: ' + path };
+        }
+        throw error;
+      }
+    };
+    if (strategy === 'globalThis') {
+      return { resolver: 'globalThis', value: readPath(targetWindow, path) };
+    }
+    if (strategy === 'lexical') {
+      return { resolver: 'lexical', value: readLexical() };
+    }
+    try {
+      return { resolver: 'globalThis', value: readPath(targetWindow, path) };
+    } catch (error) {
+      if (!error || typeof error !== 'object' || error.code !== 'E_NOT_FOUND') {
+        throw error;
+      }
+    }
+    return { resolver: 'lexical', value: readLexical() };
   };
   const buildScopeTargets = () => {
     if (payload.scope === 'main') {
@@ -2058,7 +2124,7 @@ function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>
   };
   const toResult = async (target) => {
     if (action === 'globals') {
-      const keys = Object.keys(target.targetWindow).filter((key) => /(data|table|json|state|store)/i.test(key)).slice(0, 50);
+      const keys = Object.keys(target.targetWindow).filter((key) => ${DISCOVERY_GLOBAL_PATTERN}.test(key)).slice(0, 50);
       return { url: target.url, framePath: target.framePath, value: keys };
     }
     if (action === 'eval') {
@@ -2066,8 +2132,9 @@ function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>
       return { url: target.url, framePath: target.framePath, value: serialized.value, bytes: serialized.bytes };
     }
     if (action === 'extract') {
-      const serialized = serializeValue(readPath(target.targetWindow, payload.path), payload.maxBytes);
-      return { url: target.url, framePath: target.framePath, value: serialized.value, bytes: serialized.bytes };
+      const extracted = resolveExtractValue(target.targetWindow, payload.path, payload.resolver);
+      const serialized = serializeValue(extracted.value, payload.maxBytes);
+      return { url: target.url, framePath: target.framePath, value: serialized.value, bytes: serialized.bytes, resolver: extracted.resolver };
     }
     if (action === 'fetch') {
       const headers = { ...(payload.headers || {}) };
@@ -2193,6 +2260,7 @@ function pageEval(expr: string, params: Record<string, unknown>): Promise<{ scop
 function pageExtract(path: string, params: Record<string, unknown>): Promise<{ scope: PageExecutionScope; result?: PageFrameResult<unknown>; results?: Array<PageFrameResult<unknown>> }> {
   return runPageWorldRequest('extract', {
     path,
+    resolver: typeof params.resolver === 'string' ? params.resolver : undefined,
     scope: resolveScope(params),
     maxBytes: typeof params.maxBytes === 'number' ? params.maxBytes : undefined,
     framePath: pageWorldFramePath()
@@ -2216,7 +2284,7 @@ function pageFetch(params: Record<string, unknown>): Promise<{ scope: PageExecut
 
 async function globalsPreview(): Promise<string[]> {
   return Object.keys(window)
-    .filter((key) => /(data|table|json|state|store)/i.test(key))
+    .filter((key) => DISCOVERY_GLOBAL_PATTERN.test(key))
     .slice(0, 50);
 }
 
@@ -2230,23 +2298,30 @@ async function collectInspectionState(params: Record<string, unknown> = {}): Pro
   const visibleText = pageTextChunks(root, 40, 320);
   const combinedText = visibleText.map((chunk) => chunk.text).join('\n');
   const scripts = listInlineScripts();
-  const visibleTimestamps = timestampCandidatesFromText(combinedText, Array.isArray(params.patterns) ? params.patterns.map(String) : undefined);
-  const inlineTimestamps = timestampCandidatesFromText(
+  const visibleTimestampCandidates = timestampCandidateMatchesFromText(
+    combinedText,
+    Array.isArray(params.patterns) ? params.patterns.map(String) : undefined
+  );
+  const inlineTimestampCandidates = timestampCandidateMatchesFromText(
     scripts.map((script) => script.content).join('\n'),
     Array.isArray(params.patterns) ? params.patterns.map(String) : undefined
   );
+  const previewGlobals = await globalsPreview();
+  const suspiciousGlobals = [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50);
   return {
     url: metadata.url,
     title: metadata.title,
     html: redactHtmlSnapshot(document.documentElement),
     visibleText,
-    visibleTimestamps,
-    inlineTimestamps,
-    suspiciousGlobals: [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50),
-    globalsPreview: await globalsPreview(),
+    visibleTimestamps: visibleTimestampCandidates.map((candidate) => candidate.value),
+    visibleTimestampCandidates,
+    inlineTimestamps: inlineTimestampCandidates.map((candidate) => candidate.value),
+    inlineTimestampCandidates,
+    suspiciousGlobals,
+    globalsPreview: previewGlobals,
     scripts: {
       inlineCount: scripts.length,
-      suspectedDataVars: [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50)
+      suspectedDataVars: suspiciousGlobals
     },
     storage: storageMetadata(),
     cookies: cookieMetadata(),

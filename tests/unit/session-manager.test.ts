@@ -75,7 +75,7 @@ describe('session manager', () => {
     expect(manager.getContext('session-b')).toEqual(second);
   });
 
-  it('syncs workspace tab ownership without leaking stale tab contexts', () => {
+  it('syncs binding tab ownership without leaking stale tab contexts', () => {
     const manager = new SessionManager();
     manager.create(
       makeSession({
@@ -105,7 +105,32 @@ describe('session manager', () => {
     });
   });
 
-  it('stores context snapshots without requiring a public workspace identifier', () => {
+  it('keeps the existing session current tab when binding metadata reports a different browser-active tab', () => {
+    const manager = new SessionManager();
+    manager.create(
+      makeSession({
+        activeTabId: 102,
+        contextsByTab: new Map([
+          [101, { framePath: ['#frame-a'], shadowPath: [] }],
+          [102, { framePath: ['#frame-b'], shadowPath: ['#shadow-b'] }]
+        ])
+      })
+    );
+
+    const updated = manager.syncBinding('session-a', {
+      id: 'binding-a',
+      tabIds: [101, 102, 103],
+      activeTabId: 103
+    });
+
+    expect(updated.activeTabId).toBe(102);
+    expect(updated.contextsByTab.get(102)).toEqual({
+      framePath: ['#frame-b'],
+      shadowPath: ['#shadow-b']
+    });
+  });
+
+  it('stores context snapshots without requiring a public binding identifier', () => {
     const manager = new SessionManager();
     manager.create(makeSession({ activeTabId: 101 }));
 

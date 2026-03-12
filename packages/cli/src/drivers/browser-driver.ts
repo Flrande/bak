@@ -27,30 +27,30 @@ export interface SnapshotResult {
 }
 
 export interface SessionBindingEnsureResult {
-  workspace: SessionBrowserState;
+  browser: SessionBrowserState;
   created: boolean;
   repaired: boolean;
   repairActions: string[];
 }
 
 export interface SessionBindingOpenTabResult {
-  workspace: SessionBrowserState;
+  browser: SessionBrowserState;
   tab: BrowserTab;
 }
 
 export interface SessionBindingListTabsResult {
-  workspace: SessionBrowserState;
+  browser: SessionBrowserState;
   tabs: BrowserTab[];
 }
 
 export interface SessionBindingActiveTabResult {
-  workspace: SessionBrowserState;
+  browser: SessionBrowserState;
   tab: BrowserTab | null;
 }
 
 export interface SessionBindingFocusResult {
   ok: true;
-  workspace: SessionBrowserState;
+  browser: SessionBrowserState;
 }
 
 export interface DriverConnectionStatus {
@@ -92,15 +92,15 @@ export interface BrowserDriver {
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
   debugGetConsole(limit?: number, tabId?: number): Promise<{ entries: ConsoleEntry[] }>;
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }>;
-  workspaceEnsure(params?: { workspaceId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
-  workspaceInfo(params?: { workspaceId?: string }): Promise<{ workspace: SessionBrowserState | null }>;
-  workspaceOpenTab(params?: { workspaceId?: string; url?: string; active?: boolean; focus?: boolean }): Promise<SessionBindingOpenTabResult>;
-  workspaceListTabs(params?: { workspaceId?: string }): Promise<SessionBindingListTabsResult>;
-  workspaceGetActiveTab(params?: { workspaceId?: string }): Promise<SessionBindingActiveTabResult>;
-  workspaceSetActiveTab(params: { workspaceId?: string; tabId: number }): Promise<SessionBindingOpenTabResult>;
-  workspaceFocus(params?: { workspaceId?: string }): Promise<SessionBindingFocusResult>;
-  workspaceReset(params?: { workspaceId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
-  workspaceClose(params?: { workspaceId?: string }): Promise<{ ok: true }>;
+  sessionBindingEnsure(params?: { bindingId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
+  sessionBindingInfo(params?: { bindingId?: string }): Promise<{ browser: SessionBrowserState | null }>;
+  sessionBindingOpenTab(params?: { bindingId?: string; url?: string; active?: boolean; focus?: boolean }): Promise<SessionBindingOpenTabResult>;
+  sessionBindingListTabs(params?: { bindingId?: string }): Promise<SessionBindingListTabsResult>;
+  sessionBindingGetActiveTab(params?: { bindingId?: string }): Promise<SessionBindingActiveTabResult>;
+  sessionBindingSetActiveTab(params: { bindingId?: string; tabId: number }): Promise<SessionBindingOpenTabResult>;
+  sessionBindingFocus(params?: { bindingId?: string }): Promise<SessionBindingFocusResult>;
+  sessionBindingReset(params?: { bindingId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
+  sessionBindingClose(params?: { bindingId?: string }): Promise<{ ok: true }>;
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult>;
 }
 
