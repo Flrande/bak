@@ -11,7 +11,12 @@ export interface BakDaemon {
   stop(): Promise<void>;
 }
 
-export async function startBakDaemon(port: number, rpcWsPort: number): Promise<BakDaemon> {
+export interface StartBakDaemonOptions {
+  managedRuntime?: boolean;
+  onManagedIdle?: () => void | Promise<void>;
+}
+
+export async function startBakDaemon(port: number, rpcWsPort: number, options: StartBakDaemonOptions = {}): Promise<BakDaemon> {
   const pairingStore = new PairingStore();
   const traceStore = new TraceStore();
 
@@ -21,7 +26,12 @@ export async function startBakDaemon(port: number, rpcWsPort: number): Promise<B
   const driver = new ExtensionDriver(bridge);
   const heartbeatIntervalMs = readEnvInt('BAK_HEARTBEAT_MS', 10_000);
   const service = new BakService(driver, pairingStore, traceStore, {
-    intervalMs: heartbeatIntervalMs
+    intervalMs: heartbeatIntervalMs,
+    managedRuntime: options.managedRuntime === true,
+    onManagedIdle: options.onManagedIdle
+  });
+  bridge.onEvent((event) => {
+    service.handleBridgeEvent(event);
   });
   service.startHeartbeat();
 

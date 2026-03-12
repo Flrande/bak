@@ -129,6 +129,10 @@ export abstract class StubDriver implements BrowserDriver {
     return this.unavailable('sessionBindingFocus');
   }
 
+  sessionBindingCloseTab() {
+    return this.unavailable('sessionBindingCloseTab');
+  }
+
   sessionBindingReset() {
     return this.unavailable('sessionBindingReset');
   }

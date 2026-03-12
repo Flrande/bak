@@ -164,6 +164,19 @@ function sendResponse(payload: CliResponse): void {
   }
 }
 
+function sendEvent(event: string, data: Record<string, unknown>): void {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(
+      JSON.stringify({
+        type: 'event',
+        event,
+        data,
+        ts: Date.now()
+      })
+    );
+  }
+}
+
 function toError(code: string, message: string, data?: Record<string, unknown>): CliResponse['error'] {
   return { code, message, data };
 }
@@ -263,6 +276,33 @@ async function saveSessionBindingState(state: SessionBindingRecord): Promise<voi
 async function deleteSessionBindingState(bindingId: string): Promise<void> {
   await mutateSessionBindingStateMap((stateMap) => {
     delete stateMap[bindingId];
+  });
+}
+
+function toSessionBindingEventBrowser(state: SessionBindingRecord | null): Record<string, unknown> | null {
+  if (!state) {
+    return null;
+  }
+  return {
+    windowId: state.windowId,
+    groupId: state.groupId,
+    tabIds: [...state.tabIds],
+    activeTabId: state.activeTabId,
+    primaryTabId: state.primaryTabId
+  };
+}
+
+function emitSessionBindingUpdated(
+  bindingId: string,
+  reason: string,
+  state: SessionBindingRecord | null,
+  extras: Record<string, unknown> = {}
+): void {
+  sendEvent('sessionBinding.updated', {
+    bindingId,
+    reason,
+    browser: toSessionBindingEventBrowser(state),
+    ...extras
   });
 }
 
@@ -1686,11 +1726,13 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         const result = await bindingManager.ensureBinding({
           bindingId: String(params.bindingId ?? ''),
           focus: params.focus === true,
-          initialUrl: typeof params.url === 'string' ? params.url : undefined
+          initialUrl: typeof params.url === 'string' ? params.url : undefined,
+          label: typeof params.label === 'string' ? params.label : undefined
         });
         for (const tab of result.binding.tabs) {
           void ensureNetworkDebugger(tab.id).catch(() => undefined);
         }
+        emitSessionBindingUpdated(result.binding.id, 'ensure', result.binding);
         return {
           browser: result.binding,
           created: result.created,
@@ -1711,11 +1753,13 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           bindingId: String(params.bindingId ?? ''),
           url: expectedUrl,
           active: params.active === true,
-          focus: params.focus === true
+          focus: params.focus === true,
+          label: typeof params.label === 'string' ? params.label : undefined
         });
       });
       const finalized = await finalizeOpenedSessionBindingTab(opened, expectedUrl);
       void ensureNetworkDebugger(finalized.tab.id).catch(() => undefined);
+      emitSessionBindingUpdated(finalized.binding.id, 'open-tab', finalized.binding);
       return {
         browser: finalized.binding,
         tab: finalized.tab
@@ -1738,6 +1782,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
     case 'sessionBinding.setActiveTab': {
       const result = await bindingManager.setActiveTab(Number(params.tabId), String(params.bindingId ?? ''));
       void ensureNetworkDebugger(result.tab.id).catch(() => undefined);
+      emitSessionBindingUpdated(result.binding.id, 'set-active-tab', result.binding);
       return {
         browser: result.binding,
         tab: result.tab
@@ -1755,8 +1800,10 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         const result = await bindingManager.reset({
           bindingId: String(params.bindingId ?? ''),
           focus: params.focus === true,
-          initialUrl: typeof params.url === 'string' ? params.url : undefined
+          initialUrl: typeof params.url === 'string' ? params.url : undefined,
+          label: typeof params.label === 'string' ? params.label : undefined
         });
+        emitSessionBindingUpdated(result.binding.id, 'reset', result.binding);
         return {
           browser: result.binding,
           created: result.created,
@@ -1765,8 +1812,22 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         };
       });
     }
+    case 'sessionBinding.closeTab': {
+      const bindingId = String(params.bindingId ?? '');
+      const result = await bindingManager.closeTab(bindingId, typeof params.tabId === 'number' ? params.tabId : undefined);
+      emitSessionBindingUpdated(bindingId, 'close-tab', result.binding, {
+        closedTabId: result.closedTabId
+      });
+      return {
+        browser: result.binding,
+        closedTabId: result.closedTabId
+      };
+    }
     case 'sessionBinding.close': {
-      return await bindingManager.close(String(params.bindingId ?? ''));
+      const bindingId = String(params.bindingId ?? '');
+      const result = await bindingManager.close(bindingId);
+      emitSessionBindingUpdated(bindingId, 'close', null);
+      return result;
     }
     case 'page.goto': {
       return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
@@ -2352,42 +2413,62 @@ async function connectWebSocket(): Promise<void> {
 chrome.tabs.onRemoved.addListener((tabId) => {
   dropNetworkCapture(tabId);
   void mutateSessionBindingStateMap((stateMap) => {
+    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
     for (const [bindingId, state] of Object.entries(stateMap)) {
       if (!state.tabIds.includes(tabId)) {
         continue;
       }
       const nextTabIds = state.tabIds.filter((id) => id !== tabId);
-      stateMap[bindingId] = {
+      const fallbackTabId = nextTabIds[0] ?? null;
+      const nextState: SessionBindingRecord = {
         ...state,
         tabIds: nextTabIds,
-        activeTabId: state.activeTabId === tabId ? null : state.activeTabId,
-        primaryTabId: state.primaryTabId === tabId ? null : state.primaryTabId
+        activeTabId: state.activeTabId === tabId ? fallbackTabId : state.activeTabId,
+        primaryTabId: state.primaryTabId === tabId ? fallbackTabId : state.primaryTabId
       };
+      stateMap[bindingId] = nextState;
+      updates.push({ bindingId, state: nextState });
+    }
+    return updates;
+  }).then((updates) => {
+    for (const update of updates) {
+      emitSessionBindingUpdated(update.bindingId, 'tab-removed', update.state, {
+        closedTabId: tabId
+      });
     }
   });
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   void mutateSessionBindingStateMap((stateMap) => {
+    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
     for (const [bindingId, state] of Object.entries(stateMap)) {
       if (state.windowId !== activeInfo.windowId || !state.tabIds.includes(activeInfo.tabId)) {
         continue;
       }
-      stateMap[bindingId] = {
+      const nextState: SessionBindingRecord = {
         ...state,
         activeTabId: activeInfo.tabId
       };
+      stateMap[bindingId] = nextState;
+      updates.push({ bindingId, state: nextState });
+    }
+    return updates;
+  }).then((updates) => {
+    for (const update of updates) {
+      emitSessionBindingUpdated(update.bindingId, 'tab-activated', update.state);
     }
   });
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
   void mutateSessionBindingStateMap((stateMap) => {
+    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
     for (const [bindingId, state] of Object.entries(stateMap)) {
       if (state.windowId !== windowId) {
         continue;
       }
-      stateMap[bindingId] = {
+      const nextState: SessionBindingRecord = {
         ...state,
         windowId: null,
         groupId: null,
@@ -2395,6 +2476,13 @@ chrome.windows.onRemoved.addListener((windowId) => {
         activeTabId: null,
         primaryTabId: null
       };
+      stateMap[bindingId] = nextState;
+      updates.push({ bindingId, state: nextState });
+    }
+    return updates;
+  }).then((updates) => {
+    for (const update of updates) {
+      emitSessionBindingUpdated(update.bindingId, 'window-removed', update.state);
     }
   });
 });

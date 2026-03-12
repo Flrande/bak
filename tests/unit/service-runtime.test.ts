@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BakErrorCode } from '@flrande/bak-protocol';
 import type { PairingStore } from '../../packages/cli/src/pairing-store.js';
 import { BakService } from '../../packages/cli/src/service-runtime.js';
@@ -18,11 +18,15 @@ import { StubDriver } from '../../packages/cli/src/drivers/stub-drivers.js';
 
 class FakeDriver extends StubDriver {
   nextTabId = 303;
+  sessionBindingEnsureCalls = 0;
   sessionBindingInfoCalls = 0;
   sessionBindingListTabsCalls = 0;
+  sessionBindingCloseCalls = 0;
+  sessionBindingCloseTabCalls = 0;
   pageTitleCalls = 0;
   pageSnapshotCalls = 0;
   rawRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+  bindingLabels: string[] = [];
   replayEntry: { method: string; url: string } = {
     method: 'POST',
     url: 'https://api.example.test/orders'
@@ -79,8 +83,12 @@ class FakeDriver extends StubDriver {
     };
   }
 
-  async sessionBindingEnsure(): Promise<SessionBindingEnsureResult> {
+  async sessionBindingEnsure(params: { label?: string } = {}): Promise<SessionBindingEnsureResult> {
+    this.sessionBindingEnsureCalls += 1;
     this.bindingExists = true;
+    if (typeof params.label === 'string') {
+      this.bindingLabels.push(params.label);
+    }
     return {
       browser: this.cloneBrowser(),
       created: false,
@@ -116,12 +124,69 @@ class FakeDriver extends StubDriver {
       windowId: this.browser.windowId ?? 1,
       groupId: this.browser.groupId
     };
+    if (params.active === true) {
+      this.browser.activeTabId = tab.id;
+      this.browser.tabs = this.browser.tabs.map((candidate) => ({
+        ...candidate,
+        active: false
+      }));
+    }
     this.browser.tabIds = [...this.browser.tabIds, tab.id];
     this.browser.tabs = [...this.browser.tabs, tab];
     return {
       browser: this.cloneBrowser(),
       tab: { ...tab }
     };
+  }
+
+  async sessionBindingCloseTab(params: { bindingId?: string; tabId?: number }): Promise<{ browser: SessionBindingEnsureResult['browser'] | null; closedTabId: number }> {
+    this.sessionBindingCloseTabCalls += 1;
+    const resolvedTabId = typeof params.tabId === 'number' ? params.tabId : this.browser.activeTabId ?? this.browser.tabIds[0];
+    if (typeof resolvedTabId !== 'number') {
+      throw new BridgeError('E_NOT_FOUND', `Binding ${params.bindingId ?? 'unknown'} has no tabs`);
+    }
+    const remainingTabs = this.browser.tabs.filter((candidate) => candidate.id !== resolvedTabId);
+    this.browser.tabs = remainingTabs.map((candidate, index) => ({
+      ...candidate,
+      active: index === 0
+    }));
+    this.browser.tabIds = this.browser.tabs.map((candidate) => candidate.id);
+    this.browser.activeTabId = this.browser.tabs[0]?.id ?? null;
+    this.browser.primaryTabId = this.browser.tabs[0]?.id ?? null;
+    if (this.browser.tabs.length === 0) {
+      this.bindingExists = false;
+      this.browser.windowId = null;
+      this.browser.groupId = null;
+      return {
+        browser: {
+          windowId: null,
+          groupId: null,
+          tabIds: [],
+          activeTabId: null,
+          primaryTabId: null,
+          tabs: []
+        },
+        closedTabId: resolvedTabId
+      };
+    }
+    return {
+      browser: this.cloneBrowser(),
+      closedTabId: resolvedTabId
+    };
+  }
+
+  async sessionBindingClose(): Promise<{ ok: true }> {
+    this.sessionBindingCloseCalls += 1;
+    this.bindingExists = false;
+    this.browser = {
+      windowId: null,
+      groupId: null,
+      tabIds: [],
+      activeTabId: null,
+      primaryTabId: null,
+      tabs: []
+    };
+    return { ok: true };
   }
 
   async sessionBindingSetActiveTab(params: { bindingId?: string; tabId: number }): Promise<SessionBindingOpenTabResult> {
@@ -302,7 +367,10 @@ afterEach(() => {
   }
 });
 
-function createService(driver: FakeDriver): BakService {
+function createService(
+  driver: FakeDriver,
+  options: { managedRuntime?: boolean; onManagedIdle?: () => void | Promise<void> } = {}
+): BakService {
   const pairingStore = {
     getToken: () => 'pair-token'
   } as PairingStore;
@@ -311,10 +379,50 @@ function createService(driver: FakeDriver): BakService {
     newTraceId: () => `trace-${++traceCounter}`,
     append: () => undefined
   } as unknown as TraceStore;
-  return new BakService(driver, pairingStore, traceStore);
+  return new BakService(driver, pairingStore, traceStore, options);
+}
+
+async function waitForAsyncTurn(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('service runtime session bindings', () => {
+  it('resolves a client name to a unique live session and reuses it on later calls', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const first = await service.invoke('session.resolve', { clientName: 'agent-a' });
+    const second = await service.invoke('session.resolve', { clientName: 'agent-a' });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.sessionId).toBe(first.sessionId);
+  });
+
+  it('rejects session.resolve when multiple live sessions share the same client name', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    await service.invoke('session.create', { clientName: 'agent-a' });
+    await service.invoke('session.create', { clientName: 'agent-a' });
+
+    await expect(service.invoke('session.resolve', { clientName: 'agent-a' })).rejects.toMatchObject({
+      bakCode: BakErrorCode.E_INVALID_PARAMS
+    });
+  });
+
+  it('auto-ensures the binding before session-scoped page reads', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: '019ce19b-abd1-7692-8a9a-478b4f078aa4' });
+    const title = await service.invokeDynamic('page.title', { sessionId: created.sessionId });
+
+    expect(title).toEqual({ title: 'Example title' });
+    expect(driver.sessionBindingEnsureCalls).toBe(1);
+    expect(driver.bindingLabels).toContain('bak 019ce19b');
+  });
+
   it('uses session binding tab listing instead of binding info for session tab reads', async () => {
     const driver = new FakeDriver();
     const service = createService(driver);
@@ -344,7 +452,7 @@ describe('service runtime session bindings', () => {
     expect(Date.parse(listed.sessions[0]!.lastSeenAt)).toBeGreaterThan(Date.parse(created.createdAt));
   });
 
-  it('clears stale session state after the binding disappears', async () => {
+  it('repairs the session on demand after the binding disappears', async () => {
     const driver = new FakeDriver();
     const service = createService(driver);
 
@@ -373,11 +481,11 @@ describe('service runtime session bindings', () => {
       shadowPath: []
     });
 
-    await expect(service.invokeDynamic('page.title', { sessionId: created.sessionId })).rejects.toMatchObject({
-      message: 'Session has no active tab',
-      bakCode: BakErrorCode.E_NOT_FOUND
+    await expect(service.invokeDynamic('page.title', { sessionId: created.sessionId })).resolves.toEqual({
+      title: 'Example title'
     });
-    expect(driver.pageTitleCalls).toBe(0);
+    expect(driver.pageTitleCalls).toBe(1);
+    expect(driver.sessionBindingEnsureCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('keeps session.setActiveTab successful even when restoring a stale context fails', async () => {
@@ -552,5 +660,76 @@ describe('service runtime session bindings', () => {
       ok: true
     });
     expect(driver.rawRequests.filter((entry) => entry.method === 'network.replay')).toHaveLength(1);
+  });
+
+  it('closes the session after the last tab closes and only then triggers managed idle stop', async () => {
+    const driver = new FakeDriver();
+    driver.browser = {
+      windowId: 1,
+      groupId: 2,
+      tabIds: [101],
+      activeTabId: 101,
+      primaryTabId: 101,
+      tabs: [
+        {
+          id: 101,
+          title: 'Only',
+          url: 'https://example.test/only',
+          active: true,
+          windowId: 1,
+          groupId: 2
+        }
+      ]
+    };
+    const onManagedIdle = vi.fn();
+    const service = createService(driver, {
+      managedRuntime: true,
+      onManagedIdle
+    });
+
+    const created = await service.invoke('session.create', { clientName: 'agent-a' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    const closed = await service.invoke('session.closeTab', { sessionId: created.sessionId, tabId: 101 });
+    await waitForAsyncTurn();
+
+    expect(closed).toEqual({
+      closed: true,
+      closedTabId: 101,
+      sessionClosed: true,
+      browser: null
+    });
+    await expect(service.invoke('session.info', { sessionId: created.sessionId })).rejects.toMatchObject({
+      bakCode: BakErrorCode.E_NOT_FOUND
+    });
+    expect(onManagedIdle).toHaveBeenCalledTimes(1);
+    expect(driver.sessionBindingCloseCalls).toBe(1);
+  });
+
+  it('does not trigger managed idle stop before any session has existed', async () => {
+    const driver = new FakeDriver();
+    const onManagedIdle = vi.fn();
+    const service = createService(driver, {
+      managedRuntime: true,
+      onManagedIdle
+    });
+
+    service.handleBridgeEvent({
+      event: 'sessionBinding.updated',
+      data: {
+        bindingId: 'missing-session',
+        reason: 'window-removed',
+        browser: {
+          windowId: null,
+          groupId: null,
+          tabIds: [],
+          activeTabId: null,
+          primaryTabId: null
+        }
+      }
+    });
+    await waitForAsyncTurn();
+
+    expect(onManagedIdle).not.toHaveBeenCalled();
   });
 });

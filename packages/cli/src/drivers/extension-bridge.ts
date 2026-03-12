@@ -20,6 +20,32 @@ interface BridgeResponse {
   };
 }
 
+export interface BridgeEventMessage {
+  type: 'event';
+  event: string;
+  data?: Record<string, unknown>;
+  ts?: number;
+}
+
+export interface SessionBindingUpdatedBridgeEvent {
+  bindingId: string;
+  reason: string;
+  browser: {
+    windowId: number | null;
+    groupId: number | null;
+    tabIds: number[];
+    activeTabId: number | null;
+    primaryTabId: number | null;
+  } | null;
+  closedTabId?: number;
+}
+
+export interface BridgeEventEnvelope {
+  event: string;
+  data?: Record<string, unknown>;
+  ts?: number;
+}
+
 export type BridgeConnectionState = 'connecting' | 'connected' | 'disconnected';
 
 export interface BridgeStats {
@@ -54,6 +80,7 @@ export class BridgeError extends Error {
 export class ExtensionBridge {
   private readonly pairingStore: PairingStore;
   private readonly port: number;
+  private readonly eventListeners = new Set<(event: BridgeEventEnvelope) => void>();
   private server: ReturnType<typeof createServer> | null = null;
   private wss: WebSocketServer | null = null;
   private socket: WebSocket | null = null;
@@ -196,6 +223,13 @@ export class ExtensionBridge {
     };
   }
 
+  onEvent(listener: (event: BridgeEventEnvelope) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
+  }
+
   markHeartbeat(ts = Date.now()): void {
     this.lastHeartbeatTs = ts;
     this.lastSeenTs = ts;
@@ -234,9 +268,26 @@ export class ExtensionBridge {
       const maybeHello = parsed as {
         type?: unknown;
         version?: unknown;
+        event?: unknown;
+        data?: unknown;
+        ts?: unknown;
       };
       if (maybeHello.type === 'hello') {
         this.extensionVersion = typeof maybeHello.version === 'string' ? maybeHello.version : null;
+        return;
+      }
+      if (maybeHello.type === 'event' && typeof maybeHello.event === 'string') {
+        const envelope: BridgeEventEnvelope = {
+          event: maybeHello.event,
+          data:
+            typeof maybeHello.data === 'object' && maybeHello.data !== null
+              ? (maybeHello.data as Record<string, unknown>)
+              : undefined,
+          ts: typeof maybeHello.ts === 'number' ? maybeHello.ts : undefined
+        };
+        for (const listener of this.eventListeners) {
+          listener(envelope);
+        }
         return;
       }
     }

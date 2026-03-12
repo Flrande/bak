@@ -30,6 +30,10 @@ export class SessionManager {
     return this.sessions.has(sessionId);
   }
 
+  findByClientName(clientName: string): SessionState[] {
+    return this.list().filter((session) => session.clientName === clientName);
+  }
+
   get(sessionId: string): SessionState | null {
     const session = this.sessions.get(sessionId);
     return session ? this.cloneSession(session) : null;
@@ -73,7 +77,7 @@ export class SessionManager {
     if (session.activeTabId !== null && !validTabIds.has(session.activeTabId)) {
       session.activeTabId = null;
     }
-    if (binding.activeTabId !== null && session.activeTabId === null) {
+    if (binding.activeTabId !== null) {
       session.activeTabId = binding.activeTabId;
       this.ensureTabContext(session, binding.activeTabId);
     }

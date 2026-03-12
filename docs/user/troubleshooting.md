@@ -59,7 +59,23 @@ Actions:
 2. Stop the local runtime with `bak stop --port 17373 --rpc-ws-port 17374`.
 3. Re-run `bak doctor --port 17373 --rpc-ws-port 17374` to auto-start a clean runtime.
 4. Pass the same `--rpc-ws-port` on every CLI command.
-5. If the RPC socket is still unreachable and you need foreground logs, run `bak serve --port 17373 --rpc-ws-port 17374` manually in a separate PowerShell 7 window and retry the failing command.
+5. Remember that a managed background runtime now auto-stops after the last session closes. If you just finished a task, rerun `bak doctor --port 17373 --rpc-ws-port 17374` or the next CLI command to auto-start it again.
+6. If the RPC socket is still unreachable and you need foreground logs, run `bak serve --port 17373 --rpc-ws-port 17374` manually in a separate PowerShell 7 window and retry the failing command. Foreground `bak serve` does not auto-stop.
+
+## Browser Command Fails Before It Reaches A Page
+
+Symptoms:
+
+- browser-affecting commands now fail before opening or reading a page
+- the error asks for `--session-id` or `--client-name`
+
+Actions:
+
+1. Remember the session auto-resolution order: `--session-id` > `BAK_SESSION_ID` > `--client-name` > `BAK_CLIENT_NAME` > `CODEX_THREAD_ID`.
+2. For normal agent work, pass a stable `--client-name` or ensure `CODEX_THREAD_ID` is already present in the environment.
+3. If you need visibility into the exact session mapping, run `bak session resolve --client-name <name> --rpc-ws-port 17374`.
+4. Use an explicit `--session-id` for handoff, debugging, or cross-process reuse.
+5. Do not expect browser-affecting commands to silently fall back to the global active tab anymore.
 
 ## Wrong Tab Or Session Target
 
@@ -71,14 +87,28 @@ Symptoms:
 Actions:
 
 1. Inspect browser-wide tabs with `bak tabs list --rpc-ws-port 17374` if you need to map a raw browser tab id to the current window.
-2. Inspect the session with `bak session info --session-id <sessionId> --rpc-ws-port 17374`.
+2. Inspect the session with `bak session info --session-id <sessionId> --rpc-ws-port 17374` or resolve it first with `bak session resolve --client-name <name> --rpc-ws-port 17374`.
 3. List tracked session tabs with `bak session list-tabs --session-id <sessionId> --rpc-ws-port 17374`.
 4. Check the current session tab with `bak session get-active-tab --session-id <sessionId> --rpc-ws-port 17374`.
 5. Remember that `bak session open-tab ...` does not change the session's default current tab unless you passed `--active`.
 6. Set the intended session tab with `bak session set-active-tab --session-id <sessionId> --tab-id <id> --rpc-ws-port 17374`.
-7. If the correct browser tab exists outside the session-owned window, open a fresh session tab with `bak session open-tab --session-id <sessionId> --url <url> --active --rpc-ws-port 17374` instead of continuing on the unmanaged tab.
-8. If you only need to inspect the unmanaged tab, use `bak tabs ...` directly rather than rebinding the session onto it.
-9. If the dedicated session window or tracked tabs are missing, run `bak session ensure --session-id <sessionId> --rpc-ws-port 17374`.
+7. Use `bak tabs list`, `bak tabs get`, and `bak tabs active` for browser-wide diagnostics. Treat `bak tabs new`, `bak tabs focus`, and `bak tabs close` as recovery-only compatibility commands that still stay inside the resolved session.
+8. If the correct browser tab exists outside the session-owned window, open a fresh session tab with `bak session open-tab --session-id <sessionId> --url <url> --active --rpc-ws-port 17374` instead of continuing on the unmanaged tab.
+9. If the dedicated session window or tracked tabs are missing, run `bak session ensure --session-id <sessionId> --rpc-ws-port 17374` or simply retry the browser-affecting command with the same session identity so the runtime can auto-repair first.
+
+## Session Or Runtime Disappeared After Closing Tabs
+
+Symptoms:
+
+- a session no longer appears in `bak session list`
+- `bak status` shows the runtime stopped after browser tabs were closed
+
+Actions:
+
+1. This can be expected now. Closing the last tab in a session auto-closes that session.
+2. When the managed background runtime sees that all sessions are closed, it auto-stops too.
+3. Recreate or reopen work with `bak session resolve --client-name <name> --rpc-ws-port 17374` and then `bak session open-tab --client-name <name> --url <url> --active --rpc-ws-port 17374`.
+4. If you need a runtime that stays up regardless of session count, switch intentionally to foreground `bak serve` for debugging. That foreground process does not auto-stop.
 
 ## Frame Or Shadow Context Confusion
 

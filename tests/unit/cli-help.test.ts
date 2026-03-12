@@ -1,12 +1,22 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { cliDistPath, ensureE2ERuntimeFresh } from '../e2e/helpers/runtime';
 
 const repoRoot = resolve(__dirname, '..', '..');
-const tsxCliPath = resolve(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+let cachedCliBinPath: string | null = null;
+
+function cliBinPath(): string {
+  if (cachedCliBinPath) {
+    return cachedCliBinPath;
+  }
+  ensureE2ERuntimeFresh(repoRoot);
+  cachedCliBinPath = cliDistPath(repoRoot);
+  return cachedCliBinPath;
+}
 
 function runHelp(args: string[]): string {
-  return execFileSync(process.execPath, [tsxCliPath, 'packages/cli/src/bin.ts', ...args], {
+  return execFileSync(process.execPath, [cliBinPath(), ...args], {
     cwd: repoRoot,
     encoding: 'utf8'
   });
@@ -18,7 +28,7 @@ describe('cli help output', () => {
 
     expect(help).toContain('Drive a real Chromium browser for an agent');
     expect(help).toContain('Use bak call when the protocol exposes a method');
-    expect(help).toContain('bak session ensure --session-id session_123 --rpc-ws-port 17374');
+    expect(help).toContain('bak session resolve --client-name agent-a --rpc-ws-port 17374');
   });
 
   it('documents session browser helpers and current-tab targeting', () => {
@@ -27,6 +37,13 @@ describe('cli help output', () => {
     expect(help).toContain('Manage multi-agent sessions and their dedicated browser state');
     expect(help).toContain('Each session owns one dedicated browser binding');
     expect(help).toContain('bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374');
+  });
+
+  it('documents session resolve and close-tab as first-class lifecycle commands', () => {
+    const help = runHelp(['session', '--help']);
+
+    expect(help).toContain('resolve');
+    expect(help).toContain('close-tab');
   });
 
   it('documents session ensure as the explicit repair entrypoint', () => {
@@ -41,6 +58,14 @@ describe('cli help output', () => {
 
     expect(help).toContain('Use bak call for protocol-only navigation helpers');
     expect(help).toContain('bak page snapshot --include-base64 --rpc-ws-port 17374');
+  });
+
+  it('documents tabs new as a recovery-only session-aware compatibility command', () => {
+    const help = runHelp(['tabs', 'new', '--help']);
+
+    expect(help).toContain('Open a new browser tab inside the current session');
+    expect(help).toContain('recovery-only compatibility');
+    expect(help).toContain('--client-name <name>');
   });
 
   it('documents bak call as the fallback for protocol-only methods', () => {

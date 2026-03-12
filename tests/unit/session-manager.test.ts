@@ -105,7 +105,7 @@ describe('session manager', () => {
     });
   });
 
-  it('keeps the existing session current tab when binding metadata reports a different browser-active tab', () => {
+  it('updates the session current tab when binding metadata reports a new browser-active tab', () => {
     const manager = new SessionManager();
     manager.create(
       makeSession({
@@ -123,11 +123,26 @@ describe('session manager', () => {
       activeTabId: 103
     });
 
-    expect(updated.activeTabId).toBe(102);
+    expect(updated.activeTabId).toBe(103);
     expect(updated.contextsByTab.get(102)).toEqual({
       framePath: ['#frame-b'],
       shadowPath: ['#shadow-b']
     });
+    expect(updated.contextsByTab.get(103)).toEqual({
+      framePath: [],
+      shadowPath: []
+    });
+  });
+
+  it('finds sessions by client name without leaking unrelated sessions', () => {
+    const manager = new SessionManager();
+    manager.create(makeSession({ sessionId: 'session-a', clientName: 'agent-a' }));
+    manager.create(makeSession({ sessionId: 'session-b', clientName: 'agent-a' }));
+    manager.create(makeSession({ sessionId: 'session-c', clientName: 'agent-c' }));
+
+    expect(manager.findByClientName('agent-a').map((session) => session.sessionId)).toEqual(['session-a', 'session-b']);
+    expect(manager.findByClientName('agent-c').map((session) => session.sessionId)).toEqual(['session-c']);
+    expect(manager.findByClientName('missing')).toEqual([]);
   });
 
   it('stores context snapshots without requiring a public binding identifier', () => {

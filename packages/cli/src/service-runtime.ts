@@ -16,6 +16,7 @@ import {
   type SessionSummary
 } from '@flrande/bak-protocol';
 import type { BrowserDriver } from './drivers/browser-driver.js';
+import type { BridgeEventEnvelope, SessionBindingUpdatedBridgeEvent } from './drivers/extension-bridge.js';
 import { BridgeError } from './drivers/extension-bridge.js';
 import { evaluateConnectionHealth } from './connection-health.js';
 import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy.js';
@@ -86,6 +87,7 @@ const SESSION_DYNAMIC_FORWARD_METHODS = new Set<MethodName>([
 const STATIC_METHODS = new Set<MethodName>([
   'runtime.info',
   'session.create',
+  'session.resolve',
   'session.list',
   'session.close',
   'session.info',
@@ -95,6 +97,7 @@ const STATIC_METHODS = new Set<MethodName>([
   'session.getActiveTab',
   'session.setActiveTab',
   'session.focus',
+  'session.closeTab',
   'session.reset',
   'tabs.list',
   'tabs.focus',
@@ -149,6 +152,13 @@ interface ResolvedSessionTarget {
 
 export interface ServiceHeartbeatConfig {
   intervalMs?: number;
+  managedRuntime?: boolean;
+  onManagedIdle?: () => void | Promise<void>;
+}
+
+interface ResolveSessionTargetOptions {
+  allowMissing?: boolean;
+  autoEnsure?: boolean;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -216,6 +226,10 @@ export class BakService {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatStaleAfterMs: number;
+  private readonly managedRuntime: boolean;
+  private readonly onManagedIdle?: () => void | Promise<void>;
+  private idleStopArmed = false;
+  private idleStopScheduled = false;
 
   constructor(
     driver: BrowserDriver,
@@ -232,6 +246,8 @@ export class BakService {
     const configured = heartbeatConfig.intervalMs ?? 10_000;
     this.heartbeatIntervalMs = Math.max(500, configured);
     this.heartbeatStaleAfterMs = Math.max(this.heartbeatIntervalMs * 3, 5_000);
+    this.managedRuntime = heartbeatConfig.managedRuntime === true;
+    this.onManagedIdle = heartbeatConfig.onManagedIdle;
   }
 
   startHeartbeat(): void {
@@ -249,6 +265,13 @@ export class BakService {
     }
     clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
+  }
+
+  handleBridgeEvent(event: BridgeEventEnvelope): void {
+    if (event.event !== 'sessionBinding.updated') {
+      return;
+    }
+    void this.handleSessionBindingUpdated(event.data as SessionBindingUpdatedBridgeEvent | undefined);
   }
 
   status(): MethodResult<'runtime.info'> {
@@ -272,6 +295,95 @@ export class BakService {
 
   async invokeDynamic(method: string, params: Record<string, unknown>): Promise<unknown> {
     return this.invoke(method as MethodName, params as never);
+  }
+
+  private createSessionState(clientName?: string, traceId = this.traceStore.newTraceId()): SessionState {
+    const sessionId = id('session');
+    const createdAt = nowIso();
+    return this.sessions.create({
+      sessionId,
+      bindingId: sessionId,
+      bindingInitialized: false,
+      clientName,
+      createdAt,
+      lastSeenAt: createdAt,
+      activeTabId: null,
+      traceId,
+      contextsByTab: new Map()
+    });
+  }
+
+  private resolveSessionLabel(session: SessionState): string {
+    if (session.clientName && session.clientName.trim().length > 0) {
+      const normalized = session.clientName.trim();
+      if (/^[a-f0-9-]{20,}$/i.test(normalized)) {
+        return `bak ${normalized.slice(0, 8)}`;
+      }
+      return normalized;
+    }
+    const suffix = session.sessionId.replace(/^session_/, '').slice(0, 8);
+    return `bak ${suffix}`;
+  }
+
+  private noteSessionCountChanged(): void {
+    const count = this.sessions.list().length;
+    if (count > 0) {
+      this.idleStopArmed = true;
+      return;
+    }
+    if (!this.managedRuntime || !this.idleStopArmed || this.idleStopScheduled) {
+      return;
+    }
+    this.idleStopScheduled = true;
+    setTimeout(() => {
+      this.idleStopScheduled = false;
+      if (!this.managedRuntime || !this.idleStopArmed || this.sessions.list().length > 0) {
+        return;
+      }
+      void this.onManagedIdle?.();
+    }, 0);
+  }
+
+  private async closeSessionInternal(
+    sessionId: string,
+    options: { closeBinding: boolean }
+  ): Promise<SessionState | null> {
+    const session = this.sessions.close(sessionId);
+    if (!session) {
+      return null;
+    }
+    if (options.closeBinding && this.driver.isConnected()) {
+      try {
+        await this.driver.sessionBindingClose({ bindingId: session.bindingId });
+      } catch {
+        // Continue closing the session even if the binding is already gone.
+      }
+    }
+    this.noteSessionCountChanged();
+    return session;
+  }
+
+  private resolveSession(clientName: string): { session: SessionState; created: boolean } {
+    const normalizedClientName = clientName.trim();
+    if (!normalizedClientName) {
+      throw new RpcError('clientName is required', -32602, BakErrorCode.E_INVALID_PARAMS);
+    }
+    const matches = this.sessions.findByClientName(normalizedClientName);
+    if (matches.length > 1) {
+      throw new RpcError('Multiple live sessions match clientName', -32602, BakErrorCode.E_INVALID_PARAMS, {
+        clientName: normalizedClientName,
+        sessionIds: matches.map((session) => session.sessionId)
+      });
+    }
+    if (matches.length === 1) {
+      return {
+        session: this.touchSession(matches[0]!.sessionId),
+        created: false
+      };
+    }
+    const session = this.createSessionState(normalizedClientName);
+    this.noteSessionCountChanged();
+    return { session, created: true };
   }
 
   private runtimeInfo(): MethodResult<'runtime.info'> {
@@ -769,8 +881,52 @@ export class BakService {
     }
   }
 
-  private async resolveSessionTarget(sessionId: string, args: Record<string, unknown>, allowMissing = false): Promise<ResolvedSessionTarget> {
+  private async handleSessionBindingUpdated(event: SessionBindingUpdatedBridgeEvent | undefined): Promise<void> {
+    if (!event || typeof event.bindingId !== 'string' || !this.sessions.has(event.bindingId)) {
+      return;
+    }
+    const browser = event.browser;
+    if (!browser || !Array.isArray(browser.tabIds) || browser.tabIds.length === 0) {
+      await this.closeSessionInternal(event.bindingId, { closeBinding: true });
+      return;
+    }
+    this.sessions.syncBinding(event.bindingId, {
+      id: event.bindingId,
+      tabIds: browser.tabIds.map((tabId) => Number(tabId)).filter((tabId) => Number.isInteger(tabId) && tabId >= 0),
+      activeTabId: typeof browser.activeTabId === 'number' ? browser.activeTabId : null
+    });
+  }
+
+  private async ensureSessionBindingAvailable(sessionId: string, args: Record<string, unknown>): Promise<SessionState> {
     let session = this.touchSession(sessionId);
+    let needsEnsure = !session.bindingInitialized || session.activeTabId === null;
+    if (!needsEnsure) {
+      const listing = await this.safeListSessionTabs(session);
+      session = this.getSession(sessionId);
+      needsEnsure = !listing || listing.tabs.length === 0 || session.activeTabId === null;
+    }
+    if (!needsEnsure) {
+      return session;
+    }
+    const result = await this.driver.sessionBindingEnsure({
+      bindingId: session.bindingId,
+      url: typeof args.url === 'string' ? args.url : undefined,
+      label: this.resolveSessionLabel(session)
+    });
+    this.syncSessionBrowserState(sessionId, result.browser);
+    return this.getSession(sessionId);
+  }
+
+  private async resolveSessionTarget(
+    sessionId: string,
+    args: Record<string, unknown>,
+    options: ResolveSessionTargetOptions = {}
+  ): Promise<ResolvedSessionTarget> {
+    const allowMissing = options.allowMissing === true;
+    let session = this.touchSession(sessionId);
+    if (options.autoEnsure !== false) {
+      session = await this.ensureSessionBindingAvailable(sessionId, args);
+    }
     const explicitTabId = typeof args.tabId === 'number' ? args.tabId : undefined;
 
     if (explicitTabId !== undefined) {
@@ -880,28 +1036,31 @@ export class BakService {
         }
         this.ensurePairing();
         this.ensureConnected();
-        const sessionId = id('session');
         const clientName = typeof args.clientName === 'string' && args.clientName.trim().length > 0 ? args.clientName.trim() : undefined;
-        const createdAt = nowIso();
-        const traceId = this.traceStore.newTraceId();
-        return this.withTrace(traceId, method, params, async () => {
-          this.sessions.create({
-            sessionId,
-            bindingId: sessionId,
-            bindingInitialized: false,
-            clientName,
-            createdAt,
-            lastSeenAt: createdAt,
-            activeTabId: null,
-            traceId,
-            contextsByTab: new Map()
-          });
+        const seedTraceId = this.traceStore.newTraceId();
+        return this.withTrace(seedTraceId, method, params, async () => {
+          const created = this.createSessionState(clientName, seedTraceId);
+          this.noteSessionCountChanged();
           return {
-            sessionId,
+            sessionId: created.sessionId,
             clientName,
-            createdAt,
+            createdAt: created.createdAt,
             protocolVersion: PROTOCOL_VERSION,
             compatibleProtocolVersions: [...COMPATIBLE_PROTOCOL_VERSIONS]
+          } as MethodResult<TMethod>;
+        });
+      }
+      case 'session.resolve': {
+        this.ensurePairing();
+        this.ensureConnected();
+        const clientName = typeof args.clientName === 'string' ? args.clientName : '';
+        return this.withTrace(this.runtimeTraceId, method, params, async () => {
+          const resolved = this.resolveSession(clientName);
+          return {
+            sessionId: resolved.session.sessionId,
+            clientName: resolved.session.clientName,
+            createdAt: resolved.session.createdAt,
+            created: resolved.created
           } as MethodResult<TMethod>;
         });
       }
@@ -914,14 +1073,7 @@ export class BakService {
         const sessionId = this.requireSessionId(args);
         const session = this.getSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
-          if (this.driver.isConnected()) {
-            try {
-              await this.driver.sessionBindingClose({ bindingId: session.bindingId });
-            } catch {
-              // Continue closing the session even if the binding is already gone.
-            }
-          }
-          this.sessions.close(sessionId);
+          await this.closeSessionInternal(sessionId, { closeBinding: true });
           return { closed: true } as MethodResult<TMethod>;
         });
       }
@@ -937,22 +1089,57 @@ export class BakService {
       case 'tabs.focus':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(this.runtimeTraceId, method, params, async () => this.driver.tabsFocus(Number(args.tabId)) as Promise<MethodResult<TMethod>>);
+        return this.withTrace(this.runtimeTraceId, method, params, async () => {
+          const sessionId = this.requireSessionId(args);
+          const result = await this.driver.sessionBindingSetActiveTab({
+            bindingId: this.getSession(sessionId).bindingId,
+            tabId: Number(args.tabId)
+          });
+          this.syncSessionBrowserState(sessionId, result.browser);
+          this.sessions.setActiveTab(sessionId, result.tab.id);
+          return { ok: true } as MethodResult<TMethod>;
+        });
       case 'tabs.new':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(this.runtimeTraceId, method, params, async () =>
-          this.driver.tabsNew({
+        return this.withTrace(this.runtimeTraceId, method, params, async () => {
+          const sessionId = this.requireSessionId(args);
+          const session = this.getSession(sessionId);
+          const result = await this.driver.sessionBindingOpenTab({
+            bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
             active: args.active === true,
-            windowId: typeof args.windowId === 'number' ? args.windowId : undefined,
-            addToGroup: args.addToGroup === true
-          }) as Promise<MethodResult<TMethod>>
-        );
+            focus: args.focus === true,
+            label: this.resolveSessionLabel(session)
+          });
+          this.syncSessionBrowserState(sessionId, result.browser);
+          if (args.active === true || args.focus === true) {
+            this.sessions.setActiveTab(sessionId, result.tab.id);
+          }
+          this.clearTabContext(sessionId, result.tab.id);
+          return {
+            tabId: result.tab.id,
+            windowId: result.tab.windowId,
+            groupId: result.tab.groupId ?? null
+          } as MethodResult<TMethod>;
+        });
       case 'tabs.close':
         this.ensurePairing();
         this.ensureConnected();
-        return this.withTrace(this.runtimeTraceId, method, params, async () => this.driver.tabsClose(Number(args.tabId)) as Promise<MethodResult<TMethod>>);
+        return this.withTrace(this.runtimeTraceId, method, params, async () => {
+          const sessionId = this.requireSessionId(args);
+          const session = this.getSession(sessionId);
+          const result = await this.driver.sessionBindingCloseTab({
+            bindingId: session.bindingId,
+            tabId: Number(args.tabId)
+          });
+          if (result.browser && result.browser.tabIds.length > 0) {
+            this.syncSessionBrowserState(sessionId, result.browser);
+          } else {
+            await this.closeSessionInternal(sessionId, { closeBinding: true });
+          }
+          return { ok: true } as MethodResult<TMethod>;
+        });
       case 'session.ensure': {
         this.ensurePairing();
         this.ensureConnected();
@@ -962,7 +1149,8 @@ export class BakService {
           const result = await this.driver.sessionBindingEnsure({
             bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
-            focus: args.focus === true
+            focus: args.focus === true,
+            label: this.resolveSessionLabel(session)
           });
           this.syncSessionBrowserState(sessionId, result.browser);
           const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
@@ -984,7 +1172,8 @@ export class BakService {
             bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
             active: args.active === true,
-            focus: args.focus === true
+            focus: args.focus === true,
+            label: this.resolveSessionLabel(session)
           });
           this.syncSessionBrowserState(sessionId, result.browser);
           if (args.active === true || args.focus === true) {
@@ -1080,6 +1269,35 @@ export class BakService {
           } as MethodResult<TMethod>;
         });
       }
+      case 'session.closeTab': {
+        this.ensurePairing();
+        this.ensureConnected();
+        const sessionId = this.requireSessionId(args);
+        const session = this.getSession(sessionId);
+        return this.withTrace(session.traceId, method, params, async () => {
+          const target = await this.resolveSessionTarget(sessionId, args, { autoEnsure: false });
+          const result = await this.driver.sessionBindingCloseTab({
+            bindingId: session.bindingId,
+            tabId: target.tabId
+          });
+          if (result.browser && result.browser.tabIds.length > 0) {
+            this.syncSessionBrowserState(sessionId, result.browser);
+            return {
+              closed: true,
+              closedTabId: result.closedTabId,
+              sessionClosed: false,
+              browser: this.hydrateSessionBrowserState(sessionId, result.browser)
+            } as MethodResult<TMethod>;
+          }
+          await this.closeSessionInternal(sessionId, { closeBinding: true });
+          return {
+            closed: true,
+            closedTabId: result.closedTabId,
+            sessionClosed: true,
+            browser: null
+          } as MethodResult<TMethod>;
+        });
+      }
       case 'session.reset': {
         this.ensurePairing();
         this.ensureConnected();
@@ -1089,7 +1307,8 @@ export class BakService {
           const result = await this.driver.sessionBindingReset({
             bindingId: session.bindingId,
             url: typeof args.url === 'string' ? args.url : undefined,
-            focus: args.focus === true
+            focus: args.focus === true,
+            label: this.resolveSessionLabel(session)
           });
           this.syncSessionBrowserState(sessionId, result.browser);
           for (const tabId of result.browser.tabIds) {
@@ -1255,7 +1474,9 @@ export class BakService {
     const sessionId = this.requireSessionId(args);
     const session = this.getSession(sessionId);
     return this.withTrace(session.traceId, methodName, params, async () => {
-      const target = await this.resolveSessionTarget(sessionId, args, methodName === 'context.get');
+      const target = await this.resolveSessionTarget(sessionId, args, {
+        allowMissing: methodName === 'context.get'
+      });
       if (
         typeof target.tabId === 'number' &&
         methodName !== 'context.set' &&

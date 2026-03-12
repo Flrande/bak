@@ -619,6 +619,29 @@ describe('session binding manager', () => {
     await expect(storage.load(BINDING_ID)).resolves.toBeNull();
     await expect(manager.getBindingInfo(BINDING_ID)).resolves.toBeNull();
   });
+
+  it('uses an explicit label when creating the binding group', async () => {
+    const { manager } = await createManager();
+
+    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID, label: 'agent-a' });
+
+    expect(ensured.binding.label).toBe('agent-a');
+  });
+
+  it('closes only the requested tab and empties the binding when the last tab is removed', async () => {
+    const { manager } = await createManager();
+    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: true, focus: false });
+    const second = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/b', active: true, focus: false });
+
+    const trimmed = await manager.closeTab(BINDING_ID, second.tab.id);
+    expect(trimmed.closedTabId).toBe(second.tab.id);
+    expect(trimmed.binding?.tabIds).toEqual([first.tab.id]);
+
+    const emptied = await manager.closeTab(BINDING_ID, first.tab.id);
+    expect(emptied.closedTabId).toBe(first.tab.id);
+    expect(emptied.binding?.tabIds).toEqual([]);
+    expect(emptied.binding?.windowId).toBeNull();
+  });
 });
 
 function tabsInWindow(browser: FakeBrowser, windowId: number): SessionBindingTab[] {

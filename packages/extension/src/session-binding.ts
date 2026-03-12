@@ -92,6 +92,7 @@ export interface SessionBindingEnsureOptions {
   bindingId?: string;
   focus?: boolean;
   initialUrl?: string;
+  label?: string;
 }
 
 export interface SessionBindingOpenTabOptions {
@@ -99,6 +100,7 @@ export interface SessionBindingOpenTabOptions {
   url?: string;
   active?: boolean;
   focus?: boolean;
+  label?: string;
 }
 
 export interface SessionBindingResolveTargetOptions {
@@ -126,7 +128,7 @@ class SessionBindingManager {
     const initialUrl = options.initialUrl ?? DEFAULT_SESSION_BINDING_URL;
     const persisted = await this.storage.load(bindingId);
     const created = !persisted;
-    let state = this.normalizeState(persisted, bindingId);
+    let state = this.normalizeState(persisted, bindingId, options.label);
 
     const originalWindowId = state.windowId;
     let window = state.windowId !== null ? await this.waitForWindow(state.windowId) : null;
@@ -272,7 +274,8 @@ class SessionBindingManager {
     const ensured = await this.ensureBinding({
       bindingId,
       focus: false,
-      initialUrl: hadBinding ? options.url ?? DEFAULT_SESSION_BINDING_URL : DEFAULT_SESSION_BINDING_URL
+      initialUrl: hadBinding ? options.url ?? DEFAULT_SESSION_BINDING_URL : DEFAULT_SESSION_BINDING_URL,
+      label: options.label
     });
     let state = { ...ensured.binding, tabIds: [...ensured.binding.tabIds], tabs: [...ensured.binding.tabs] };
     if (state.windowId !== null && state.tabs.length === 0) {
@@ -312,7 +315,8 @@ class SessionBindingManager {
       const repaired = await this.ensureBinding({
         bindingId,
         focus: false,
-        initialUrl: desiredUrl
+        initialUrl: desiredUrl,
+        label: options.label
       });
       state = { ...repaired.binding };
       reusablePrimaryTab = await this.resolveReusablePrimaryTab(state, true);
@@ -433,6 +437,67 @@ class SessionBindingManager {
     return { ok: true, binding: refreshed.binding };
   }
 
+  async closeTab(bindingId: string, tabId?: number): Promise<{ binding: SessionBindingInfo | null; closedTabId: number }> {
+    const ensured = await this.ensureBinding({ bindingId, focus: false });
+    const resolvedTabId =
+      typeof tabId === 'number'
+        ? tabId
+        : ensured.binding.activeTabId ?? ensured.binding.primaryTabId ?? ensured.binding.tabs[0]?.id;
+    if (typeof resolvedTabId !== 'number' || !ensured.binding.tabIds.includes(resolvedTabId)) {
+      throw new Error(`Tab ${tabId ?? 'active'} does not belong to binding ${bindingId}`);
+    }
+
+    await this.browser.closeTab(resolvedTabId);
+    const remainingTabIds = ensured.binding.tabIds.filter((candidate) => candidate !== resolvedTabId);
+
+    if (remainingTabIds.length === 0) {
+      const emptied: SessionBindingRecord = {
+        id: ensured.binding.id,
+        label: ensured.binding.label,
+        color: ensured.binding.color,
+        windowId: null,
+        groupId: null,
+        tabIds: [],
+        activeTabId: null,
+        primaryTabId: null
+      };
+      await this.storage.save(emptied);
+      return {
+        binding: {
+          ...emptied,
+          tabs: []
+        },
+        closedTabId: resolvedTabId
+      };
+    }
+
+    const tabs = await this.readLooseTrackedTabs(remainingTabIds);
+    const nextPrimaryTabId =
+      ensured.binding.primaryTabId === resolvedTabId ? tabs[0]?.id ?? null : ensured.binding.primaryTabId;
+    const nextActiveTabId =
+      ensured.binding.activeTabId === resolvedTabId
+        ? tabs.find((candidate) => candidate.active)?.id ?? nextPrimaryTabId ?? tabs[0]?.id ?? null
+        : ensured.binding.activeTabId;
+    const nextState: SessionBindingRecord = {
+      id: ensured.binding.id,
+      label: ensured.binding.label,
+      color: ensured.binding.color,
+      windowId: tabs[0]?.windowId ?? ensured.binding.windowId,
+      groupId: tabs[0]?.groupId ?? ensured.binding.groupId,
+      tabIds: tabs.map((candidate) => candidate.id),
+      activeTabId: nextActiveTabId,
+      primaryTabId: nextPrimaryTabId
+    };
+    await this.storage.save(nextState);
+    return {
+      binding: {
+        ...nextState,
+        tabs
+      },
+      closedTabId: resolvedTabId
+    };
+  }
+
   async reset(options: SessionBindingEnsureOptions = {}): Promise<SessionBindingEnsureResult> {
     const bindingId = this.normalizeBindingId(options.bindingId);
     await this.close(bindingId);
@@ -511,10 +576,10 @@ class SessionBindingManager {
     return candidate;
   }
 
-  private normalizeState(state: SessionBindingRecord | null, bindingId: string): SessionBindingRecord {
+  private normalizeState(state: SessionBindingRecord | null, bindingId: string, label?: string): SessionBindingRecord {
     return {
       id: bindingId,
-      label: state?.label ?? DEFAULT_SESSION_BINDING_LABEL,
+      label: label?.trim() ? label.trim() : state?.label ?? DEFAULT_SESSION_BINDING_LABEL,
       color: state?.color ?? DEFAULT_SESSION_BINDING_COLOR,
       windowId: state?.windowId ?? null,
       groupId: state?.groupId ?? null,

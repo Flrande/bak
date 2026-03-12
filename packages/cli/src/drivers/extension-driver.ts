@@ -4,6 +4,7 @@ import type {
   BrowserTab,
   DriverConnectionStatus,
   SessionBindingActiveTabResult,
+  SessionBindingCloseTabResult,
   SessionBindingEnsureResult,
   SessionBindingFocusResult,
   SessionBindingListTabsResult,
@@ -146,7 +147,7 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('ui.selectCandidate', { candidates, tabId }, 60_000);
   }
 
-  sessionBindingEnsure(params: { bindingId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+  sessionBindingEnsure(params: { bindingId?: string; url?: string; focus?: boolean; label?: string } = {}): Promise<SessionBindingEnsureResult> {
     return this.bridge.request('sessionBinding.ensure', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
 
@@ -155,7 +156,7 @@ export class ExtensionDriver implements BrowserDriver {
   }
 
   sessionBindingOpenTab(
-    params: { bindingId?: string; url?: string; active?: boolean; focus?: boolean } = {}
+    params: { bindingId?: string; url?: string; active?: boolean; focus?: boolean; label?: string } = {}
   ): Promise<SessionBindingOpenTabResult> {
     return this.bridge.request('sessionBinding.openTab', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
@@ -176,7 +177,11 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('sessionBinding.focus', params);
   }
 
-  sessionBindingReset(params: { bindingId?: string; url?: string; focus?: boolean } = {}): Promise<SessionBindingEnsureResult> {
+  sessionBindingCloseTab(params: { bindingId?: string; tabId?: number }): Promise<SessionBindingCloseTabResult> {
+    return this.bridge.request('sessionBinding.closeTab', params);
+  }
+
+  sessionBindingReset(params: { bindingId?: string; url?: string; focus?: boolean; label?: string } = {}): Promise<SessionBindingEnsureResult> {
     return this.bridge.request('sessionBinding.reset', params, SESSION_BINDING_BRIDGE_TIMEOUT_MS);
   }
 

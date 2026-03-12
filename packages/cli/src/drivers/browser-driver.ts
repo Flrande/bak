@@ -17,6 +17,8 @@ export interface BrowserTab {
   title: string;
   url: string;
   active: boolean;
+  windowId?: number;
+  groupId?: number | null;
 }
 
 export interface SnapshotResult {
@@ -51,6 +53,11 @@ export interface SessionBindingActiveTabResult {
 export interface SessionBindingFocusResult {
   ok: true;
   browser: SessionBrowserState;
+}
+
+export interface SessionBindingCloseTabResult {
+  browser: SessionBrowserState | null;
+  closedTabId: number;
 }
 
 export interface DriverConnectionStatus {
@@ -92,14 +99,15 @@ export interface BrowserDriver {
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;
   debugGetConsole(limit?: number, tabId?: number): Promise<{ entries: ConsoleEntry[] }>;
   userSelectCandidate(candidates: ElementMapItem[], tabId?: number): Promise<{ selectedEid: string }>;
-  sessionBindingEnsure(params?: { bindingId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
+  sessionBindingEnsure(params?: { bindingId?: string; url?: string; focus?: boolean; label?: string }): Promise<SessionBindingEnsureResult>;
   sessionBindingInfo(params?: { bindingId?: string }): Promise<{ browser: SessionBrowserState | null }>;
-  sessionBindingOpenTab(params?: { bindingId?: string; url?: string; active?: boolean; focus?: boolean }): Promise<SessionBindingOpenTabResult>;
+  sessionBindingOpenTab(params?: { bindingId?: string; url?: string; active?: boolean; focus?: boolean; label?: string }): Promise<SessionBindingOpenTabResult>;
   sessionBindingListTabs(params?: { bindingId?: string }): Promise<SessionBindingListTabsResult>;
   sessionBindingGetActiveTab(params?: { bindingId?: string }): Promise<SessionBindingActiveTabResult>;
   sessionBindingSetActiveTab(params: { bindingId?: string; tabId: number }): Promise<SessionBindingOpenTabResult>;
   sessionBindingFocus(params?: { bindingId?: string }): Promise<SessionBindingFocusResult>;
-  sessionBindingReset(params?: { bindingId?: string; url?: string; focus?: boolean }): Promise<SessionBindingEnsureResult>;
+  sessionBindingCloseTab(params: { bindingId?: string; tabId?: number }): Promise<SessionBindingCloseTabResult>;
+  sessionBindingReset(params?: { bindingId?: string; url?: string; focus?: boolean; label?: string }): Promise<SessionBindingEnsureResult>;
   sessionBindingClose(params?: { bindingId?: string }): Promise<{ ok: true }>;
   rawRequest<TResult = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<TResult>;
 }

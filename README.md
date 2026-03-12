@@ -26,9 +26,13 @@ If you are onboarding as a contributor:
 
 ## Product Shape
 
-- `bak session ...` is the default agent surface for dedicated browser state.
-- `bak tabs ...` is the direct browser-wide tab surface outside the session helpers.
-- `bak page`, `bak element`, `bak context`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` operate on the current session tab by default.
+- `bak session ...` is the default agent surface for dedicated browser state. `bak session resolve` is the normal way to find-or-create that state from a stable client identity, and `bak session close-tab` is the normal way to close a session-owned tab.
+- Browser-affecting commands auto-resolve a session with this precedence: `--session-id` > `BAK_SESSION_ID` > `--client-name` > `BAK_CLIENT_NAME` > `CODEX_THREAD_ID`.
+- `bak page`, `bak element`, `bak context`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` operate on the current resolved session tab by default.
+- `bak tabs list`, `bak tabs get`, and `bak tabs active` remain browser-wide diagnostics.
+- `bak tabs new`, `bak tabs focus`, and `bak tabs close` are recovery-only compatibility commands that operate on the resolved session, not arbitrary browser tabs.
+- Closing the last tab in a session auto-closes that session. When all sessions are closed, the managed background runtime auto-stops. Foreground `bak serve` remains an advanced debug path and does not auto-stop.
+- Explicit `sessionId` values are still useful for handoff, debugging, and cross-process reuse, but they are no longer the default agent workflow.
 - `bak call` remains the fallback for protocol-only methods.
 
 Public terminology is `session` plus `tabs`. Older `workspace` wording is obsolete in the user-facing CLI.

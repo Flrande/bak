@@ -12,7 +12,7 @@ Use these pages by job, not in bulk.
 
 - [cli-guide.md](./cli-guide.md)
 
-`cli-guide.md` covers the day-to-day session commands plus the normal runtime lifecycle commands.
+`cli-guide.md` covers the day-to-day session-first workflow, auto-session resolution, recovery-only `tabs` commands, and the normal runtime lifecycle commands.
 
 ## Recovery And Troubleshooting
 
@@ -22,3 +22,5 @@ Use these pages by job, not in bulk.
 
 - [agent-prompts.md](./agent-prompts.md)
 - [../../skills/bak-browser-control/SKILL.md](../../skills/bak-browser-control/SKILL.md)
+
+These handoff docs assume agents normally rely on auto-resolved sessions through `--client-name`, `BAK_CLIENT_NAME`, or `CODEX_THREAD_ID`. Explicit `sessionId` values are still documented for handoff and debugging.

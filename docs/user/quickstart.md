@@ -21,7 +21,7 @@ Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
 pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 ```
 
-The launcher installs the CLI and extension packages, generates a pairing token, and writes `bootstrap-result.json` under the bak data directory. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`. Pass `-DataDir` to the bootstrap script if you want a different location. `bak` auto-starts the local runtime later when `bak doctor` or other CLI commands need it, unless you are intentionally running `bak serve` in the foreground for debugging.
+The launcher installs the CLI and extension packages, generates a pairing token, and writes `bootstrap-result.json` under the bak data directory. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`. Pass `-DataDir` to the bootstrap script if you want a different location. `bak` auto-starts the local runtime later when `bak doctor` or other CLI commands need it, and the managed background runtime auto-stops again after the last live session closes. If you are intentionally running `bak serve` in the foreground for debugging, that foreground process does not auto-stop.
 
 ## 2. Manual Setup
 
@@ -103,7 +103,7 @@ bak stop --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
-`bak stop` is useful when you want a clean restart or need to free the local ports. For normal use, do not keep `bak serve` running in a separate terminal. Let `bak doctor` or the next CLI command auto-start the runtime again.
+`bak stop` is useful when you want a clean restart or need to free the local ports. For normal use, do not keep `bak serve` running in a separate terminal. Let `bak doctor` or the next CLI command auto-start the runtime again, and let the managed runtime auto-stop once all sessions are gone.
 
 ## 6. Advanced: Foreground Runtime Logs
 
@@ -113,20 +113,25 @@ Run `bak serve` only when you need foreground logs or manual debugging:
 bak serve --port 17373 --rpc-ws-port 17374
 ```
 
-This is an advanced path, not the normal setup flow.
+This is an advanced path, not the normal setup flow. Foreground `bak serve` does not auto-stop when sessions close.
 
 ## 7. First Browser Action
 
 ```powershell
-$session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
+$clientName = 'agent-a'
+$session = bak session resolve --client-name $clientName --rpc-ws-port 17374 | ConvertFrom-Json
 $sessionId = $session.sessionId
-bak session ensure --session-id $sessionId --rpc-ws-port 17374
-bak session open-tab --session-id $sessionId --url "https://example.com" --active --rpc-ws-port 17374
-bak page title --session-id $sessionId --rpc-ws-port 17374
-bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
+bak session open-tab --client-name $clientName --url "https://example.com" --active --rpc-ws-port 17374
+bak page title --client-name $clientName --rpc-ws-port 17374
+bak page snapshot --client-name $clientName --include-base64 --rpc-ws-port 17374
+bak session close-tab --client-name $clientName --rpc-ws-port 17374
 ```
 
-Use `bak session ...` for agent-owned tabs. Reach for `bak tabs ...` only when you need browser-wide inspection or manual recovery outside the session helpers. `bak session open-tab` keeps the current default session tab unchanged unless you pass `--active` or later call `bak session set-active-tab`. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
+Use `bak session ...` for agent-owned tabs. The normal agent workflow is to pass a stable `--client-name` and let `bak` auto-resolve the session on browser-affecting commands. The resolution order is `--session-id` > `BAK_SESSION_ID` > `--client-name` > `BAK_CLIENT_NAME` > `CODEX_THREAD_ID`. Use an explicit `sessionId` when you are handing work off, debugging, or reusing a session across processes.
+
+`bak tabs list`, `bak tabs get`, and `bak tabs active` remain browser-wide diagnostics. Reach for `bak tabs new`, `bak tabs focus`, and `bak tabs close` only when you need recovery-oriented compatibility commands that still stay inside the resolved session instead of acting on arbitrary browser tabs.
+
+`bak session open-tab` keeps the current default session tab unchanged unless you pass `--active` or later call `bak session set-active-tab`. `bak session close-tab` closes a tab in the current session; closing the last session tab auto-closes that session, and when all sessions are gone the managed background runtime auto-stops. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
 
 If you are done with install and only need day-to-day commands, continue with [cli-guide.md](./cli-guide.md). If you are handing `bak` to an agent, continue with [agent-prompts.md](./agent-prompts.md).
 
@@ -135,16 +140,16 @@ If you are done with install and only need day-to-day commands, continue with [c
 When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers in a fixed escalation order:
 
 ```powershell
-bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
-bak page extract --session-id $sessionId --path "table_data" --resolver auto --rpc-ws-port 17374
-bak page eval --session-id $sessionId --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
-bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
-bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
-bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
-bak table list --session-id $sessionId --rpc-ws-port 17374
-bak table rows --session-id $sessionId --table table-1 --all --rpc-ws-port 17374
-bak page freshness --session-id $sessionId --rpc-ws-port 17374
-bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374
+bak inspect page-data --client-name $clientName --rpc-ws-port 17374
+bak page extract --client-name $clientName --path "table_data" --resolver auto --rpc-ws-port 17374
+bak page eval --client-name $clientName --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
+bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
+bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
+bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
+bak table list --client-name $clientName --rpc-ws-port 17374
+bak table rows --client-name $clientName --table table-1 --all --rpc-ws-port 17374
+bak page freshness --client-name $clientName --rpc-ws-port 17374
+bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 ```
 
 `bak inspect page-data` returns likely globals, tables, recent requests, and `recommendedNextSteps`. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.

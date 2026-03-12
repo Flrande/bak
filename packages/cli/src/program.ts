@@ -49,6 +49,11 @@ type RuntimeOptionBag = {
   rpcWsPort?: unknown;
 };
 
+type SessionOptionBag = {
+  sessionId?: unknown;
+  clientName?: unknown;
+};
+
 function normalizeDataDir(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
@@ -92,6 +97,14 @@ function parseSessionId(value: unknown): string | undefined {
     return undefined;
   }
   return sessionId;
+}
+
+function parseClientName(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const clientName = String(value).trim();
+  return clientName.length > 0 ? clientName : undefined;
 }
 
 function parseScope(value: unknown): 'current' | 'main' | 'all-frames' | undefined {
@@ -177,7 +190,8 @@ async function invoke(method: string, params: Record<string, unknown>, runtimeOp
       ? resolveRuntimeFromOptions({ rpcWsPort: runtimeOptions })
       : resolveRuntimeFromOptions(runtimeOptions);
   await ensureRuntime(resolution);
-  printResult(await callRpc(method, params, resolution.rpcWsPort));
+  const resolvedParams = await resolveAutoSessionParams(method, params, resolution.rpcWsPort);
+  printResult(await callRpc(method, resolvedParams, resolution.rpcWsPort));
 }
 
 async function callWithRuntime(
@@ -190,7 +204,8 @@ async function callWithRuntime(
       ? resolveRuntimeFromOptions({ rpcWsPort: runtimeOptions })
       : resolveRuntimeFromOptions(runtimeOptions);
   await ensureRuntime(resolution);
-  return await callRpc(method, params, resolution.rpcWsPort);
+  const resolvedParams = await resolveAutoSessionParams(method, params, resolution.rpcWsPort);
+  return await callRpc(method, resolvedParams, resolution.rpcWsPort);
 }
 
 function addRpcPortOption(command: Command): Command {
@@ -198,17 +213,168 @@ function addRpcPortOption(command: Command): Command {
 }
 
 function addTabOption(command: Command): Command {
-  return command.option('--session-id <sessionId>', 'target session id').option('--tab-id <tabId>', 'explicit session tab id to target');
+  return command
+    .option('--session-id <sessionId>', 'target session id')
+    .option('--client-name <name>', 'stable client or agent name used for session auto-resolution')
+    .option('--tab-id <tabId>', 'explicit session tab id to target');
 }
 
 function addSessionOption(command: Command): Command {
-  return command.option('--session-id <sessionId>', 'target session id');
+  return command
+    .option('--session-id <sessionId>', 'target session id')
+    .option('--client-name <name>', 'stable client or agent name used for session auto-resolution');
 }
 
-function targetParams(options: { tabId?: unknown; sessionId?: unknown }): { tabId?: number; sessionId?: string } {
+function targetParams(options: { tabId?: unknown; sessionId?: unknown; clientName?: unknown }): { tabId?: number; sessionId?: string; clientName?: string } {
   return {
     tabId: parseTabId(options.tabId),
-    sessionId: parseSessionId(options.sessionId)
+    sessionId: parseSessionId(options.sessionId),
+    clientName: parseClientName(options.clientName)
+  };
+}
+
+const AUTO_CREATE_SESSION_METHODS = new Set<string>([
+  'page.goto',
+  'page.back',
+  'page.forward',
+  'page.reload',
+  'page.wait',
+  'page.snapshot',
+  'page.title',
+  'page.url',
+  'page.text',
+  'page.eval',
+  'page.extract',
+  'page.fetch',
+  'page.dom',
+  'page.accessibilityTree',
+  'page.scrollTo',
+  'page.viewport',
+  'page.metrics',
+  'page.freshness',
+  'element.click',
+  'element.type',
+  'element.scroll',
+  'element.hover',
+  'element.doubleClick',
+  'element.rightClick',
+  'element.dragDrop',
+  'element.select',
+  'element.check',
+  'element.uncheck',
+  'element.scrollIntoView',
+  'element.focus',
+  'element.blur',
+  'element.get',
+  'keyboard.press',
+  'keyboard.type',
+  'keyboard.hotkey',
+  'mouse.move',
+  'mouse.click',
+  'mouse.wheel',
+  'file.upload',
+  'context.get',
+  'context.set',
+  'context.enterFrame',
+  'context.exitFrame',
+  'context.enterShadow',
+  'context.exitShadow',
+  'context.reset',
+  'network.list',
+  'network.get',
+  'network.search',
+  'network.replay',
+  'network.waitFor',
+  'network.clear',
+  'debug.getConsole',
+  'debug.dumpState',
+  'table.list',
+  'table.schema',
+  'table.rows',
+  'table.export',
+  'inspect.pageData',
+  'inspect.liveUpdates',
+  'inspect.freshness',
+  'capture.snapshot',
+  'capture.har',
+  'tabs.new',
+  'tabs.focus',
+  'tabs.close',
+  'session.ensure',
+  'session.openTab',
+  'session.reset'
+]);
+
+const LOOKUP_ONLY_SESSION_METHODS = new Set<string>([
+  'session.info',
+  'session.close',
+  'session.listTabs',
+  'session.getActiveTab',
+  'session.setActiveTab',
+  'session.focus',
+  'session.closeTab'
+]);
+
+function resolveCommandSessionId(value: unknown): string | undefined {
+  return parseSessionId(value) ?? parseSessionId(process.env.BAK_SESSION_ID);
+}
+
+function resolveCommandClientName(value: unknown): string | undefined {
+  return (
+    parseClientName(value) ??
+    parseClientName(process.env.BAK_CLIENT_NAME) ??
+    parseClientName(process.env.CODEX_THREAD_ID)
+  );
+}
+
+async function resolveAutoSessionParams(
+  method: string,
+  params: Record<string, unknown>,
+  rpcWsPort: number
+): Promise<Record<string, unknown>> {
+  if (!AUTO_CREATE_SESSION_METHODS.has(method) && !LOOKUP_ONLY_SESSION_METHODS.has(method)) {
+    return params;
+  }
+
+  const sessionId = resolveCommandSessionId(params.sessionId);
+  if (sessionId) {
+    return {
+      ...params,
+      sessionId
+    };
+  }
+
+  const clientName = resolveCommandClientName(params.clientName);
+  if (!clientName) {
+    throw new Error(
+      `Command ${method} requires a session. Pass --session-id, --client-name, set BAK_CLIENT_NAME, or run inside Codex with CODEX_THREAD_ID.`
+    );
+  }
+
+  const resolved =
+    LOOKUP_ONLY_SESSION_METHODS.has(method)
+      ? await resolveExistingSessionByClientName(clientName, rpcWsPort)
+      : ((await callRpc('session.resolve', { clientName }, rpcWsPort)) as { sessionId: string });
+  return {
+    ...params,
+    clientName,
+    sessionId: resolved.sessionId
+  };
+}
+
+async function resolveExistingSessionByClientName(clientName: string, rpcWsPort: number): Promise<{ sessionId: string }> {
+  const listed = (await callRpc('session.list', {}, rpcWsPort)) as {
+    sessions?: Array<{ sessionId?: string; clientName?: string }>;
+  };
+  const matches = (listed.sessions ?? []).filter((session) => session.clientName === clientName);
+  if (matches.length === 0) {
+    throw new Error(`No live session matches clientName "${clientName}".`);
+  }
+  if (matches.length > 1 || typeof matches[0]?.sessionId !== 'string') {
+    throw new Error(`Multiple live sessions match clientName "${clientName}". Pass --session-id to disambiguate.`);
+  }
+  return {
+    sessionId: matches[0].sessionId
   };
 }
 
@@ -287,15 +453,16 @@ addStructuredHelp(program, {
   notes: [
     'All commands print machine-friendly JSON.',
     'bak auto-starts the local runtime when a command needs it.',
-    'Use --session-id for session-scoped commands and --tab-id to override a session tab.',
-    'Create a session before using session, page, element, context, debug, network, keyboard, mouse, or file commands.',
+    'Browser commands auto-resolve a session from --session-id, BAK_SESSION_ID, --client-name, BAK_CLIENT_NAME, or CODEX_THREAD_ID.',
+    'Use --tab-id to override a tab inside the resolved session.',
+    'tabs list/get/active are browser-wide diagnostics; tabs new/focus/close are recovery-only compatibility commands.',
     'Use bak call when the protocol exposes a method without a dedicated CLI command.'
   ],
   examples: [
     'bak setup',
     'bak status',
     'bak doctor --port 17373 --rpc-ws-port 17374',
-    'bak session ensure --session-id session_123 --rpc-ws-port 17374',
+    'bak session resolve --client-name agent-a --rpc-ws-port 17374',
     'bak page title --rpc-ws-port 17374'
   ]
 });
@@ -383,8 +550,22 @@ addStructuredHelp(
       process.stderr.write(`[bak] pair token expires: ${created.expiresAt}\n`);
     }
     writeRuntimeConfig(runtime, 'serve');
-    const daemon = await startBakDaemon(runtime.port, runtime.rpcWsPort);
     const managed = process.env.BAK_RUNTIME_MANAGED === '1';
+    let daemonRef: Awaited<ReturnType<typeof startBakDaemon>> | null = null;
+    let stopping = false;
+    const daemon = await startBakDaemon(runtime.port, runtime.rpcWsPort, {
+      managedRuntime: managed,
+      onManagedIdle: async () => {
+        if (stopping || daemonRef === null) {
+          return;
+        }
+        stopping = true;
+        await daemonRef.stop();
+        clearRuntimeState(runtime.dataDir);
+        process.exit(0);
+      }
+    });
+    daemonRef = daemon;
     const logPaths = managed ? resolveRuntimeLogPaths(runtime.dataDir) : { stdoutLogPath: null, stderrLogPath: null };
     writeRuntimeState(runtime.dataDir, {
       version: 1,
@@ -402,6 +583,10 @@ addStructuredHelp(
     process.stderr.write(`rpc websocket: ws://127.0.0.1:${runtime.rpcWsPort}/rpc\n`);
     process.stderr.write(`stdio JSON-RPC enabled\n`);
     const shutdown = async (): Promise<void> => {
+      if (stopping) {
+        return;
+      }
+      stopping = true;
       await daemon.stop();
       clearRuntimeState(runtime.dataDir);
       process.exit(0);
@@ -523,16 +708,19 @@ addStructuredHelp(
 
 addStructuredHelp(
   addRpcPortOption(
-    program
-      .command('call')
-      .summary('Call a protocol method without a dedicated CLI command')
-      .description('Call a JSON-RPC method over WebSocket when the protocol has no dedicated bak subcommand')
-      .requiredOption('--method <method>', 'protocol method name')
-      .option('--params <json>', 'params JSON string', '{}')
+    addTabOption(
+      program
+        .command('call')
+        .summary('Call a protocol method without a dedicated CLI command')
+        .description('Call a JSON-RPC method over WebSocket when the protocol has no dedicated bak subcommand')
+        .requiredOption('--method <method>', 'protocol method name')
+        .option('--params <json>', 'params JSON string', '{}')
+    )
   ),
   {
     notes: [
       'Use this for protocol-only methods such as page.reload, page.back, page.forward, or page.scrollTo.',
+      'When the target method is session-scoped, call follows the same auto-session rules as first-class browser commands.',
       'Prefer first-class bak commands when they exist because they are easier to discover and script.'
     ],
     examples: [
@@ -540,14 +728,26 @@ addStructuredHelp(
       'bak call --method page.scrollTo --params "{\\"x\\":0,\\"y\\":640}" --rpc-ws-port 17374'
     ]
   }
-).action(async (options) => invoke(String(options.method), parseJson(String(options.params)), parseRpcPort(options)));
+).action(async (options) =>
+  invoke(
+    String(options.method),
+    {
+      ...parseJson(String(options.params)),
+      ...targetParams(options)
+    },
+    parseRpcPort(options)
+  )
+);
 
 const session = program
   .command('session')
   .summary('Create and inspect agent sessions')
   .description('Manage multi-agent sessions and their dedicated browser state');
 addStructuredHelp(session, {
-  notes: ['Each session owns one dedicated browser binding and one default active tab/context state.'],
+  notes: [
+    'Each session owns one dedicated browser binding and one default active tab/context state.',
+    'Use session resolve when you want a stable per-agent session without bookkeeping a session id yourself.'
+  ],
   examples: [
     'bak session create --client-name agent-a --rpc-ws-port 17374',
     'bak session list --rpc-ws-port 17374',
@@ -566,15 +766,47 @@ addStructuredHelp(addRpcPortOption(session.command('create').description('Create
     parseRpcPort(options)
   )
 );
+addStructuredHelp(
+  addRpcPortOption(session.command('resolve').description('Find or create the unique live session for a client name').option('--client-name <name>', 'stable client or agent name')),
+  {
+    examples: ['bak session resolve --client-name agent-a --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'session.resolve',
+    {
+      clientName: resolveCommandClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(session.command('list').description('List active sessions')), {
   examples: ['bak session list --rpc-ws-port 17374']
 }).action(async (options) => invoke('session.list', {}, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('info').description('Show session state and current context'))), {
   examples: ['bak session info --session-id session_123 --rpc-ws-port 17374']
-}).action(async (options) => invoke('session.info', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+}).action(async (options) =>
+  invoke(
+    'session.info',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('close').description('Close a session and its browser state'))), {
   examples: ['bak session close --session-id session_123 --rpc-ws-port 17374']
-}).action(async (options) => invoke('session.close', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+}).action(async (options) =>
+  invoke(
+    'session.close',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(
   addRpcPortOption(
     addSessionOption(
@@ -596,6 +828,7 @@ addStructuredHelp(
     'session.ensure',
     {
       sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
       url: options.url ? String(options.url) : undefined,
       focus: options.focus === true
     },
@@ -621,6 +854,7 @@ addStructuredHelp(
     'session.openTab',
     {
       sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
       url: options.url ? String(options.url) : undefined,
       active: options.active === true,
       focus: options.focus === true
@@ -630,10 +864,28 @@ addStructuredHelp(
 );
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('list-tabs').description('List the tabs tracked by a session'))), {
   examples: ['bak session list-tabs --session-id session_123 --rpc-ws-port 17374']
-}).action(async (options) => invoke('session.listTabs', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+}).action(async (options) =>
+  invoke(
+    'session.listTabs',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('get-active-tab').description('Show the current tab used by default session browser commands'))), {
   examples: ['bak session get-active-tab --session-id session_123 --rpc-ws-port 17374']
-}).action(async (options) => invoke('session.getActiveTab', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+}).action(async (options) =>
+  invoke(
+    'session.getActiveTab',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(
   addRpcPortOption(
     addSessionOption(
@@ -651,6 +903,7 @@ addStructuredHelp(
     'session.setActiveTab',
     {
       sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
       tabId: parseTabId(options.tabId)
     },
     parseRpcPort(options)
@@ -658,7 +911,39 @@ addStructuredHelp(
 );
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('focus').description('Bring the dedicated session window to the front'))), {
   examples: ['bak session focus --session-id session_123 --rpc-ws-port 17374']
-}).action(async (options) => invoke('session.focus', { sessionId: parseSessionId(options.sessionId) }, parseRpcPort(options)));
+}).action(async (options) =>
+  invoke(
+    'session.focus',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName)
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(
+  addRpcPortOption(
+    addSessionOption(
+      session
+        .command('close-tab')
+        .description('Close a single tab inside the session and auto-close the session when it was the last tab')
+        .option('--tab-id <tabId>', 'session tab id to close')
+    )
+  ),
+  {
+    examples: ['bak session close-tab --session-id session_123 --tab-id 123 --rpc-ws-port 17374']
+  }
+).action(async (options) =>
+  invoke(
+    'session.closeTab',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
+      tabId: parseTabId(options.tabId)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(
   addRpcPortOption(
     addSessionOption(
@@ -680,6 +965,7 @@ addStructuredHelp(
     'session.reset',
     {
       sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
       url: options.url ? String(options.url) : undefined,
       focus: options.focus === true
     },
@@ -693,39 +979,63 @@ const tabs = program
   .description('Inspect and control browser tabs directly');
 addStructuredHelp(tabs, {
   notes: [
-    'Use tabs commands when you want direct browser tab control outside the session helpers.',
-    'Most day-to-day agent work is easier with session ensure and session open-tab.'
+    'Use tabs list/get/active for browser-wide diagnostics.',
+    'tabs new/focus/close are recovery-only compatibility wrappers and now resolve to the current session.'
   ]
 });
 addStructuredHelp(addRpcPortOption(tabs.command('list').description('List tabs visible to the connected browser')), {
   examples: ['bak tabs list --rpc-ws-port 17374']
 }).action(async (options) => invoke('tabs.list', {}, parseRpcPort(options)));
 addRpcPortOption(
-  tabs
-    .command('new')
-    .description('Open a new browser tab')
-    .option('--url <url>', 'initial URL')
-    .option('--active', 'make the created tab active in its window', false)
-    .option('--window-id <windowId>', 'target browser window id')
-    .option('--add-to-group', 'group the new tab when creating in a window', false)
+  addSessionOption(
+    tabs
+      .command('new')
+      .description('Open a new browser tab inside the current session (recovery-only compatibility command)')
+      .option('--url <url>', 'initial URL')
+      .option('--active', 'make the created tab active in its window', false)
+      .option('--focus', 'focus the session window', false)
+      .option('--window-id <windowId>', 'deprecated compatibility option; ignored by session-aware tabs.new')
+      .option('--add-to-group', 'deprecated compatibility option; ignored by session-aware tabs.new', false)
+  )
 ).action(async (options) =>
   invoke(
     'tabs.new',
     {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
       url: options.url ? String(options.url) : undefined,
       active: options.active === true,
-      windowId: parseNonNegativeInt(options.windowId, 'window-id'),
-      addToGroup: options.addToGroup === true
+      focus: options.focus === true
     },
     parseRpcPort(options)
   )
 );
-addStructuredHelp(addRpcPortOption(tabs.command('focus <tabId>').description('Focus a tab by id')), {
+addStructuredHelp(addRpcPortOption(addSessionOption(tabs.command('focus <tabId>').description('Focus a session-owned tab by id (recovery-only compatibility command)'))), {
   examples: ['bak tabs focus 123 --rpc-ws-port 17374']
-}).action(async (tabId, options) => invoke('tabs.focus', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));
-addStructuredHelp(addRpcPortOption(tabs.command('close <tabId>').description('Close a tab by id')), {
+}).action(async (tabId, options) =>
+  invoke(
+    'tabs.focus',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
+      tabId: parsePositiveInt(tabId, 'tabId')
+    },
+    parseRpcPort(options)
+  )
+);
+addStructuredHelp(addRpcPortOption(addSessionOption(tabs.command('close <tabId>').description('Close a session-owned tab by id (recovery-only compatibility command)'))), {
   examples: ['bak tabs close 123 --rpc-ws-port 17374']
-}).action(async (tabId, options) => invoke('tabs.close', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));
+}).action(async (tabId, options) =>
+  invoke(
+    'tabs.close',
+    {
+      sessionId: parseSessionId(options.sessionId),
+      clientName: parseClientName(options.clientName),
+      tabId: parsePositiveInt(tabId, 'tabId')
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(tabs.command('get <tabId>').description('Show tab metadata by id')), {
   examples: ['bak tabs get 123 --rpc-ws-port 17374']
 }).action(async (tabId, options) => invoke('tabs.get', { tabId: parsePositiveInt(tabId, 'tabId') }, parseRpcPort(options)));

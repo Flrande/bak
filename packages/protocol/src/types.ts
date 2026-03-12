@@ -377,6 +377,20 @@ export interface SessionInfoResult {
   currentContext: SessionContextSnapshot;
 }
 
+export interface SessionResolveResult {
+  sessionId: string;
+  clientName?: string;
+  createdAt: string;
+  created: boolean;
+}
+
+export interface SessionCloseTabResult {
+  closed: true;
+  closedTabId: number;
+  sessionClosed: boolean;
+  browser: SessionBrowserState | null;
+}
+
 export interface TabInfo {
   id: number;
   title: string;
@@ -415,6 +429,10 @@ export interface MethodMap {
     result: { sessions: SessionSummary[] };
   };
   'session.close': { params: { sessionId: string }; result: { closed: true } };
+  'session.resolve': {
+    params: { clientName: string };
+    result: SessionResolveResult;
+  };
   'session.info': {
     params: { sessionId: string };
     result: SessionInfoResult;
@@ -443,6 +461,10 @@ export interface MethodMap {
     params: { sessionId: string };
     result: { ok: true; browser: SessionBrowserState };
   };
+  'session.closeTab': {
+    params: { sessionId: string; tabId?: number };
+    result: SessionCloseTabResult;
+  };
   'session.reset': {
     params: { sessionId: string; url?: string; focus?: boolean };
     result: { browser: SessionBrowserState; created: boolean; repaired: boolean; repairActions: string[] };
@@ -452,12 +474,12 @@ export interface MethodMap {
     params: Record<string, never>;
     result: { tabs: TabInfo[] };
   };
-  'tabs.focus': { params: { tabId: number }; result: { ok: true } };
+  'tabs.focus': { params: { sessionId: string; tabId: number }; result: { ok: true } };
   'tabs.new': {
-    params: { url?: string; active?: boolean; windowId?: number; addToGroup?: boolean };
+    params: { sessionId: string; url?: string; active?: boolean; focus?: boolean };
     result: { tabId: number; windowId?: number; groupId?: number | null };
   };
-  'tabs.close': { params: { tabId: number }; result: { ok: true } };
+  'tabs.close': { params: { sessionId: string; tabId: number }; result: { ok: true } };
   'tabs.getActive': { params: Record<string, never>; result: { tab: TabInfo | null } };
   'tabs.get': { params: { tabId: number }; result: { tab: TabInfo } };
 
