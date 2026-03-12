@@ -95,6 +95,14 @@ function requiredOutputPathsForTarget(targetName: RuntimeTargetName, target: Run
   return base;
 }
 
+function freshnessReferenceOutputsForTarget(targetName: RuntimeTargetName, target: RuntimeTarget): string[] {
+  const stampPath = buildStampPath(target.outputDir);
+  if (existsSync(stampPath)) {
+    return [stampPath];
+  }
+  return requiredOutputPathsForTarget(targetName, target);
+}
+
 function newestSourceTime(sourcePaths: string[]): number {
   const sourceTimes = sourcePaths
     .map((sourcePath) => targetMtimeMs(sourcePath, 'newest'))
@@ -240,31 +248,35 @@ function evaluateRuntimeTargets(root: string, options: RuntimeFreshnessOptions =
   const cli = targets.cli!;
   const extension = targets.extension!;
   const testSites = targets.testSites;
+  const protocolOutputs = requiredOutputPathsForTarget('protocol', protocol);
+  const cliOutputs = requiredOutputPathsForTarget('cli', cli);
+  const extensionOutputs = requiredOutputPathsForTarget('extension', extension);
+  const testSiteOutputs = testSites ? requiredOutputPathsForTarget('testSites', testSites) : [];
 
   return {
     protocol: {
       target: protocol,
-      freshness: hasAllRequiredOutputs(requiredOutputPathsForTarget('protocol', protocol))
-        ? assessArtifactFreshness(protocol.sourcePaths, [buildStampPath(protocol.outputDir)])
+      freshness: hasAllRequiredOutputs(protocolOutputs)
+        ? assessArtifactFreshness(protocol.sourcePaths, freshnessReferenceOutputsForTarget('protocol', protocol))
         : { stale: true, newestSourceMtimeMs: newestSourceTime(protocol.sourcePaths), oldestOutputMtimeMs: null }
     },
     cli: {
       target: cli,
-      freshness: hasAllRequiredOutputs(requiredOutputPathsForTarget('cli', cli))
-        ? assessArtifactFreshness(cli.sourcePaths, [buildStampPath(cli.outputDir)])
+      freshness: hasAllRequiredOutputs(cliOutputs)
+        ? assessArtifactFreshness(cli.sourcePaths, freshnessReferenceOutputsForTarget('cli', cli))
         : { stale: true, newestSourceMtimeMs: newestSourceTime(cli.sourcePaths), oldestOutputMtimeMs: null }
     },
     extension: {
       target: extension,
-      freshness: hasAllRequiredOutputs(requiredOutputPathsForTarget('extension', extension))
-        ? assessArtifactFreshness(extension.sourcePaths, [buildStampPath(extension.outputDir)])
+      freshness: hasAllRequiredOutputs(extensionOutputs)
+        ? assessArtifactFreshness(extension.sourcePaths, freshnessReferenceOutputsForTarget('extension', extension))
         : { stale: true, newestSourceMtimeMs: newestSourceTime(extension.sourcePaths), oldestOutputMtimeMs: null }
     },
     testSites: {
       target: testSites ?? { sourcePaths: [], requiredOutputs: [], outputDir: join(root, 'apps', 'test-sites', 'dist') },
       freshness: testSites
-        ? hasAllRequiredOutputs(requiredOutputPathsForTarget('testSites', testSites))
-          ? assessArtifactFreshness(testSites.sourcePaths, [buildStampPath(testSites.outputDir)])
+        ? hasAllRequiredOutputs(testSiteOutputs)
+          ? assessArtifactFreshness(testSites.sourcePaths, freshnessReferenceOutputsForTarget('testSites', testSites))
           : { stale: true, newestSourceMtimeMs: newestSourceTime(testSites.sourcePaths), oldestOutputMtimeMs: null }
         : { stale: false, newestSourceMtimeMs: 0, oldestOutputMtimeMs: null }
     }

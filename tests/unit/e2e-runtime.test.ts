@@ -190,6 +190,23 @@ describe('e2e runtime freshness helper', () => {
     });
   });
 
+  it('reuses fresh runtime outputs even when build stamps are missing', () => {
+    const root = makeTempRoot();
+    seedProjectRoot(root);
+    rmSync(join(root, 'packages', 'protocol', 'dist', '.bak-e2e-build-stamp'));
+    rmSync(join(root, 'packages', 'cli', 'dist', '.bak-e2e-build-stamp'));
+    rmSync(join(root, 'packages', 'extension', 'dist', '.bak-e2e-build-stamp'));
+    rmSync(join(root, 'apps', 'test-sites', 'dist', '.bak-e2e-build-stamp'));
+
+    const plan = detectRuntimeBuildPlan(root, { includeTestSites: true });
+    expect(plan).toEqual({
+      protocol: false,
+      cli: false,
+      extension: false,
+      testSites: false
+    });
+  });
+
   it('treats missing cli chunk outputs as stale even when the build stamp exists', () => {
     const root = makeTempRoot();
     seedProjectRoot(root);
