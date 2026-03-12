@@ -49,11 +49,6 @@ type RuntimeOptionBag = {
   rpcWsPort?: unknown;
 };
 
-type SessionOptionBag = {
-  sessionId?: unknown;
-  clientName?: unknown;
-};
-
 function normalizeDataDir(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
