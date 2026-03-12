@@ -446,7 +446,7 @@ export function exportHar(tabId: number, limit = MAX_ENTRIES): Record<string, un
       version: '1.2',
       creator: {
         name: 'bak',
-        version: '0.6.0'
+        version: '0.6.1'
       },
       entries: entries.map((entry) => ({
         startedDateTime: new Date(entry.startedAt ?? entry.ts).toISOString(),
