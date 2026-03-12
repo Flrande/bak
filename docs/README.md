@@ -1,26 +1,24 @@
 # Docs
 
-Use these pages as the current product documentation for `bak`.
+Use this page as the docs router for `bak`.
 
-## Start Here
+## I Want To Install `bak` For My Agent
 
-- [../README.md](../README.md)
-- [user/quickstart.md](./user/quickstart.md)
-- [user/cli-guide.md](./user/cli-guide.md)
+- Start with [user/quickstart.md](./user/quickstart.md)
+- Then use [user/cli-guide.md](./user/cli-guide.md)
+- If something breaks, use [user/troubleshooting.md](./user/troubleshooting.md)
 
-## Daily Use
+## I Am Handing `bak` To An Agent
 
-- [user/troubleshooting.md](./user/troubleshooting.md)
-- [user/agent-prompts.md](./user/agent-prompts.md)
+- Start with [user/agent-prompts.md](./user/agent-prompts.md)
+- Then load [../skills/bak-browser-control/SKILL.md](../skills/bak-browser-control/SKILL.md)
 
-## Reference
+## I Am Onboarding As A Developer
 
-- [PROTOCOL.md](./PROTOCOL.md)
-- [TECH_SPEC.md](./TECH_SPEC.md)
-- [reference/README.md](./reference/README.md)
-- [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)
-- [E2E_MATRIX.md](./E2E_MATRIX.md)
+- Start with [developer/README.md](./developer/README.md)
 
-## Contributor Docs
+## Reference Material
 
-- [developer/README.md](./developer/README.md)
+- Protocol surface: [PROTOCOL.md](./PROTOCOL.md)
+- Product behavior and architecture: [TECH_SPEC.md](./TECH_SPEC.md)
+- Generated reports and low-change references: [reference/README.md](./reference/README.md)

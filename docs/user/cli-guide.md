@@ -2,11 +2,14 @@
 
 `bak` is the agent-facing entrypoint to the paired browser extension.
 
+This page assumes the runtime is already installed and healthy. If you still need install, upgrade, or extension reload steps, go back to [quickstart.md](./quickstart.md).
+
 ## Command Map
 
 - `bak session ...` is the default agent surface for creating, repairing, focusing, resetting, and closing session-owned browser state plus tracked tabs.
 - `bak tabs ...` is the browser-wide inspection and recovery surface outside the session helpers.
 - `bak page`, `bak context`, `bak element`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` target the current session tab unless you override with `--tab-id`.
+- `bak session open-tab` opens a tab in the dedicated session window, but only `--active` or `bak session set-active-tab ...` changes which tab later session-scoped commands target by default.
 - `bak call` covers protocol-only methods until they graduate into one of those noun groups.
 - Older `workspace` wording is obsolete in the public CLI surface.
 
@@ -16,7 +19,7 @@
 bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
-Then create or repair the agent session binding:
+Then create or repair the agent session window:
 
 ```powershell
 $session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
@@ -39,11 +42,13 @@ bak session close --session-id $sessionId --rpc-ws-port 17374
 Use session helpers for agent-owned tabs:
 
 ```powershell
-bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --active --rpc-ws-port 17374
 bak session list-tabs --session-id $sessionId --rpc-ws-port 17374
 bak session get-active-tab --session-id $sessionId --rpc-ws-port 17374
 bak session set-active-tab --session-id $sessionId --tab-id 123 --rpc-ws-port 17374
 ```
+
+Without `--active`, `bak session open-tab` leaves the current session tab unchanged. That is useful for opening a background reference tab without unexpectedly redirecting later `bak page ...` or `bak element ...` commands.
 
 ## Direct Browser Tabs
 
@@ -76,8 +81,9 @@ bak page dom --session-id $sessionId --rpc-ws-port 17374
 bak page a11y --session-id $sessionId --rpc-ws-port 17374
 bak page metrics --session-id $sessionId --rpc-ws-port 17374
 bak page viewport --session-id $sessionId --rpc-ws-port 17374
-bak page eval --session-id $sessionId --expr "window.table_data?.length" --rpc-ws-port 17374
-bak page extract --session-id $sessionId --path "market_data.QQQ" --rpc-ws-port 17374
+bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "typeof table_data !== 'undefined' ? table_data.length : null" --rpc-ws-port 17374
+bak page extract --session-id $sessionId --path "market_data.QQQ.quotes.changePercent" --resolver auto --rpc-ws-port 17374
 bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
 bak page freshness --session-id $sessionId --rpc-ws-port 17374
 bak debug console --session-id $sessionId --limit 20 --rpc-ws-port 17374
@@ -86,7 +92,7 @@ bak network list --session-id $sessionId --limit 20 --rpc-ws-port 17374
 bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
 bak network wait --session-id $sessionId --url-includes "/api/save" --rpc-ws-port 17374
 bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
-bak network replay --session-id $sessionId --request-id req_123 --mode json --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
 bak network clear --session-id $sessionId --rpc-ws-port 17374
 ```
 
@@ -139,6 +145,8 @@ bak table rows --session-id $sessionId --table table-1 --all --max-rows 10000 --
 bak table export --session-id $sessionId --table table-1 --out .\table.json --rpc-ws-port 17374
 ```
 
+Use `bak inspect ...` first when you do not yet know whether the page data lives in globals, tables, or recent requests. `inspect page-data` surfaces candidate globals, tables, recent requests, and recommended next steps. `inspect live-updates` reports network cadence even when the page is not using an obvious interval timer. `page freshness` and `inspect freshness` help separate data timestamps from stale inline or UI hints.
+
 Use `bak inspect ...` for discovery and `bak capture ...` for offline artifacts:
 
 ```powershell
@@ -169,7 +177,7 @@ bak doctor --port 17373 --rpc-ws-port 17374
 $session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
 $sessionId = $session.sessionId
 bak session ensure --session-id $sessionId --rpc-ws-port 17374
-bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --active --rpc-ws-port 17374
 bak page wait --session-id $sessionId --mode text --value "Example Domain" --rpc-ws-port 17374
 bak element click --session-id $sessionId --css "a" --rpc-ws-port 17374
 bak debug dump-state --session-id $sessionId --include-snapshot --rpc-ws-port 17374
@@ -180,15 +188,16 @@ bak debug dump-state --session-id $sessionId --include-snapshot --rpc-ws-port 17
 When the visible page is incomplete, use the workflow below:
 
 ```powershell
-bak page extract --session-id $sessionId --path "table_data" --rpc-ws-port 17374
-bak page eval --session-id $sessionId --expr "window.market_data?.QQQ" --rpc-ws-port 17374
+bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak page extract --session-id $sessionId --path "market_data.QQQ.quotes.changePercent" --resolver auto --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
 bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
-bak network replay --session-id $sessionId --request-id req_123 --mode json --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
 bak table rows --session-id $sessionId --table table-1 --all --rpc-ws-port 17374
+bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374
 bak page freshness --session-id $sessionId --patterns "20\d{2}-\d{2}-\d{2}" "Today" "yesterday" --rpc-ws-port 17374
-bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
 bak capture snapshot --session-id $sessionId --out .\tradytics-session.json --rpc-ws-port 17374
 ```
 

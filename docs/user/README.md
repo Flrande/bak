@@ -1,14 +1,22 @@
 # User Docs
 
-Follow these pages in order when you are new to `bak`:
+Use these pages by job, not in bulk.
 
-1. [quickstart.md](./quickstart.md)
-2. [cli-guide.md](./cli-guide.md)
-3. [troubleshooting.md](./troubleshooting.md)
+## Install, Upgrade, Or Verify
 
-For agent-specific setup and prompt handoff:
+- [quickstart.md](./quickstart.md)
+
+`quickstart.md` is the only source of truth for installing the packages, loading the unpacked extension, upgrading it, and verifying the runtime with `bak doctor`.
+
+## Daily Use
+
+- [cli-guide.md](./cli-guide.md)
+
+## Recovery And Troubleshooting
+
+- [troubleshooting.md](./troubleshooting.md)
+
+## Hand This Repo To An Agent
 
 - [agent-prompts.md](./agent-prompts.md)
 - [../../skills/bak-browser-control/SKILL.md](../../skills/bak-browser-control/SKILL.md)
-
-Public terminology is `session` plus `tabs`: use `bak session ...` for agent-owned browser state and `bak tabs ...` for direct browser-wide tab control. Older `workspace` wording is obsolete.

@@ -1,7 +1,7 @@
 # Quickstart
 <!-- BAK_BOOTSTRAP_SCRIPT_URL: https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/agent-bootstrap.ps1 -->
 
-This is the fastest current setup path for `bak`.
+This is the single source of truth for installing, upgrading, and verifying `bak`.
 
 ## 1. Agent Bootstrap From This Guide
 
@@ -65,6 +65,8 @@ Join-Path (npm root -g) '@flrande\bak-extension\dist'
 7. Keep port `17373`.
 8. Click connect.
 
+If you later reinstall or upgrade `@flrande/bak-extension`, reload that unpacked extension from the extensions page before expecting the running browser to report the new version.
+
 ## 4. Verify The Runtime
 
 ```powershell
@@ -76,6 +78,14 @@ A healthy runtime reports:
 
 - `ok: true`
 - `extensionConnected: true`
+- no `versionCompatibility` warning in `summary.warningChecks`
+
+If `bak doctor` warns about `versionCompatibility`, update both packages and reload the unpacked extension:
+
+```powershell
+npm install -g @flrande/bak-cli @flrande/bak-extension
+bak doctor --port 17373 --rpc-ws-port 17374
+```
 
 ## 5. First Browser Action
 
@@ -83,27 +93,35 @@ A healthy runtime reports:
 $session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
 $sessionId = $session.sessionId
 bak session ensure --session-id $sessionId --rpc-ws-port 17374
-bak session open-tab --session-id $sessionId --url "https://example.com" --rpc-ws-port 17374
+bak session open-tab --session-id $sessionId --url "https://example.com" --active --rpc-ws-port 17374
 bak page title --session-id $sessionId --rpc-ws-port 17374
 bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 ```
 
-Use `bak session ...` for agent-owned tabs. Reach for `bak tabs ...` only when you need browser-wide inspection or manual recovery outside the session helpers. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
+Use `bak session ...` for agent-owned tabs. Reach for `bak tabs ...` only when you need browser-wide inspection or manual recovery outside the session helpers. `bak session open-tab` keeps the current default session tab unchanged unless you pass `--active` or later call `bak session set-active-tab`. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
+
+If you are done with install and only need day-to-day commands, continue with [cli-guide.md](./cli-guide.md). If you are handing `bak` to an agent, continue with [agent-prompts.md](./agent-prompts.md).
 
 ## 6. Dynamic Page Basics
 
-When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers:
+When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers in a fixed escalation order:
 
 ```powershell
-bak page extract --session-id $sessionId --path "table_data" --rpc-ws-port 17374
-bak page eval --session-id $sessionId --expr "window.market_data?.QQQ" --rpc-ws-port 17374
+bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak page extract --session-id $sessionId --path "table_data" --resolver auto --rpc-ws-port 17374
+bak page eval --session-id $sessionId --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
+bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --session-id $sessionId --include request response --rpc-ws-port 17374
-bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
 bak table list --session-id $sessionId --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table table-1 --all --rpc-ws-port 17374
 bak page freshness --session-id $sessionId --rpc-ws-port 17374
+bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374
 ```
 
-Add `--requires-confirm` to `bak page fetch` when the request can change remote state.
+`bak inspect page-data` returns likely globals, tables, recent requests, and `recommendedNextSteps`. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
+
+Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 
 ## 7. Minimal Fallback
 

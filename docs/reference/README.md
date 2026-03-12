@@ -1,12 +1,12 @@
 # Reference Docs
 
-This section points to low-change reference material and generated reports.
+This section is for low-change reference material. Do not start here if you are trying to install `bak` or onboard as a contributor.
 
 ## Canonical References
 
-- Protocol and CLI/RPC surface: [../PROTOCOL.md](../PROTOCOL.md)
-- Product behavior and architecture: [../TECH_SPEC.md](../TECH_SPEC.md)
-- Contributor overview: [../developer/README.md](../developer/README.md)
+- Protocol and public method surface: [../PROTOCOL.md](../PROTOCOL.md)
+- Product behavior and invariants: [../TECH_SPEC.md](../TECH_SPEC.md)
+- Contributor entrypoint: [../developer/README.md](../developer/README.md)
 
 ## Generated Reports
 

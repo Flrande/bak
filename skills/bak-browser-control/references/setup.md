@@ -1,42 +1,25 @@
 # Setup Reference
 
-Use this when the browser runtime is not paired or the user is starting from scratch.
+Use this page only when the agent must help a human recover or finish runtime setup.
 
-## Fastest Bootstrap
+## Canonical Human Setup Path
 
-Guide URL:
+Send the human to:
+
+- [../../../docs/user/quickstart.md](../../../docs/user/quickstart.md)
+
+Or, when a raw URL is required:
 
 ```text
 https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md
 ```
 
-Launcher:
+Do not restate the full install flow in agent output unless the user explicitly asks for it. The quickstart page is the only source of truth for package install, unpacked-extension load, upgrade, and verification.
 
-```powershell
-$quickstartUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/docs/user/quickstart.md'
-$launcherUrl = 'https://raw.githubusercontent.com/Flrande/bak/refs/heads/master/scripts/bootstrap/from-guide-url.ps1'
-$launcherPath = Join-Path $env:TEMP 'bak-bootstrap-from-guide.ps1'
-Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
-pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
-```
+## Agent-Specific Recovery Notes
 
-## Manual Setup
-
-```powershell
-npm install -g @flrande/bak-cli @flrande/bak-extension
-bak setup
-bak serve --port 17373 --rpc-ws-port 17374
-```
-
-Extension path:
-
-```powershell
-Join-Path (npm root -g) '@flrande\bak-extension\dist'
-```
-
-Verification:
-
-```powershell
-bak doctor --port 17373 --rpc-ws-port 17374
-bak tabs list --rpc-ws-port 17374
-```
+- Always re-check with `bak doctor --port 17373 --rpc-ws-port 17374`.
+- If `bak doctor` shows `versionCompatibility`, assume the browser may still be running an older unpacked extension build.
+- In that case, ask the human to reload `Browser Agent Kit` from `edge://extensions` or `chrome://extensions`, or restart the browser.
+- Wait for confirmation before continuing.
+- The runtime is fully aligned only when `bak doctor` shows `extensionConnected: true` and no `versionCompatibility` warning in `summary.warningChecks`.
