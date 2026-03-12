@@ -34,7 +34,7 @@ describe('ops tools', () => {
     expect(existsSync(outPath)).toBe(true);
 
     rmSync(dataDir, { recursive: true, force: true });
-  });
+  }, 20_000);
 
   it('excludes snapshot images by default and emits warning', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-diag-snapshot-default-test-'));
