@@ -34,6 +34,7 @@ import {
   type SessionBindingWindow,
   SessionBindingManager
 } from './session-binding.js';
+import { EXTENSION_VERSION } from './version.js';
 
 interface CliRequest {
   id: string;
@@ -2308,7 +2309,7 @@ async function connectWebSocket(): Promise<void> {
     ws?.send(JSON.stringify({
       type: 'hello',
       role: 'extension',
-      version: '0.6.1',
+      version: EXTENSION_VERSION,
       ts: Date.now()
     }));
   });

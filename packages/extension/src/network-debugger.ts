@@ -1,5 +1,6 @@
 import type { NetworkEntry } from '@flrande/bak-protocol';
 import { redactHeaderMap, redactTransportText } from './privacy.js';
+import { EXTENSION_VERSION } from './version.js';
 
 const DEBUGGER_VERSION = '1.3';
 const MAX_ENTRIES = 1000;
@@ -446,7 +447,7 @@ export function exportHar(tabId: number, limit = MAX_ENTRIES): Record<string, un
       version: '1.2',
       creator: {
         name: 'bak',
-        version: '0.6.1'
+        version: EXTENSION_VERSION
       },
       entries: entries.map((entry) => ({
         startedDateTime: new Date(entry.startedAt ?? entry.ts).toISOString(),
