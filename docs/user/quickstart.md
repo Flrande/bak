@@ -21,7 +21,7 @@ Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherPath
 pwsh -NoLogo -NoProfile -File $launcherPath -GuideUrl $quickstartUrl
 ```
 
-The launcher installs the CLI and extension packages, generates a pairing token, starts the daemon when needed, and writes `bootstrap-result.json` under the bak data directory. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`. Pass `-DataDir` to the bootstrap script if you want a different location.
+The launcher installs the CLI and extension packages, generates a pairing token, and writes `bootstrap-result.json` under the bak data directory. On Windows, the default location is `Join-Path $env:LOCALAPPDATA 'bak'`. Pass `-DataDir` to the bootstrap script if you want a different location. `bak` auto-starts the local runtime later when `bak doctor` or other CLI commands need it, unless you are intentionally running `bak serve` in the foreground for debugging.
 
 ## 2. Manual Setup
 
@@ -43,11 +43,15 @@ Create a pairing token:
 bak setup
 ```
 
-Start the daemon and keep it running:
+Prime the local runtime and confirm the expected ports:
 
 ```powershell
-bak serve --port 17373 --rpc-ws-port 17374
+bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
 ```
+
+`bak doctor` is the recommended first check. It auto-starts the local runtime when needed unless you are already running `bak serve` manually for debugging. Use `bak status` when you want to confirm whether the runtime is already up before continuing.
+At this stage, `bak doctor` can still show `extensionConnected: false` until you finish the extension load and popup connect steps below.
 
 ## 3. Load The Extension
 
@@ -71,6 +75,7 @@ If you later reinstall or upgrade `@flrande/bak-extension`, reload that unpacked
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
 bak tabs list --rpc-ws-port 17374
 ```
 
@@ -85,9 +90,32 @@ If `bak doctor` warns about `versionCompatibility`, update both packages and rel
 ```powershell
 npm install -g @flrande/bak-cli @flrande/bak-extension
 bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
 ```
 
-## 5. First Browser Action
+## 5. Runtime Lifecycle
+
+Use these commands when you need to inspect or reset the local runtime:
+
+```powershell
+bak status --port 17373 --rpc-ws-port 17374
+bak stop --port 17373 --rpc-ws-port 17374
+bak doctor --port 17373 --rpc-ws-port 17374
+```
+
+`bak stop` is useful when you want a clean restart or need to free the local ports. For normal use, do not keep `bak serve` running in a separate terminal. Let `bak doctor` or the next CLI command auto-start the runtime again.
+
+## 6. Advanced: Foreground Runtime Logs
+
+Run `bak serve` only when you need foreground logs or manual debugging:
+
+```powershell
+bak serve --port 17373 --rpc-ws-port 17374
+```
+
+This is an advanced path, not the normal setup flow.
+
+## 7. First Browser Action
 
 ```powershell
 $session = bak session create --client-name agent-a --rpc-ws-port 17374 | ConvertFrom-Json
@@ -102,7 +130,7 @@ Use `bak session ...` for agent-owned tabs. Reach for `bak tabs ...` only when y
 
 If you are done with install and only need day-to-day commands, continue with [cli-guide.md](./cli-guide.md). If you are handing `bak` to an agent, continue with [agent-prompts.md](./agent-prompts.md).
 
-## 6. Dynamic Page Basics
+## 8. Dynamic Page Basics
 
 When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers in a fixed escalation order:
 
@@ -123,7 +151,7 @@ bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374
 
 Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 
-## 7. Minimal Fallback
+## 9. Minimal Fallback
 
 If `bak` is not on `PATH` yet, use:
 

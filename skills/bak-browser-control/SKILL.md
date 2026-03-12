@@ -1,6 +1,6 @@
 ---
 name: bak-browser-control
-description: Use Browser Agent Kit (bak) to control a real Chromium browser through the bak CLI daemon and extension on Windows with PowerShell 7. Use when the user asks to use bak, Browser Agent Kit, or browser automation in this repo, and prefer bak commands over Playwright, Puppeteer, or Selenium.
+description: Use Browser Agent Kit (bak) to control a real Chromium browser through the auto-managed local bak runtime and extension on Windows with PowerShell 7. Use when the user asks to use bak, Browser Agent Kit, or browser automation in this repo, and prefer bak commands over Playwright, Puppeteer, or Selenium.
 ---
 
 # bak-browser-control
@@ -10,7 +10,9 @@ Use this skill when browser work should happen through `bak` instead of a direct
 ## Operating Rules
 
 - Use PowerShell 7 syntax and `bak` commands.
-- Run `bak doctor --port 17373 --rpc-ws-port 17374` before browser work.
+- Run `bak doctor --port 17373 --rpc-ws-port 17374` before browser work. It auto-starts the local runtime when needed unless the human is intentionally running `bak serve` for foreground debugging.
+- Use `bak status --port 17373 --rpc-ws-port 17374` when you need to inspect whether the runtime is already running, and use `bak stop --port 17373 --rpc-ws-port 17374` for clean restarts or when the human asks to stop it.
+- Do not ask the user to run `bak serve` as the normal setup path. Reserve it for advanced debugging or foreground logs.
 - If the runtime is not healthy, guide the user through setup and wait for confirmation before continuing.
 - If `bak doctor` shows CLI/extension version drift after an upgrade, assume the browser may still be running an older unpacked extension build. Ask the user to reload the unpacked extension or restart the browser and wait for confirmation.
 - Use public terminology `session` plus `tabs`. Do not instruct the user or another agent to use a `workspace` command namespace.
@@ -31,7 +33,7 @@ Use this skill when browser work should happen through `bak` instead of a direct
 
 ## Workflow
 
-1. Health-check the runtime.
+1. Health-check the runtime with `bak doctor`, and use `bak status` or `bak stop` only when you need to inspect or reset it.
 2. If needed, follow the setup flow in [references/setup.md](./references/setup.md).
 3. Create the session, ensure the dedicated session window, and open or target the correct tab inside that session.
 4. Use `bak session open-tab --active` when later session-scoped commands should move onto the new tab immediately.
@@ -59,5 +61,6 @@ Use this when page text or snapshots are not enough:
 - The extension still needs manual UI steps such as `Load unpacked`, token paste, or popup connect.
 - The unpacked extension files are updated on disk but `bak doctor` still reports the older `extensionVersion`; the browser needs a reload or restart before continuing.
 - `bak doctor` reports the runtime is not ready.
+- Recovery requires foreground runtime logs, so the user needs to switch intentionally onto the advanced `bak serve` debugging path.
 - A request would mutate server state and the user has not clearly authorized `--requires-confirm`.
 - The agent cannot confirm a critical page state after retries.

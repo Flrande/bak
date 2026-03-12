@@ -3,6 +3,7 @@ param(
   [int]$Port = 17373,
   [int]$RpcWsPort = 17374,
   [string]$DataDir = "",
+  [switch]$StartRuntime,
   [switch]$SkipDaemonStart,
   [switch]$OpenExtensionsPage
 )
@@ -43,6 +44,9 @@ $scriptArgs = @{
 }
 if ($DataDir) {
   $scriptArgs['DataDir'] = $DataDir
+}
+if ($StartRuntime) {
+  $scriptArgs['StartRuntime'] = $true
 }
 if ($SkipDaemonStart) {
   $scriptArgs['SkipDaemonStart'] = $true

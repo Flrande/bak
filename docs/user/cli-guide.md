@@ -2,7 +2,7 @@
 
 `bak` is the agent-facing entrypoint to the paired browser extension.
 
-This page assumes the runtime is already installed and healthy. If you still need install, upgrade, or extension reload steps, go back to [quickstart.md](./quickstart.md).
+This page assumes the runtime is already installed and healthy. If you still need install, upgrade, or extension reload steps, go back to [quickstart.md](./quickstart.md). In normal use, `bak` auto-starts the local runtime when needed.
 
 ## Command Map
 
@@ -16,6 +16,16 @@ This page assumes the runtime is already installed and healthy. If you still nee
 ## Start Every Session
 
 ```powershell
+bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
+```
+
+`bak doctor` is the recommended first check and auto-starts the local runtime when needed unless you are intentionally running `bak serve` in the foreground for debugging. Use `bak status` when you want to inspect whether the runtime is already up without changing your session flow.
+
+If you want a clean runtime restart:
+
+```powershell
+bak stop --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
@@ -169,6 +179,16 @@ bak call --method page.back --params "{}" --rpc-ws-port 17374
 bak call --method page.forward --params "{}" --rpc-ws-port 17374
 bak call --method page.scrollTo --params '{"x":0,"y":640}' --rpc-ws-port 17374
 ```
+
+## Advanced: Foreground Runtime Logs
+
+If you need manual debugging or foreground runtime logs, you can still run:
+
+```powershell
+bak serve --port 17373 --rpc-ws-port 17374
+```
+
+That is an advanced troubleshooting path, not the normal way to keep `bak` available.
 
 ## Daily Flow
 

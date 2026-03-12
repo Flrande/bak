@@ -1,6 +1,6 @@
 # Browser Agent Kit (`bak`)
 
-`bak` lets a human set up a real Chromium browser for an agent through a local CLI daemon, a paired extension, and explicit session-owned browser state.
+`bak` lets a human set up a real Chromium browser for an agent through an auto-managed local runtime, a paired extension, and explicit session-owned browser state.
 
 ## Start Here
 
@@ -19,7 +19,7 @@ If you are onboarding as a contributor:
 
 ## What You Should Read Next
 
-- Install, upgrade, and verify the runtime: [docs/user/quickstart.md](./docs/user/quickstart.md)
+- Install, upgrade, and verify the auto-managed runtime: [docs/user/quickstart.md](./docs/user/quickstart.md)
 - Learn the day-to-day CLI surface: [docs/user/cli-guide.md](./docs/user/cli-guide.md)
 - Recover from runtime or targeting problems: [docs/user/troubleshooting.md](./docs/user/troubleshooting.md)
 - Browse the full docs map: [docs/README.md](./docs/README.md)

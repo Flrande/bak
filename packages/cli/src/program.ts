@@ -16,11 +16,19 @@ import {
   parsePositiveInt
 } from './cli-args.js';
 import { PairingStore } from './pairing-store.js';
+import {
+  clearRuntimeState,
+  ensureRuntime,
+  resolveRuntimeLogPaths,
+  resolveRuntimePorts,
+  runtimeStatus,
+  stopRuntime,
+  writeRuntimeConfig,
+  writeRuntimeState
+} from './runtime-manager.js';
 import { startBakDaemon } from './server.js';
 import { readEnvInt } from './utils.js';
 
-const DEFAULT_PORT = readEnvInt('BAK_PORT', 17373);
-const DEFAULT_RPC_PORT = readEnvInt('BAK_RPC_WS_PORT', DEFAULT_PORT + 1);
 const DEFAULT_PAIR_TTL_DAYS = readEnvInt('BAK_PAIR_TTL_DAYS', 30);
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -35,12 +43,29 @@ function parseJson(value: string | undefined, fallback: Record<string, unknown> 
   return JSON.parse(value) as Record<string, unknown>;
 }
 
-function parseRpcPort(options: { rpcWsPort?: string }): number {
-  const port = parsePositiveInt(options.rpcWsPort ?? DEFAULT_RPC_PORT, 'rpc-ws-port');
-  if (port > 65535) {
-    throw new Error('rpc-ws-port must be <= 65535');
+type RuntimeOptionBag = {
+  dataDir?: unknown;
+  port?: unknown;
+  rpcWsPort?: unknown;
+};
+
+function normalizeDataDir(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
   }
-  return port;
+  return resolve(String(value));
+}
+
+function resolveRuntimeFromOptions(options: RuntimeOptionBag = {}) {
+  return resolveRuntimePorts({
+    dataDir: normalizeDataDir(options.dataDir),
+    port: options.port,
+    rpcWsPort: options.rpcWsPort
+  });
+}
+
+function parseRpcPort(options: RuntimeOptionBag): number {
+  return resolveRuntimeFromOptions(options).rpcWsPort;
 }
 
 function parseTabId(value: unknown): number | undefined {
@@ -146,12 +171,30 @@ function readCliVersion(): string {
   return '0.0.0';
 }
 
-async function invoke(method: string, params: Record<string, unknown>, rpcWsPort: number): Promise<void> {
-  printResult(await callRpc(method, params, rpcWsPort));
+async function invoke(method: string, params: Record<string, unknown>, runtimeOptions: number | RuntimeOptionBag): Promise<void> {
+  const resolution =
+    typeof runtimeOptions === 'number'
+      ? resolveRuntimeFromOptions({ rpcWsPort: runtimeOptions })
+      : resolveRuntimeFromOptions(runtimeOptions);
+  await ensureRuntime(resolution);
+  printResult(await callRpc(method, params, resolution.rpcWsPort));
+}
+
+async function callWithRuntime(
+  method: string,
+  params: Record<string, unknown>,
+  runtimeOptions: number | RuntimeOptionBag
+): Promise<unknown> {
+  const resolution =
+    typeof runtimeOptions === 'number'
+      ? resolveRuntimeFromOptions({ rpcWsPort: runtimeOptions })
+      : resolveRuntimeFromOptions(runtimeOptions);
+  await ensureRuntime(resolution);
+  return await callRpc(method, params, resolution.rpcWsPort);
 }
 
 function addRpcPortOption(command: Command): Command {
-  return command.option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`);
+  return command.option('--rpc-ws-port <port>', 'JSON-RPC websocket port');
 }
 
 function addTabOption(command: Command): Command {
@@ -243,13 +286,14 @@ program
 addStructuredHelp(program, {
   notes: [
     'All commands print machine-friendly JSON.',
+    'bak auto-starts the local runtime when a command needs it.',
     'Use --session-id for session-scoped commands and --tab-id to override a session tab.',
     'Create a session before using session, page, element, context, debug, network, keyboard, mouse, or file commands.',
     'Use bak call when the protocol exposes a method without a dedicated CLI command.'
   ],
   examples: [
     'bak setup',
-    'bak serve --port 17373 --rpc-ws-port 17374',
+    'bak status',
     'bak doctor --port 17373 --rpc-ws-port 17374',
     'bak session ensure --session-id session_123 --rpc-ws-port 17374',
     'bak page title --rpc-ws-port 17374'
@@ -259,16 +303,17 @@ addStructuredHelp(program, {
 addStructuredHelp(
   program
     .command('setup')
-    .summary('Create a pairing token and print the first-run commands')
-    .description('Create a pairing token and print the first-run commands for the daemon and health check')
-  .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
-  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
+    .summary('Create a pairing token and save the runtime ports')
+    .description('Create a pairing token, persist the runtime ports, and print the first-run health commands')
+  .option('--port <port>', 'extension websocket port')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
   .option('--ttl-days <days>', 'pair token lifetime in days', `${DEFAULT_PAIR_TTL_DAYS}`)
   .option('--json', 'print the setup payload as JSON', false),
   {
     notes: [
       'Run this first when pairing a browser profile with the local daemon.',
-      'The token from setup is what you paste into the extension popup.'
+      'The token from setup is what you paste into the extension popup.',
+      'bak auto-starts the local runtime when a later command needs it.'
     ],
     examples: [
       'bak setup',
@@ -279,19 +324,21 @@ addStructuredHelp(
 )
   .action((options) => {
     const ttlDays = parsePositiveInt(options.ttlDays, 'ttl-days');
-    const port = parsePositiveInt(options.port, 'port');
-    const rpcWsPort = parsePositiveInt(options.rpcWsPort, 'rpc-ws-port');
+    const runtime = resolveRuntimeFromOptions(options);
     const store = new PairingStore();
     const created = store.createToken({ ttlDays, reason: 'setup' });
+    writeRuntimeConfig(runtime, 'setup');
     const payload = {
       token: created.token,
       createdAt: created.createdAt,
       expiresAt: created.expiresAt,
-      port,
-      rpcWsPort,
+      port: runtime.port,
+      rpcWsPort: runtime.rpcWsPort,
       extensionDistPath: resolveExtensionDistPath(),
-      serveCommand: `bak serve --port ${port} --rpc-ws-port ${rpcWsPort}`,
-      doctorCommand: `bak doctor --port ${port} --rpc-ws-port ${rpcWsPort}`
+      autoStart: true,
+      serveCommand: `bak serve --port ${runtime.port} --rpc-ws-port ${runtime.rpcWsPort}`,
+      doctorCommand: `bak doctor --port ${runtime.port} --rpc-ws-port ${runtime.rpcWsPort}`,
+      statusCommand: `bak status --port ${runtime.port} --rpc-ws-port ${runtime.rpcWsPort}`
     };
     if (options.json === true) {
       printResult(payload);
@@ -300,22 +347,24 @@ addStructuredHelp(
     process.stdout.write('[bak] setup ready\n');
     process.stdout.write(`token: ${created.token}\n`);
     process.stdout.write(`token expires: ${created.expiresAt}\n`);
-    process.stdout.write(`serve: ${payload.serveCommand}\n`);
+    process.stdout.write(`runtime: bak auto-starts on the first command that needs it\n`);
     process.stdout.write(`doctor: ${payload.doctorCommand}\n`);
+    process.stdout.write(`status: ${payload.statusCommand}\n`);
   });
 
 addStructuredHelp(
   program
     .command('serve')
     .summary('Start the local daemon and RPC servers')
-    .description('Start the bak daemon with the extension bridge and JSON-RPC servers')
-  .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
-  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
+    .description('Start the bak daemon with the extension bridge and JSON-RPC servers in the foreground')
+  .option('--port <port>', 'extension websocket port')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
   .option('--pair', 'rotate a pairing token at startup and print it', false)
   .option('--pair-ttl-days <days>', 'pair token lifetime used with --pair', `${DEFAULT_PAIR_TTL_DAYS}`),
   {
     notes: [
-      'Leave this process running while the extension and agent are using bak.',
+      'Use this when you want a foreground runtime for debugging or intentional manual control.',
+      'Most users and agents should rely on bak auto-start instead of keeping serve open.',
       'Use --pair when you want serve to mint a fresh token at startup.'
     ],
     examples: [
@@ -325,8 +374,7 @@ addStructuredHelp(
   }
 )
   .action(async (options) => {
-    const port = parsePositiveInt(options.port, 'port');
-    const rpcWsPort = parsePositiveInt(options.rpcWsPort, 'rpc-ws-port');
+    const runtime = resolveRuntimeFromOptions(options);
     if (options.pair === true) {
       const ttlDays = parsePositiveInt(options.pairTtlDays, 'pair-ttl-days');
       const store = new PairingStore();
@@ -334,15 +382,33 @@ addStructuredHelp(
       process.stderr.write(`[bak] pair token: ${created.token}\n`);
       process.stderr.write(`[bak] pair token expires: ${created.expiresAt}\n`);
     }
-    const daemon = await startBakDaemon(port, rpcWsPort);
+    writeRuntimeConfig(runtime, 'serve');
+    const daemon = await startBakDaemon(runtime.port, runtime.rpcWsPort);
+    const managed = process.env.BAK_RUNTIME_MANAGED === '1';
+    const logPaths = managed ? resolveRuntimeLogPaths(runtime.dataDir) : { stdoutLogPath: null, stderrLogPath: null };
+    writeRuntimeState(runtime.dataDir, {
+      version: 1,
+      pid: process.pid,
+      managed,
+      mode: managed ? 'background' : 'foreground',
+      port: runtime.port,
+      rpcWsPort: runtime.rpcWsPort,
+      startedAt: new Date().toISOString(),
+      stdoutLogPath: logPaths.stdoutLogPath,
+      stderrLogPath: logPaths.stderrLogPath
+    });
     process.stderr.write(`bak daemon ready\n`);
-    process.stderr.write(`extension bridge: ws://127.0.0.1:${port}/extension\n`);
-    process.stderr.write(`rpc websocket: ws://127.0.0.1:${rpcWsPort}/rpc\n`);
+    process.stderr.write(`extension bridge: ws://127.0.0.1:${runtime.port}/extension\n`);
+    process.stderr.write(`rpc websocket: ws://127.0.0.1:${runtime.rpcWsPort}/rpc\n`);
     process.stderr.write(`stdio JSON-RPC enabled\n`);
     const shutdown = async (): Promise<void> => {
       await daemon.stop();
+      clearRuntimeState(runtime.dataDir);
       process.exit(0);
     };
+    process.on('exit', () => {
+      clearRuntimeState(runtime.dataDir);
+    });
     process.on('SIGINT', () => void shutdown());
     process.on('SIGTERM', () => void shutdown());
     setInterval(() => {
@@ -352,6 +418,38 @@ addStructuredHelp(
       );
     }, 15_000);
   });
+
+addStructuredHelp(
+  program
+    .command('status')
+    .summary('Show local runtime status')
+    .description('Inspect the managed bak runtime status without starting it')
+  .option('--port <port>', 'extension websocket port')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
+  .option('--data-dir <path>', 'override the data directory'),
+  {
+    notes: ['This command does not auto-start the runtime.'],
+    examples: ['bak status', 'bak status --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')']
+  }
+).action(async (options) => {
+  printResult(await runtimeStatus(resolveRuntimeFromOptions(options)));
+});
+
+addStructuredHelp(
+  program
+    .command('stop')
+    .summary('Stop the managed local runtime')
+    .description('Stop the auto-managed bak runtime and clear its metadata')
+  .option('--port <port>', 'extension websocket port')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
+  .option('--data-dir <path>', 'override the data directory'),
+  {
+    notes: ['This command only stops managed auto-start runtimes. Foreground serve sessions stay manual by design.'],
+    examples: ['bak stop', 'bak stop --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')']
+  }
+).action(async (options) => {
+  printResult(await stopRuntime(resolveRuntimeFromOptions(options)));
+});
 
 const pair = program
   .command('pair')
@@ -392,26 +490,33 @@ addStructuredHelp(
     .command('doctor')
     .summary('Check daemon, extension, and ports')
     .description('Run local diagnostics for the bak runtime, pairing state, and connectivity')
-  .option('--port <port>', 'extension websocket port', `${DEFAULT_PORT}`)
-  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port', `${DEFAULT_RPC_PORT}`)
-  .option('--data-dir <path>', 'override the data directory'),
+  .option('--port <port>', 'extension websocket port')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
+  .option('--data-dir <path>', 'override the data directory')
+  .option('--no-auto-start', 'skip runtime auto-start and run pure diagnostics'),
   {
     notes: [
       'Run doctor before browser work and again after any pairing or extension issue.',
+      'If the local runtime is not running yet, doctor starts it unless you pass --no-auto-start.',
       'The result highlights blocking errors separately from advisory warnings.'
     ],
     examples: [
       'bak doctor --port 17373 --rpc-ws-port 17374',
+      'bak doctor --no-auto-start',
       'bak doctor --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')'
     ]
   }
 )
   .action(async (options) => {
+    const runtime = resolveRuntimeFromOptions(options);
+    if (options.autoStart !== false) {
+      await ensureRuntime(runtime);
+    }
     printResult(
       await runDoctor({
-        port: parsePositiveInt(options.port, 'port'),
-        rpcWsPort: parsePositiveInt(options.rpcWsPort, 'rpc-ws-port'),
-        dataDir: options.dataDir ? resolve(String(options.dataDir)) : undefined
+        port: runtime.port,
+        rpcWsPort: runtime.rpcWsPort,
+        dataDir: runtime.dataDir
       })
     );
   });
@@ -1074,7 +1179,7 @@ addStructuredHelp(
     ]
   }
 ).action(async (options) => {
-  const result = await callRpc(
+  const result = await callWithRuntime(
     'table.export',
     {
       ...targetParams(options),
@@ -1162,7 +1267,7 @@ addStructuredHelp(
     ]
   }
 ).action(async (options) => {
-  const result = await callRpc(
+  const result = await callWithRuntime(
     'capture.snapshot',
     {
       ...targetParams(options),
@@ -1197,7 +1302,7 @@ addStructuredHelp(
     ]
   }
 ).action(async (options) => {
-  const result = await callRpc(
+  const result = await callWithRuntime(
     'capture.har',
     {
       ...targetParams(options),
@@ -1402,8 +1507,8 @@ addStructuredHelp(
     .description('Export a redacted diagnostic zip package with traces, doctor output, and optional snapshots')
   .option('--trace-id <traceId>', 'include only a single trace and snapshot set')
   .option('--trace <traceId>', 'deprecated alias for --trace-id')
-  .option('--port <port>', 'extension websocket port for doctor snapshot', `${DEFAULT_PORT}`)
-  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port for doctor snapshot', `${DEFAULT_RPC_PORT}`)
+  .option('--port <port>', 'extension websocket port for doctor snapshot')
+  .option('--rpc-ws-port <port>', 'JSON-RPC websocket port for doctor snapshot')
   .option('--include-snapshots', 'include raw snapshot image folders (may contain sensitive visual data)', false)
   .option('--data-dir <path>', 'override the data directory')
   .option('--out <path>', 'output zip path'),
@@ -1416,16 +1521,16 @@ addStructuredHelp(
 )
   .action(async (options) => {
     const traceId = options.traceId ? String(options.traceId) : options.trace ? String(options.trace) : undefined;
-    const dataDir = options.dataDir ? resolve(String(options.dataDir)) : undefined;
+    const runtime = resolveRuntimeFromOptions(options);
     const doctorReport = await runDoctor({
-      dataDir,
-      port: parsePositiveInt(options.port, 'port'),
-      rpcWsPort: parsePositiveInt(options.rpcWsPort, 'rpc-ws-port')
+      dataDir: runtime.dataDir,
+      port: runtime.port,
+      rpcWsPort: runtime.rpcWsPort
     });
     printResult(
       exportDiagnosticZip({
         traceId,
-        dataDir,
+        dataDir: runtime.dataDir,
         outPath: options.out ? resolve(String(options.out)) : undefined,
         doctorReport,
         includeSnapshots: options.includeSnapshots === true

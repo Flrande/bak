@@ -6,7 +6,10 @@ Use this page only after the install and upgrade flow in [quickstart.md](./quick
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
 ```
+
+`bak doctor` is still the recommended first check. It auto-starts the local runtime when needed unless you are intentionally running `bak serve` yourself for foreground debugging.
 
 Check:
 
@@ -22,10 +25,11 @@ Symptoms:
 
 Actions:
 
-1. Confirm `bak serve --port 17373 --rpc-ws-port 17374` is still running.
-2. Open the extension popup and reconnect with the current token and port `17373`.
-3. If needed, mint a fresh token with `bak setup`.
-4. Run `bak doctor` again.
+1. Run `bak status --port 17373 --rpc-ws-port 17374` to see whether the local runtime is already up on the expected ports.
+2. If needed, re-run `bak doctor --port 17373 --rpc-ws-port 17374` to auto-start the local runtime again.
+3. Open the extension popup and reconnect with the current token and port `17373`.
+4. If needed, mint a fresh token with `bak setup`.
+5. Run `bak doctor` again.
 
 ## CLI / Extension Version Drift After Upgrade
 
@@ -51,9 +55,11 @@ Symptoms:
 
 Actions:
 
-1. Restart the daemon with explicit ports.
-2. Pass the same `--rpc-ws-port` on every CLI command.
-3. Re-run `bak doctor`.
+1. Check the current runtime state with `bak status --port 17373 --rpc-ws-port 17374`.
+2. Stop the local runtime with `bak stop --port 17373 --rpc-ws-port 17374`.
+3. Re-run `bak doctor --port 17373 --rpc-ws-port 17374` to auto-start a clean runtime.
+4. Pass the same `--rpc-ws-port` on every CLI command.
+5. If the RPC socket is still unreachable and you need foreground logs, run `bak serve --port 17373 --rpc-ws-port 17374` manually in a separate PowerShell 7 window and retry the failing command.
 
 ## Wrong Tab Or Session Target
 

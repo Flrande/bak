@@ -2,6 +2,7 @@ param(
   [int]$Port = 17373,
   [int]$RpcWsPort = 17374,
   [string]$DataDir = "",
+  [switch]$StartRuntime,
   [switch]$SkipDaemonStart,
   [switch]$OpenExtensionsPage
 )
@@ -146,8 +147,10 @@ try {
       port = $Port
       rpcWsPort = $RpcWsPort
       extensionDistPath = $null
+      autoStart = $true
       serveCommand = "$bakCmd serve --port $Port --rpc-ws-port $RpcWsPort"
       doctorCommand = "$bakCmd doctor --port $Port --rpc-ws-port $RpcWsPort"
+      statusCommand = "$bakCmd status --port $Port --rpc-ws-port $RpcWsPort"
     }
   }
 
@@ -159,12 +162,15 @@ try {
 
   $daemonPid = $null
   $daemonStarted = $false
-  $logDir = Join-Path $resolvedDataDir 'bootstrap-logs'
-  New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-  $stdoutLog = Join-Path $logDir 'daemon-stdout.log'
-  $stderrLog = Join-Path $logDir 'daemon-stderr.log'
+  $stdoutLog = $null
+  $stderrLog = $null
+  $shouldStartRuntime = $StartRuntime.IsPresent -and -not $SkipDaemonStart.IsPresent
 
-  if (-not $SkipDaemonStart) {
+  if ($shouldStartRuntime) {
+    $logDir = Join-Path $resolvedDataDir 'bootstrap-logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $stdoutLog = Join-Path $logDir 'daemon-stdout.log'
+    $stderrLog = Join-Path $logDir 'daemon-stderr.log'
     if (Test-TcpPort -HostName '127.0.0.1' -Port $RpcWsPort -TimeoutMs 400) {
       Write-Host "[bak-bootstrap] Daemon already running on rpc port $RpcWsPort."
       $daemonStarted = $true
@@ -215,7 +221,8 @@ try {
     nextSteps = @(
       "Load unpacked extension path: $extensionDistPath",
       "Open extension popup and set token + port $Port",
-      "Run health check: $bakCmd doctor --port $Port --rpc-ws-port $RpcWsPort"
+      "Run health check: $bakCmd doctor --port $Port --rpc-ws-port $RpcWsPort",
+      "Inspect runtime state when needed: $bakCmd status --port $Port --rpc-ws-port $RpcWsPort"
     )
   }
 

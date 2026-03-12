@@ -1,5 +1,21 @@
 # Command Recipes
 
+## Runtime Lifecycle
+
+```powershell
+bak doctor --port 17373 --rpc-ws-port 17374
+bak status --port 17373 --rpc-ws-port 17374
+bak stop --port 17373 --rpc-ws-port 17374
+```
+
+`bak doctor` is the default first check and auto-starts the local runtime when needed. Use `bak status` when you only need to inspect whether it is already up, and use `bak stop` when you want a clean restart.
+
+If you need foreground logs or manual debugging, switch intentionally to:
+
+```powershell
+bak serve --port 17373 --rpc-ws-port 17374
+```
+
 ## Session And Targeting
 
 ```powershell

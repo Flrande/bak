@@ -6,3 +6,4 @@ export * from './gc.js';
 export * from './policy.js';
 export * from './doctor.js';
 export * from './diagnostic-export.js';
+export * from './runtime-manager.js';
