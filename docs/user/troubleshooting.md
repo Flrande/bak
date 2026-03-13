@@ -27,9 +27,10 @@ Actions:
 
 1. Run `bak status --port 17373 --rpc-ws-port 17374` to see whether the local runtime is already up on the expected ports.
 2. If needed, re-run `bak doctor --port 17373 --rpc-ws-port 17374` to auto-start the local runtime again.
-3. Open the extension popup and reconnect with the current token and port `17373`.
+3. Open the extension popup, confirm the current token and port `17373`, and click `Save settings` if you changed either value.
 4. If needed, mint a fresh token with `bak setup`.
-5. Run `bak doctor` again.
+5. If the popup still does not show a connected state, open `Advanced bridge controls` and click `Reconnect bridge`.
+6. Run `bak doctor` again.
 
 ## CLI / Extension Version Drift After Upgrade
 
@@ -44,8 +45,9 @@ Actions:
 1. Confirm the unpacked extension path is still `Join-Path (npm root -g) '@flrande\bak-extension\dist'`.
 2. Open `edge://extensions` or `chrome://extensions`.
 3. Click `Reload` on `Browser Agent Kit`, or restart the browser if you prefer.
-4. Open the popup again if needed and reconnect with the same token and port.
-5. Re-run `bak doctor` and confirm the `versionCompatibility` warning is gone.
+4. Open the popup again if needed, confirm the same token and port, and click `Save settings` if you changed either value.
+5. If the popup still does not show a connected state, open `Advanced bridge controls` and click `Reconnect bridge`.
+6. Re-run `bak doctor` and confirm the `versionCompatibility` warning is gone.
 
 ## RPC Not Reachable
 

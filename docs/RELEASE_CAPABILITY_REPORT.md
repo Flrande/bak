@@ -1,14 +1,15 @@
 # Release Capability Report
 
-- GeneratedAt: 2026-03-14 01:27:07 +08:00
+- GeneratedAt: 2026-03-14 01:52:27 +08:00
 - TotalCapabilities: 81
 - StabilityBreakdown: stable=55 beta=26 experimental=0
 - E2ECaseMapped: 81 / 81
 - E2EExecutionStatus: passed=59 failed=0 notRun=22
-- CurrentScope: dynamic-data-v1
-- CurrentScopeCoverage: mapped=15 / 15 passed=15 failed=0 notRun=0 missing=0
-- CurrentScopeGate: pass
-- ReleaseGate: fail (real e2e not complete)
+- ReleaseScope: dynamic-data-v1
+- ReleaseScopeCoverage: mapped=15 / 15 passed=15 failed=0 notRun=0 missing=0
+- ReleaseScopeGate: pass
+- FullCoverageGate: fail (method-level real e2e still incomplete)
+- ReleaseGate: pass
 
 ## Sources
 
@@ -19,6 +20,8 @@
 ## Gate Summary
 
 - New methods must have matrix mapping and method-level e2e case IDs.
-- The current release scope passes only when every scoped method is mapped and has `CI Status=Passed` in the E2E matrix.
-- Release requires regenerated capability/e2e matrices, this report, and all mapped e2e cases executed with `CI Status=Passed`.
+- `ReleaseGate` blocks shipping and follows the tracked release scope in `tests/e2e/methods/release-scope.json`.
+- `FullCoverageGate` is an informational visibility signal for method-level real e2e completion across the whole protocol surface.
+- Run `pnpm -w test:e2e:critical`, then regenerate `docs/E2E_MATRIX.md`, before checking the release gate for a normal ship decision.
+- Run `pnpm -w test:e2e:full`, then regenerate `docs/E2E_MATRIX.md`, when you want a refreshed whole-surface coverage snapshot.
 

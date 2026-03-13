@@ -20,14 +20,20 @@ pnpm -w lint
 pnpm -w test:unit
 pnpm -w test:e2e:critical
 pnpm -w e2e:matrix
-pnpm -w release:report
+pnpm -w release:gate
 ```
 
-Nightly full gate:
+`release:gate` is the blocking ship decision. It follows the tracked release scope, not whole-surface method coverage.
+
+Whole-surface coverage refresh:
 
 ```powershell
 pnpm -w test:e2e:full
+pnpm -w e2e:matrix
+pnpm -w release:report
 ```
+
+`release:report` is informational and keeps `docs/RELEASE_CAPABILITY_REPORT.md` updated with both the blocking release gate and the non-blocking full-coverage signal.
 
 ## Compatibility matrix (current)
 

@@ -18,6 +18,7 @@
     "test:e2e:full": "pwsh -NoLogo -NoProfile -File scripts/e2e/reset-method-status.ps1 && pnpm build && playwright test --reporter=line --output=test-results",
     "e2e:matrix": "pwsh -NoLogo -NoProfile -File scripts/e2e/generate-matrix.ps1",
     "release:report": "pwsh -NoLogo -NoProfile -File scripts/release/generate-capability-report.ps1",
+    "release:gate": "pwsh -NoLogo -NoProfile -File scripts/release/generate-capability-report.ps1 -FailOnReleaseGate",
     "release:publish": "pnpm --filter @flrande/bak-protocol publish --access public --no-git-checks && pnpm --filter @flrande/bak-cli publish --access public --no-git-checks && pnpm --filter @flrande/bak-extension publish --access public --no-git-checks"
   },
   "devDependencies": {

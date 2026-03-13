@@ -26,14 +26,25 @@ pnpm -w lint
 pnpm -w test:unit
 pnpm -w test:e2e:critical
 pnpm -w e2e:matrix
-pnpm -w release:report
+pnpm -w release:gate
 ```
 
-Full regression run:
+`release:gate` is the blocking ship decision. It regenerates `docs/RELEASE_CAPABILITY_REPORT.md` and fails only when the tracked release scope is not fully mapped and passing in the current E2E matrix snapshot.
+
+## Full Regression Visibility
+
+Run this when you want a refreshed whole-surface coverage snapshot:
 
 ```powershell
 pnpm -w test:e2e:full
+pnpm -w e2e:matrix
+pnpm -w release:report
 ```
+
+`release:report` is informational. It keeps the report up to date and shows both:
+
+- `ReleaseGate`: the blocking ship gate for the tracked release scope
+- `FullCoverageGate`: the non-blocking method-level real e2e completion signal across the whole protocol surface
 
 ## Generated Artifacts
 
@@ -47,3 +58,5 @@ Keep these output paths stable because scripts write to them directly:
 
 - `scripts/e2e/generate-matrix.ps1`
 - `scripts/release/generate-capability-report.ps1`
+
+The E2E matrix and release report always reflect the latest `test-results/method-status.json` snapshot. In practice, that means the last e2e suite you ran determines which methods appear as `Passed` versus `NotRun`.

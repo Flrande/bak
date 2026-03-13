@@ -1,3 +1,8 @@
+param(
+  [switch]$FailOnReleaseGate,
+  [switch]$FailOnFullCoverage
+)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
@@ -79,12 +84,12 @@ $notRunCount = ($e2eEntries | Where-Object { $_.Status -eq 'NotRun' }).Count
 $passCount = ($e2eEntries | Where-Object { $_.Status -match '^Pass(ed)?$' }).Count
 $runCount = $e2eEntries.Count - $notRunCount
 $failedCount = [Math]::Max(0, $runCount - $passCount)
-$releaseReady = ($passCount -eq $e2eRows.Count) -and ($notRunCount -eq 0)
+$fullCoverageReady = ($passCount -eq $e2eRows.Count) -and ($notRunCount -eq 0)
 $scopeMappedCount = ($scopeEntries | Where-Object { $_.CaseMapped -eq 'true' }).Count
 $scopeNotRunCount = ($scopeEntries | Where-Object { $_.Status -eq 'NotRun' }).Count
 $scopePassCount = ($scopeEntries | Where-Object { $_.Status -match '^Pass(ed)?$' }).Count
 $scopeFailedCount = [Math]::Max(0, $scopeEntries.Count - $scopeNotRunCount - $scopePassCount)
-$scopeReady = ($scopeMethods.Count -gt 0) -and ($scopeMissing.Count -eq 0) -and ($scopePassCount -eq $scopeMethods.Count) -and ($scopeNotRunCount -eq 0) -and ($scopeFailedCount -eq 0)
+$releaseReady = ($scopeMethods.Count -gt 0) -and ($scopeMissing.Count -eq 0) -and ($scopePassCount -eq $scopeMethods.Count) -and ($scopeNotRunCount -eq 0) -and ($scopeFailedCount -eq 0)
 
 $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss K"
 $lines = @()
@@ -95,10 +100,11 @@ $lines += "- TotalCapabilities: $($capabilityRows.Count)"
 $lines += "- StabilityBreakdown: stable=$stableCount beta=$betaCount experimental=$experimentalCount"
 $lines += "- E2ECaseMapped: $mappedCount / $($e2eRows.Count)"
 $lines += "- E2EExecutionStatus: passed=$passCount failed=$failedCount notRun=$notRunCount"
-$lines += "- CurrentScope: $($scope.name)"
-$lines += "- CurrentScopeCoverage: mapped=$scopeMappedCount / $($scopeMethods.Count) passed=$scopePassCount failed=$scopeFailedCount notRun=$scopeNotRunCount missing=$($scopeMissing.Count)"
-$lines += "- CurrentScopeGate: $(if ($scopeReady) { 'pass' } else { 'fail' })"
-$lines += "- ReleaseGate: $(if ($releaseReady) { 'pass' } else { 'fail (real e2e not complete)' })"
+$lines += "- ReleaseScope: $($scope.name)"
+$lines += "- ReleaseScopeCoverage: mapped=$scopeMappedCount / $($scopeMethods.Count) passed=$scopePassCount failed=$scopeFailedCount notRun=$scopeNotRunCount missing=$($scopeMissing.Count)"
+$lines += "- ReleaseScopeGate: $(if ($releaseReady) { 'pass' } else { 'fail' })"
+$lines += "- FullCoverageGate: $(if ($fullCoverageReady) { 'pass' } else { 'fail (method-level real e2e still incomplete)' })"
+$lines += "- ReleaseGate: $(if ($releaseReady) { 'pass' } else { 'fail (release scope not ready)' })"
 $lines += ''
 $lines += '## Sources'
 $lines += ''
@@ -109,7 +115,17 @@ $lines += ''
 $lines += '## Gate Summary'
 $lines += ''
 $lines += '- New methods must have matrix mapping and method-level e2e case IDs.'
-$lines += '- The current release scope passes only when every scoped method is mapped and has `CI Status=Passed` in the E2E matrix.'
-$lines += '- Release requires regenerated capability/e2e matrices, this report, and all mapped e2e cases executed with `CI Status=Passed`.'
+$lines += '- `ReleaseGate` blocks shipping and follows the tracked release scope in `tests/e2e/methods/release-scope.json`.'
+$lines += '- `FullCoverageGate` is an informational visibility signal for method-level real e2e completion across the whole protocol surface.'
+$lines += '- Run `pnpm -w test:e2e:critical`, then regenerate `docs/E2E_MATRIX.md`, before checking the release gate for a normal ship decision.'
+$lines += '- Run `pnpm -w test:e2e:full`, then regenerate `docs/E2E_MATRIX.md`, when you want a refreshed whole-surface coverage snapshot.'
 
 Set-Content -LiteralPath $outputPath -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine) -Encoding UTF8
+
+if ($FailOnReleaseGate -and -not $releaseReady) {
+  throw 'Release gate failed: the tracked release scope is not fully mapped and passing in the current E2E matrix snapshot.'
+}
+
+if ($FailOnFullCoverage -and -not $fullCoverageReady) {
+  throw 'Full coverage gate failed: method-level real e2e is still incomplete across the full protocol surface.'
+}

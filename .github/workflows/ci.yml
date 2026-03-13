@@ -41,8 +41,8 @@ jobs:
         env:
           BAK_ENFORCE_E2E_COVERAGE: "1"
         run: pnpm -w e2e:matrix
-      - name: Generate Release Capability Report
-        run: pnpm -w release:report
+      - name: Generate Release Capability Report And Check Release Gate
+        run: pnpm -w release:gate
       - name: Upload E2E artifacts
         if: always()
         uses: actions/upload-artifact@v6

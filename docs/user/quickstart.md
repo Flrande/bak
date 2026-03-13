@@ -51,7 +51,7 @@ bak status --port 17373 --rpc-ws-port 17374
 ```
 
 `bak doctor` is the recommended first check. It auto-starts the local runtime when needed unless you are already running `bak serve` manually for debugging. Use `bak status` when you want to confirm whether the runtime is already up before continuing.
-At this stage, `bak doctor` can still show `extensionConnected: false` until you finish the extension load and popup connect steps below.
+At this stage, `bak doctor` can still show `extensionConnected: false` until you finish the extension load and popup setup steps below.
 
 ## 3. Load The Extension
 
@@ -67,7 +67,8 @@ Join-Path (npm root -g) '@flrande\bak-extension\dist'
 5. Open the extension popup.
 6. Paste the token from `bak setup` or the bootstrap result.
 7. Keep port `17373`.
-8. Click connect.
+8. Click `Save settings`.
+9. If the popup still does not show a connected state, open `Advanced bridge controls` and click `Reconnect bridge`.
 
 If you later reinstall or upgrade `@flrande/bak-extension`, reload that unpacked extension from the extensions page before expecting the running browser to report the new version.
 

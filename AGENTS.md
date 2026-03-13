@@ -21,8 +21,21 @@ pnpm -w typecheck
 pnpm -w lint
 pnpm -w test:unit
 pnpm -w test:e2e:critical
+pnpm -w e2e:matrix
+pnpm -w release:gate
+```
+
+`release:gate` is the blocking ship decision. It regenerates `docs/RELEASE_CAPABILITY_REPORT.md` and fails when the tracked release scope in `tests/e2e/methods/release-scope.json` is not fully mapped and passing in the current E2E matrix snapshot.
+
+If you want a refreshed whole-surface coverage snapshot before or after a release, run:
+
+```powershell
+pnpm -w test:e2e:full
+pnpm -w e2e:matrix
 pnpm -w release:report
 ```
+
+`release:report` is informational. It reports both the blocking release-scope gate and the non-blocking full method-level coverage signal.
 
 5. Publish the npm packages only after the gates pass.
 

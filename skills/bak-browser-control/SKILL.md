@@ -61,7 +61,7 @@ Use this when page text or snapshots are not enough:
 
 ## When To Stop
 
-- The extension still needs manual UI steps such as `Load unpacked`, token paste, or popup connect.
+- The extension still needs manual UI steps such as `Load unpacked`, token paste plus `Save settings`, or `Reconnect bridge`.
 - The unpacked extension files are updated on disk but `bak doctor` still reports the older `extensionVersion`; the browser needs a reload or restart before continuing.
 - `bak doctor` reports the runtime is not ready.
 - Recovery requires foreground runtime logs, so the user needs to switch intentionally onto the advanced `bak serve` debugging path.
