@@ -567,6 +567,9 @@ export async function createHarness(): Promise<E2EHarness> {
 
     const disconnectBridge = async (): Promise<void> => {
       await withPopup(async (popup) => {
+        await popup.locator('#advancedPanel').evaluate((element) => {
+          (element as HTMLDetailsElement).open = true;
+        });
         await popup.click('#disconnect');
       });
       await expect

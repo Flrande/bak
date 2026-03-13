@@ -54,6 +54,9 @@
         gap: 8px;
         margin-top: 12px;
       }
+      .row[hidden] {
+        display: none;
+      }
       button {
         flex: 1;
         border: none;
@@ -61,6 +64,10 @@
         padding: 8px;
         font-size: 12px;
         cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
       }
       #save {
         background: #0f172a;
@@ -78,6 +85,12 @@
         margin-top: 10px;
         font-size: 12px;
         font-weight: 600;
+      }
+      #statusNote {
+        margin-top: 4px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #475569;
       }
       .panel {
         margin-top: 12px;
@@ -120,6 +133,30 @@
         font-size: 11px;
         color: #334155;
       }
+      .hint.compact {
+        margin-top: 8px;
+      }
+      details.panel {
+        padding-bottom: 12px;
+      }
+      details.panel summary {
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        list-style: none;
+      }
+      details.panel summary::-webkit-details-marker {
+        display: none;
+      }
+      details.panel summary::after {
+        content: "Show";
+        float: right;
+        font-size: 11px;
+        color: #64748b;
+      }
+      details.panel[open] summary::after {
+        content: "Hide";
+      }
     </style>
   </head>
   <body>
@@ -136,14 +173,11 @@
       <input id="debugRichText" type="checkbox" />
       <span class="toggle-text">Allow richer text capture for debugging (still redacted, off by default)</span>
     </label>
-    <div class="row">
-      <button id="save">Save & Connect</button>
-      <button id="reconnect">Reconnect</button>
-    </div>
-    <div class="row">
-      <button id="disconnect">Disconnect</button>
-    </div>
     <div id="status">Checking...</div>
+    <div id="statusNote">The extension reconnects automatically when the local bak runtime wakes up.</div>
+    <div class="row" id="saveRow" hidden>
+      <button id="save">Save settings</button>
+    </div>
     <div class="panel">
       <h2>Connection</h2>
       <dl class="meta-grid">
@@ -171,6 +205,14 @@
       </dl>
       <ul id="sessionList"></ul>
     </div>
+    <details class="panel" id="advancedPanel">
+      <summary>Advanced bridge controls</summary>
+      <div class="hint compact">These controls are only for debugging the extension bridge. Normal browser work should start from the bak CLI.</div>
+      <div class="row">
+        <button id="reconnect">Reconnect bridge</button>
+        <button id="disconnect">Disconnect bridge</button>
+      </div>
+    </details>
     <div class="hint">Extension only connects to ws://127.0.0.1</div>
     <script src="./popup.global.js"></script>
   </body>

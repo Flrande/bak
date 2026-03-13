@@ -1,8 +1,10 @@
 const statusEl = document.getElementById('status') as HTMLDivElement;
+const statusNoteEl = document.getElementById('statusNote') as HTMLDivElement;
 const tokenInput = document.getElementById('token') as HTMLInputElement;
 const portInput = document.getElementById('port') as HTMLInputElement;
 const debugRichTextInput = document.getElementById('debugRichText') as HTMLInputElement;
 const saveBtn = document.getElementById('save') as HTMLButtonElement;
+const saveRowEl = document.getElementById('saveRow') as HTMLDivElement;
 const reconnectBtn = document.getElementById('reconnect') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement;
 const connectionStateEl = document.getElementById('connectionState') as HTMLDivElement;
@@ -50,9 +52,25 @@ interface PopupState {
 }
 let latestState: PopupState | null = null;
 
-function setStatus(text: string, bad = false): void {
+function setStatus(text: string, tone: 'neutral' | 'success' | 'warning' | 'error' = 'neutral'): void {
   statusEl.textContent = text;
-  statusEl.style.color = bad ? '#dc2626' : '#0f172a';
+  if (tone === 'success') {
+    statusEl.style.color = '#166534';
+    return;
+  }
+  if (tone === 'warning') {
+    statusEl.style.color = '#b45309';
+    return;
+  }
+  if (tone === 'error') {
+    statusEl.style.color = '#dc2626';
+    return;
+  }
+  statusEl.style.color = '#0f172a';
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function formatTimeAgo(at: number | null): string {
@@ -75,7 +93,11 @@ function formatTimeAgo(at: number | null): string {
 }
 
 function renderSessionBindings(state: PopupState['sessionBindings']): void {
-  sessionSummaryEl.textContent = `${state.count} sessions, ${state.attachedCount} attached, ${state.tabCount} tabs, ${state.detachedCount} detached`;
+  if (state.count === 0) {
+    sessionSummaryEl.textContent = 'No remembered sessions';
+  } else {
+    sessionSummaryEl.textContent = `${pluralize(state.count, 'session')}, ${pluralize(state.attachedCount, 'attached binding')}, ${pluralize(state.tabCount, 'tab')}, ${pluralize(state.detachedCount, 'detached binding')}`;
+  }
   sessionListEl.replaceChildren();
   for (const item of state.items) {
     const li = document.createElement('li');
@@ -89,8 +111,26 @@ function renderSessionBindings(state: PopupState['sessionBindings']): void {
   }
 }
 
+function describeConnectionState(connectionState: PopupState['connectionState']): string {
+  switch (connectionState) {
+    case 'connected':
+      return 'connected';
+    case 'connecting':
+      return 'waiting for runtime';
+    case 'reconnecting':
+      return 'retrying connection';
+    case 'manual':
+      return 'manually disconnected';
+    case 'missing-token':
+      return 'token required';
+    case 'disconnected':
+    default:
+      return 'disconnected';
+  }
+}
+
 function renderConnectionDetails(state: PopupState): void {
-  connectionStateEl.textContent = state.connectionState;
+  connectionStateEl.textContent = describeConnectionState(state.connectionState);
   tokenStateEl.textContent = state.hasToken ? 'configured' : 'missing';
   connectionUrlEl.textContent = state.wsUrl;
   extensionVersionEl.textContent = state.extensionVersion;
@@ -120,42 +160,130 @@ function renderConnectionDetails(state: PopupState): void {
   }
 }
 
+function parsePortValue(): number | null {
+  const port = Number.parseInt(portInput.value.trim(), 10);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+function isFormDirty(state: PopupState | null): boolean {
+  if (!state) {
+    return tokenInput.value.trim().length > 0;
+  }
+  return (
+    tokenInput.value.trim().length > 0 ||
+    portInput.value.trim() !== String(state.port) ||
+    debugRichTextInput.checked !== Boolean(state.debugRichText)
+  );
+}
+
+function getConfigValidationMessage(state: PopupState | null): string | null {
+  if (!tokenInput.value.trim() && state?.hasToken !== true) {
+    return 'Pair token is required';
+  }
+  if (parsePortValue() === null) {
+    return 'Port is invalid';
+  }
+  return null;
+}
+
+function updateSaveState(state: PopupState | null): void {
+  const dirty = isFormDirty(state);
+  const validationError = getConfigValidationMessage(state);
+  saveRowEl.hidden = !dirty;
+  saveBtn.disabled = !dirty || validationError !== null;
+  saveBtn.textContent = state?.hasToken ? 'Save settings' : 'Save token';
+}
+
+function describeStatus(state: PopupState): { text: string; note: string; tone: 'neutral' | 'success' | 'warning' | 'error' } {
+  const combinedError = `${state.lastErrorContext ?? ''} ${state.lastError ?? ''}`.toLowerCase();
+  const runtimeOffline = combinedError.includes('cannot connect to bak cli');
+
+  if (state.connected) {
+    return {
+      text: 'Connected to local bak runtime',
+      note: 'Use the bak CLI to start browser work. This popup is mainly for status and configuration.',
+      tone: 'success'
+    };
+  }
+
+  if (state.connectionState === 'missing-token') {
+    return {
+      text: 'Pair token is required',
+      note: 'Paste a token once, then save it. Future reconnects happen automatically.',
+      tone: 'error'
+    };
+  }
+
+  if (state.connectionState === 'manual') {
+    return {
+      text: 'Extension bridge is paused',
+      note: 'Normal browser work starts from the bak CLI. Open Advanced only if you need to reconnect manually.',
+      tone: 'warning'
+    };
+  }
+
+  if (runtimeOffline) {
+    return {
+      text: 'Waiting for local bak runtime',
+      note: 'Run any bak command, such as `bak doctor`, and the extension will reconnect automatically.',
+      tone: 'warning'
+    };
+  }
+
+  if (state.connectionState === 'reconnecting') {
+    return {
+      text: 'Trying to reconnect',
+      note: 'The extension is retrying in the background. You usually do not need to press anything here.',
+      tone: 'warning'
+    };
+  }
+
+  if (state.lastError) {
+    return {
+      text: 'Connection problem',
+      note: 'Check the last error below. The extension keeps retrying automatically unless you disconnect it manually.',
+      tone: 'error'
+    };
+  }
+
+  return {
+    text: 'Not connected yet',
+    note: 'Once the local bak runtime is available, the extension reconnects automatically.',
+    tone: 'neutral'
+  };
+}
+
 async function refreshState(): Promise<void> {
   const state = (await chrome.runtime.sendMessage({ type: 'bak.getState' })) as PopupState;
 
   if (state.ok) {
+    const shouldSyncForm = !isFormDirty(latestState);
     latestState = state;
-    portInput.value = String(state.port);
-    debugRichTextInput.checked = Boolean(state.debugRichText);
+    if (shouldSyncForm) {
+      portInput.value = String(state.port);
+      debugRichTextInput.checked = Boolean(state.debugRichText);
+      tokenInput.value = '';
+    }
     renderConnectionDetails(state);
     renderSessionBindings(state.sessionBindings);
-    if (state.connected) {
-      setStatus('Connected to bak CLI');
-    } else if (state.connectionState === 'missing-token') {
-      setStatus('Pair token is required', true);
-    } else if (state.connectionState === 'manual') {
-      setStatus('Disconnected manually');
-    } else if (state.connectionState === 'reconnecting') {
-      setStatus('Reconnecting to bak CLI', true);
-    } else if (state.lastError) {
-      setStatus(`Disconnected: ${state.lastError}`, true);
-    } else {
-      setStatus('Disconnected');
-    }
+    updateSaveState(state);
+    const status = describeStatus(state);
+    setStatus(status.text, status.tone);
+    statusNoteEl.textContent = status.note;
   }
 }
 
 saveBtn.addEventListener('click', async () => {
   const token = tokenInput.value.trim();
-  const port = Number.parseInt(portInput.value.trim(), 10);
+  const port = parsePortValue();
 
   if (!token && latestState?.hasToken !== true) {
-    setStatus('Pair token is required', true);
+    setStatus('Pair token is required', 'error');
     return;
   }
 
-  if (!Number.isInteger(port) || port <= 0) {
-    setStatus('Port is invalid', true);
+  if (port === null) {
+    setStatus('Port is invalid', 'error');
     return;
   }
 
@@ -179,6 +307,15 @@ disconnectBtn.addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'bak.disconnect' });
   await refreshState();
 });
+
+for (const element of [tokenInput, portInput, debugRichTextInput]) {
+  element.addEventListener('input', () => {
+    updateSaveState(latestState);
+  });
+  element.addEventListener('change', () => {
+    updateSaveState(latestState);
+  });
+}
 
 void refreshState();
 const refreshInterval = window.setInterval(() => {
