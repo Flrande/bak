@@ -7,6 +7,7 @@ import {
   readRuntimeConfig,
   readRuntimeState,
   resolveRuntimePorts,
+  runtimeStatus,
   stopRuntime,
   writeRuntimeConfig,
   writeRuntimeState
@@ -142,6 +143,35 @@ describe('runtime manager', () => {
       expect(result.cleanedStaleMetadata).toBe(true);
       expect(readRuntimeState(dataDir)).toBeNull();
       clearRuntimeState(dataDir);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports degraded health when the pid is alive but rpc is unreachable', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-runtime-status-degraded-'));
+    try {
+      writeRuntimeState(dataDir, {
+        version: 1,
+        pid: process.pid,
+        managed: true,
+        mode: 'background',
+        port: 30173,
+        rpcWsPort: 30174,
+        startedAt: new Date().toISOString(),
+        stdoutLogPath: join(dataDir, 'runtime-logs', 'daemon-stdout.log'),
+        stderrLogPath: join(dataDir, 'runtime-logs', 'daemon-stderr.log')
+      });
+
+      const status = await runtimeStatus(resolveRuntimePorts({ dataDir, port: '30173', rpcWsPort: '30174' }));
+
+      expect(status).toMatchObject({
+        running: true,
+        rpcReachable: false,
+        health: 'degraded',
+        managed: true,
+        pid: process.pid
+      });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

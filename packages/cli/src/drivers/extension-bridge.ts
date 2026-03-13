@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { URL } from 'node:url';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { PairingStore } from '../pairing-store.js';
+import { stopHttpServer, stopWebSocketServer } from '../ws-shutdown.js';
 
 interface BridgeRequest {
   id: string;
@@ -180,14 +181,8 @@ export class ExtensionBridge {
 
   async stop(): Promise<void> {
     this.rejectAllPending(new BridgeError('E_NOT_READY', 'bridge stopping'));
-
-    await new Promise<void>((resolve) => {
-      this.wss?.close(() => resolve());
-    });
-
-    await new Promise<void>((resolve) => {
-      this.server?.close(() => resolve());
-    });
+    await stopWebSocketServer(this.wss);
+    await stopHttpServer(this.server);
 
     this.wss = null;
     this.server = null;

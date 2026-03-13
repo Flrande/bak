@@ -388,6 +388,7 @@ export class BakService {
 
   private runtimeInfo(): MethodResult<'runtime.info'> {
     const connection = this.effectiveConnection();
+    const activeSessions = this.sessions.list().map((session) => cloneDescriptor(session));
     return {
       paired: Boolean(this.pairingStore.getToken()),
       extensionConnected: connection.extensionConnected,
@@ -401,6 +402,8 @@ export class BakService {
       staleAfterMs: this.heartbeatStaleAfterMs,
       lastSeenTs: connection.raw.lastSeenTs,
       lastHeartbeatTs: connection.raw.lastHeartbeatTs,
+      bridgeConnectedAtTs: connection.raw.connectedAtTs,
+      bridgeDisconnectedAtTs: connection.raw.disconnectedAtTs,
       bridgePendingRequests: connection.raw.pendingRequests,
       bridgeLastError: connection.raw.lastError,
       bridgeTotalRequests: connection.raw.totalRequests,
@@ -408,7 +411,10 @@ export class BakService {
       bridgeTotalTimeouts: connection.raw.totalTimeouts,
       bridgeTotalNotReady: connection.raw.totalNotReady,
       capabilityCount: SUPPORTED_METHODS.size,
-      activeSessionCount: this.sessions.list().length
+      managedRuntime: this.managedRuntime,
+      idleStopArmed: this.idleStopArmed,
+      activeSessionCount: activeSessions.length,
+      activeSessions
     };
   }
 
@@ -887,7 +893,7 @@ export class BakService {
     }
     const browser = event.browser;
     if (!browser || !Array.isArray(browser.tabIds) || browser.tabIds.length === 0) {
-      await this.closeSessionInternal(event.bindingId, { closeBinding: true });
+      await this.closeSessionInternal(event.bindingId, { closeBinding: false });
       return;
     }
     this.sessions.syncBinding(event.bindingId, {
@@ -1136,7 +1142,7 @@ export class BakService {
           if (result.browser && result.browser.tabIds.length > 0) {
             this.syncSessionBrowserState(sessionId, result.browser);
           } else {
-            await this.closeSessionInternal(sessionId, { closeBinding: true });
+            await this.closeSessionInternal(sessionId, { closeBinding: false });
           }
           return { ok: true } as MethodResult<TMethod>;
         });
@@ -1289,7 +1295,7 @@ export class BakService {
               browser: this.hydrateSessionBrowserState(sessionId, result.browser)
             } as MethodResult<TMethod>;
           }
-          await this.closeSessionInternal(sessionId, { closeBinding: true });
+          await this.closeSessionInternal(sessionId, { closeBinding: false });
           return {
             closed: true,
             closedTabId: result.closedTabId,

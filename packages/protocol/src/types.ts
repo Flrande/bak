@@ -343,6 +343,8 @@ export interface RuntimeInfoResult {
   staleAfterMs: number;
   lastSeenTs: number | null;
   lastHeartbeatTs: number | null;
+  bridgeConnectedAtTs: number | null;
+  bridgeDisconnectedAtTs: number | null;
   bridgePendingRequests: number;
   bridgeLastError: string | null;
   bridgeTotalRequests: number;
@@ -350,7 +352,10 @@ export interface RuntimeInfoResult {
   bridgeTotalTimeouts: number;
   bridgeTotalNotReady: number;
   capabilityCount: number;
+  managedRuntime: boolean;
+  idleStopArmed: boolean;
   activeSessionCount: number;
+  activeSessions: SessionDescriptor[];
 }
 
 export interface SessionContextSnapshot {

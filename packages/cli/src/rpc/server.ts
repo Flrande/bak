@@ -3,6 +3,7 @@ import * as readline from 'node:readline';
 import { BakErrorCode, fail, ok, type JsonRpcId, parseJsonRpcLine, RpcError } from '@flrande/bak-protocol';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { BakService } from '../service.js';
+import { stopHttpServer, stopWebSocketServer } from '../ws-shutdown.js';
 
 function toRpcFailure(id: JsonRpcId, error: unknown) {
   if (error instanceof RpcError && error.bakCode) {
@@ -90,13 +91,8 @@ export class RpcServer {
   }
 
   async stop(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.wss?.close(() => resolve());
-    });
-
-    await new Promise<void>((resolve) => {
-      this.wsServer?.close(() => resolve());
-    });
+    await stopWebSocketServer(this.wss);
+    await stopHttpServer(this.wsServer);
 
     this.wss = null;
     this.wsServer = null;

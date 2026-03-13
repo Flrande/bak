@@ -29,6 +29,16 @@ async function getFreePort(): Promise<number> {
   });
 }
 
+async function portIsBusy(port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const socket = createServer();
+    socket.once('error', () => resolve(true));
+    socket.listen(port, '127.0.0.1', () => {
+      socket.close(() => resolve(false));
+    });
+  });
+}
+
 describe('ExtensionBridge reliability', () => {
   it('fails fast with E_NOT_READY when not connected', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'bak-bridge-notready-'));
@@ -116,6 +126,34 @@ describe('ExtensionBridge reliability', () => {
       client.once('close', () => resolve());
     });
     await bridge.stop();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('stops cleanly even when the extension socket is still open', async () => {
+    const port = await getFreePort();
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-bridge-stop-open-socket-'));
+    const store = new PairingStore(dataDir);
+    const created = store.createToken();
+    const token = created.token;
+    const bridge = new ExtensionBridge(port, store);
+    await bridge.start();
+
+    const client = new WebSocket(`ws://127.0.0.1:${port}/extension?token=${token}`);
+    await new Promise<void>((resolve, reject) => {
+      client.once('open', () => resolve());
+      client.once('error', reject);
+    });
+
+    await expect(bridge.stop()).resolves.toBeUndefined();
+
+    await new Promise<void>((resolve) => {
+      if (client.readyState === WebSocket.CLOSED) {
+        resolve();
+        return;
+      }
+      client.once('close', () => resolve());
+    });
+    await expect(portIsBusy(port)).resolves.toBe(false);
     rmSync(dataDir, { recursive: true, force: true });
   });
 });

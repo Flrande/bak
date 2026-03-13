@@ -62,6 +62,8 @@ export interface RuntimePortResolution {
 
 export interface RuntimeStatus {
   running: boolean;
+  rpcReachable: boolean;
+  health: 'healthy' | 'degraded' | 'stopped';
   managed: boolean;
   mode: 'background' | 'foreground' | null;
   pid: number | null;
@@ -564,10 +566,13 @@ export async function runtimeStatus(resolution: RuntimePortResolution): Promise<
   const info = await probeRuntimeInfo(resolution.rpcWsPort);
   const pidRunning = state ? isProcessRunning(state.pid) : false;
   const running = Boolean(info) || pidRunning;
+  const rpcReachable = Boolean(info);
   const staleMetadata = Boolean(state) && !pidRunning;
 
   return {
     running,
+    rpcReachable,
+    health: info ? 'healthy' : running ? 'degraded' : 'stopped',
     managed: state?.managed ?? false,
     mode: state?.mode ?? null,
     pid: state?.pid ?? null,

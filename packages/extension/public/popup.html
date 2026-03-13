@@ -70,9 +70,50 @@
         background: #e2e8f0;
         color: #0f172a;
       }
+      #reconnect {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
       #status {
         margin-top: 10px;
         font-size: 12px;
+        font-weight: 600;
+      }
+      .panel {
+        margin-top: 12px;
+        padding: 10px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.8);
+      }
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 12px;
+      }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 10px;
+        font-size: 11px;
+      }
+      .meta-grid dt {
+        color: #475569;
+      }
+      .meta-grid dd {
+        margin: 0;
+        color: #0f172a;
+        word-break: break-word;
+      }
+      #sessionList {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 11px;
+        color: #0f172a;
+      }
+      #sessionList:empty::before {
+        content: "No tracked sessions";
+        color: #64748b;
+        margin-left: -16px;
       }
       .hint {
         margin-top: 10px;
@@ -85,7 +126,7 @@
     <h1>Browser Agent Kit</h1>
     <label>
       Pair token
-      <input id="token" placeholder="paste token from `bak pair`" />
+      <input id="token" placeholder="paste token from `bak pair` or leave blank to keep the saved token" />
     </label>
     <label>
       CLI port
@@ -97,9 +138,39 @@
     </label>
     <div class="row">
       <button id="save">Save & Connect</button>
+      <button id="reconnect">Reconnect</button>
+    </div>
+    <div class="row">
       <button id="disconnect">Disconnect</button>
     </div>
     <div id="status">Checking...</div>
+    <div class="panel">
+      <h2>Connection</h2>
+      <dl class="meta-grid">
+        <dt>State</dt>
+        <dd id="connectionState">-</dd>
+        <dt>Token</dt>
+        <dd id="tokenState">-</dd>
+        <dt>Reconnect</dt>
+        <dd id="reconnectState">-</dd>
+        <dt>CLI URL</dt>
+        <dd id="connectionUrl">-</dd>
+        <dt>Last error</dt>
+        <dd id="lastError">-</dd>
+        <dt>Last binding</dt>
+        <dd id="lastBindingUpdate">-</dd>
+        <dt>Extension</dt>
+        <dd id="extensionVersion">-</dd>
+      </dl>
+    </div>
+    <div class="panel">
+      <h2>Sessions</h2>
+      <dl class="meta-grid">
+        <dt>Tracked</dt>
+        <dd id="sessionSummary">-</dd>
+      </dl>
+      <ul id="sessionList"></ul>
+    </div>
     <div class="hint">Extension only connects to ws://127.0.0.1</div>
     <script src="./popup.global.js"></script>
   </body>

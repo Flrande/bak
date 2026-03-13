@@ -647,8 +647,8 @@ describe('session binding manager', () => {
     expect(ensured.binding.label).toBe('agent-a');
   });
 
-  it('closes only the requested tab and empties the binding when the last tab is removed', async () => {
-    const { manager } = await createManager();
+  it('closes only the requested tab and deletes the binding when the last tab is removed', async () => {
+    const { manager, storage } = await createManager();
     const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: true, focus: false });
     const second = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/b', active: true, focus: false });
 
@@ -658,8 +658,8 @@ describe('session binding manager', () => {
 
     const emptied = await manager.closeTab(BINDING_ID, first.tab.id);
     expect(emptied.closedTabId).toBe(first.tab.id);
-    expect(emptied.binding?.tabIds).toEqual([]);
-    expect(emptied.binding?.windowId).toBeNull();
+    expect(emptied.binding).toBeNull();
+    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
   });
 });
 

@@ -451,22 +451,9 @@ class SessionBindingManager {
     const remainingTabIds = ensured.binding.tabIds.filter((candidate) => candidate !== resolvedTabId);
 
     if (remainingTabIds.length === 0) {
-      const emptied: SessionBindingRecord = {
-        id: ensured.binding.id,
-        label: ensured.binding.label,
-        color: ensured.binding.color,
-        windowId: null,
-        groupId: null,
-        tabIds: [],
-        activeTabId: null,
-        primaryTabId: null
-      };
-      await this.storage.save(emptied);
+      await this.storage.delete(ensured.binding.id);
       return {
-        binding: {
-          ...emptied,
-          tabs: []
-        },
+        binding: null,
         closedTabId: resolvedTabId
       };
     }

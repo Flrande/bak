@@ -65,6 +65,42 @@ interface RuntimeErrorDetails {
   at: number;
 }
 
+interface PopupSessionBindingSummary {
+  id: string;
+  label: string;
+  tabCount: number;
+  activeTabId: number | null;
+  windowId: number | null;
+  groupId: number | null;
+  detached: boolean;
+}
+
+interface PopupState {
+  ok: true;
+  connected: boolean;
+  connectionState: 'connected' | 'connecting' | 'reconnecting' | 'disconnected' | 'manual' | 'missing-token';
+  hasToken: boolean;
+  port: number;
+  wsUrl: string;
+  debugRichText: boolean;
+  lastError: string | null;
+  lastErrorAt: number | null;
+  lastErrorContext: RuntimeErrorDetails['context'] | null;
+  reconnectAttempt: number;
+  nextReconnectInMs: number | null;
+  manualDisconnect: boolean;
+  extensionVersion: string;
+  lastBindingUpdateAt: number | null;
+  lastBindingUpdateReason: string | null;
+  sessionBindings: {
+    count: number;
+    attachedCount: number;
+    detachedCount: number;
+    tabCount: number;
+    items: PopupSessionBindingSummary[];
+  };
+}
+
 const DEFAULT_PORT = 17373;
 const STORAGE_KEY_TOKEN = 'pairToken';
 const STORAGE_KEY_PORT = 'cliPort';
@@ -112,11 +148,14 @@ const REPLAY_FORBIDDEN_HEADER_NAMES = new Set([
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let nextReconnectInMs: number | null = null;
+let nextReconnectAt: number | null = null;
 let reconnectAttempt = 0;
 let lastError: RuntimeErrorDetails | null = null;
 let manualDisconnect = false;
 let sessionBindingStateMutationQueue: Promise<void> = Promise.resolve();
 let preserveHumanFocusDepth = 0;
+let lastBindingUpdateAt: number | null = null;
+let lastBindingUpdateReason: string | null = null;
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -157,6 +196,7 @@ function clearReconnectTimer(): void {
     reconnectTimer = null;
   }
   nextReconnectInMs = null;
+  nextReconnectAt = null;
 }
 
 function sendResponse(payload: CliResponse): void {
@@ -268,6 +308,68 @@ async function listSessionBindingStates(): Promise<SessionBindingRecord[]> {
   return Object.values(await loadSessionBindingStateMap());
 }
 
+function summarizeSessionBindings(states: SessionBindingRecord[]): PopupState['sessionBindings'] {
+  const items = states.map((state) => {
+    const detached = state.windowId === null || state.tabIds.length === 0;
+    return {
+      id: state.id,
+      label: state.label,
+      tabCount: state.tabIds.length,
+      activeTabId: state.activeTabId,
+      windowId: state.windowId,
+      groupId: state.groupId,
+      detached
+    } satisfies PopupSessionBindingSummary;
+  });
+  return {
+    count: items.length,
+    attachedCount: items.filter((item) => !item.detached).length,
+    detachedCount: items.filter((item) => item.detached).length,
+    tabCount: items.reduce((sum, item) => sum + item.tabCount, 0),
+    items
+  };
+}
+
+async function buildPopupState(): Promise<PopupState> {
+  const config = await getConfig();
+  const sessionBindings = summarizeSessionBindings(await listSessionBindingStates());
+  const reconnectRemainingMs = nextReconnectAt === null ? null : Math.max(0, nextReconnectAt - Date.now());
+  let connectionState: PopupState['connectionState'];
+  if (!config.token) {
+    connectionState = 'missing-token';
+  } else if (ws?.readyState === WebSocket.OPEN) {
+    connectionState = 'connected';
+  } else if (ws?.readyState === WebSocket.CONNECTING) {
+    connectionState = 'connecting';
+  } else if (manualDisconnect) {
+    connectionState = 'manual';
+  } else if (nextReconnectInMs !== null) {
+    connectionState = 'reconnecting';
+  } else {
+    connectionState = 'disconnected';
+  }
+
+  return {
+    ok: true,
+    connected: ws?.readyState === WebSocket.OPEN,
+    connectionState,
+    hasToken: Boolean(config.token),
+    port: config.port,
+    wsUrl: `ws://127.0.0.1:${config.port}/extension`,
+    debugRichText: config.debugRichText,
+    lastError: lastError?.message ?? null,
+    lastErrorAt: lastError?.at ?? null,
+    lastErrorContext: lastError?.context ?? null,
+    reconnectAttempt,
+    nextReconnectInMs: reconnectRemainingMs,
+    manualDisconnect,
+    extensionVersion: EXTENSION_VERSION,
+    lastBindingUpdateAt,
+    lastBindingUpdateReason,
+    sessionBindings
+  };
+}
+
 async function saveSessionBindingState(state: SessionBindingRecord): Promise<void> {
   await mutateSessionBindingStateMap((stateMap) => {
     stateMap[state.id] = state;
@@ -299,6 +401,8 @@ function emitSessionBindingUpdated(
   state: SessionBindingRecord | null,
   extras: Record<string, unknown> = {}
 ): void {
+  lastBindingUpdateAt = Date.now();
+  lastBindingUpdateReason = reason;
   sendEvent('sessionBinding.updated', {
     bindingId,
     reason,
@@ -2339,9 +2443,11 @@ function scheduleReconnect(reason: string): void {
   const delayMs = computeReconnectDelayMs(reconnectAttempt);
   reconnectAttempt += 1;
   nextReconnectInMs = delayMs;
+  nextReconnectAt = Date.now() + delayMs;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     nextReconnectInMs = null;
+    nextReconnectAt = null;
     void connectWebSocket();
   }, delayMs) as unknown as number;
 
@@ -2367,13 +2473,17 @@ async function connectWebSocket(): Promise<void> {
   }
 
   const url = `ws://127.0.0.1:${config.port}/extension?token=${encodeURIComponent(config.token)}`;
-  ws = new WebSocket(url);
+  const socket = new WebSocket(url);
+  ws = socket;
 
-  ws.addEventListener('open', () => {
+  socket.addEventListener('open', () => {
+    if (ws !== socket) {
+      return;
+    }
     manualDisconnect = false;
     reconnectAttempt = 0;
     lastError = null;
-    ws?.send(JSON.stringify({
+    socket.send(JSON.stringify({
       type: 'hello',
       role: 'extension',
       version: EXTENSION_VERSION,
@@ -2381,7 +2491,7 @@ async function connectWebSocket(): Promise<void> {
     }));
   });
 
-  ws.addEventListener('message', (event) => {
+  socket.addEventListener('message', (event) => {
     try {
       const request = JSON.parse(String(event.data)) as CliRequest;
       if (!request.id || !request.method) {
@@ -2405,26 +2515,37 @@ async function connectWebSocket(): Promise<void> {
     }
   });
 
-  ws.addEventListener('close', () => {
+  socket.addEventListener('close', () => {
+    if (ws !== socket) {
+      return;
+    }
     ws = null;
     scheduleReconnect('socket-closed');
   });
 
-  ws.addEventListener('error', () => {
+  socket.addEventListener('error', () => {
+    if (ws !== socket) {
+      return;
+    }
     setRuntimeError('Cannot connect to bak cli', 'socket');
-    ws?.close();
+    socket.close();
   });
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   dropNetworkCapture(tabId);
   void mutateSessionBindingStateMap((stateMap) => {
-    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
+    const updates: Array<{ bindingId: string; state: SessionBindingRecord | null }> = [];
     for (const [bindingId, state] of Object.entries(stateMap)) {
       if (!state.tabIds.includes(tabId)) {
         continue;
       }
       const nextTabIds = state.tabIds.filter((id) => id !== tabId);
+      if (nextTabIds.length === 0) {
+        delete stateMap[bindingId];
+        updates.push({ bindingId, state: null });
+        continue;
+      }
       const fallbackTabId = nextTabIds[0] ?? null;
       const nextState: SessionBindingRecord = {
         ...state,
@@ -2482,21 +2603,13 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 
 chrome.windows.onRemoved.addListener((windowId) => {
   void mutateSessionBindingStateMap((stateMap) => {
-    const updates: Array<{ bindingId: string; state: SessionBindingRecord }> = [];
+    const updates: Array<{ bindingId: string; state: SessionBindingRecord | null }> = [];
     for (const [bindingId, state] of Object.entries(stateMap)) {
       if (state.windowId !== windowId) {
         continue;
       }
-      const nextState: SessionBindingRecord = {
-        ...state,
-        windowId: null,
-        groupId: null,
-        tabIds: [],
-        activeTabId: null,
-        primaryTabId: null
-      };
-      stateMap[bindingId] = nextState;
-      updates.push({ bindingId, state: nextState });
+      delete stateMap[bindingId];
+      updates.push({ bindingId, state: null });
     }
     return updates;
   }).then((updates) => {
@@ -2519,8 +2632,9 @@ void connectWebSocket();
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'bak.updateConfig') {
     manualDisconnect = false;
+    const token = typeof message.token === 'string' ? message.token.trim() : '';
     void setConfig({
-      token: message.token,
+      ...(token ? { token } : {}),
       port: Number(message.port ?? DEFAULT_PORT),
       debugRichText: message.debugRichText === true
     }).then(() => {
@@ -2531,19 +2645,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'bak.getState') {
-    void getConfig().then((config) => {
-      sendResponse({
-        ok: true,
-        connected: ws?.readyState === WebSocket.OPEN,
-        hasToken: Boolean(config.token),
-        port: config.port,
-        debugRichText: config.debugRichText,
-        lastError: lastError?.message ?? null,
-        lastErrorAt: lastError?.at ?? null,
-        lastErrorContext: lastError?.context ?? null,
-        reconnectAttempt,
-        nextReconnectInMs
-      });
+    void buildPopupState().then((state) => {
+      sendResponse(state);
     });
     return true;
   }
@@ -2552,10 +2655,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     manualDisconnect = true;
     clearReconnectTimer();
     reconnectAttempt = 0;
+    lastError = null;
     ws?.close();
     ws = null;
     sendResponse({ ok: true });
     return false;
+  }
+
+  if (message?.type === 'bak.reconnectNow') {
+    manualDisconnect = false;
+    clearReconnectTimer();
+    reconnectAttempt = 0;
+    ws?.close();
+    ws = null;
+    void connectWebSocket().then(() => sendResponse({ ok: true }));
+    return true;
   }
 
   return false;

@@ -703,7 +703,7 @@ describe('service runtime session bindings', () => {
       bakCode: BakErrorCode.E_NOT_FOUND
     });
     expect(onManagedIdle).toHaveBeenCalledTimes(1);
-    expect(driver.sessionBindingCloseCalls).toBe(1);
+    expect(driver.sessionBindingCloseCalls).toBe(0);
   });
 
   it('does not trigger managed idle stop before any session has existed', async () => {
@@ -731,5 +731,34 @@ describe('service runtime session bindings', () => {
     await waitForAsyncTurn();
 
     expect(onManagedIdle).not.toHaveBeenCalled();
+  });
+
+  it('closes the session from a binding update without issuing a second binding close', async () => {
+    const driver = new FakeDriver();
+    const onManagedIdle = vi.fn();
+    const service = createService(driver, {
+      managedRuntime: true,
+      onManagedIdle
+    });
+
+    const created = await service.invoke('session.create', { clientName: 'agent-a' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    service.handleBridgeEvent({
+      event: 'sessionBinding.updated',
+      data: {
+        bindingId: created.sessionId,
+        reason: 'tab-removed',
+        browser: null,
+        closedTabId: 101
+      }
+    });
+    await waitForAsyncTurn();
+
+    await expect(service.invoke('session.info', { sessionId: created.sessionId })).rejects.toMatchObject({
+      bakCode: BakErrorCode.E_NOT_FOUND
+    });
+    expect(driver.sessionBindingCloseCalls).toBe(0);
+    expect(onManagedIdle).toHaveBeenCalledTimes(1);
   });
 });
