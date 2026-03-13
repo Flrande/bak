@@ -882,6 +882,7 @@ class SessionBindingManager {
     const candidateWindowIds: number[] = [];
     const peerTabIds = new Set<number>();
     const peerGroupIds = new Set<number>();
+    const reusablePeerIds = new Set<string>();
     const pushWindowId = (windowId: number | null | undefined): void => {
       if (typeof windowId !== 'number') {
         return;
@@ -893,11 +894,21 @@ class SessionBindingManager {
     };
 
     for (const peer of peers) {
-      pushWindowId(peer.windowId);
-      if (peer.groupId !== null) {
-        peerGroupIds.add(peer.groupId);
-        const group = await this.waitForGroup(peer.groupId, 300);
-        pushWindowId(group?.windowId);
+      if (peer.groupId === null) {
+        continue;
+      }
+      const group = await this.waitForGroup(peer.groupId, 300);
+      if (!group) {
+        continue;
+      }
+      reusablePeerIds.add(peer.id);
+      peerGroupIds.add(group.id);
+      pushWindowId(group.windowId);
+    }
+
+    for (const peer of peers) {
+      if (!reusablePeerIds.has(peer.id)) {
+        continue;
       }
       const trackedTabIds = this.collectCandidateTabIds(peer);
       for (const trackedTabId of trackedTabIds) {
@@ -905,7 +916,9 @@ class SessionBindingManager {
       }
       const trackedTabs = await this.readLooseTrackedTabs(trackedTabIds);
       for (const tab of trackedTabs) {
-        pushWindowId(tab.windowId);
+        if (tab.groupId !== null && peerGroupIds.has(tab.groupId)) {
+          pushWindowId(tab.windowId);
+        }
       }
     }
 

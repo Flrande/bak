@@ -645,6 +645,69 @@ describe('session binding manager', () => {
     expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
   });
 
+  it('does not reuse a stale peer window that lacks a live binding group', async () => {
+    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
+      const humanPrimary = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
+      const humanSecondary = await seedBrowser.createTab({
+        windowId: humanWindow.id,
+        url: 'https://human.local/watchlist',
+        active: false
+      });
+      await seedStorage.save({
+        id: BINDING_ID_B,
+        label: 'bak agent',
+        color: 'blue',
+        windowId: humanWindow.id,
+        groupId: null,
+        tabIds: [humanPrimary.id, humanSecondary.id],
+        activeTabId: humanPrimary.id,
+        primaryTabId: humanPrimary.id
+      });
+    });
+
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
+
+    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/isolated', active: false, focus: false });
+
+    expect(opened.binding.windowId).not.toBe(humanWindowId);
+    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
+    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
+    expect((await storage.load(BINDING_ID_B))?.windowId).toBe(humanWindowId);
+  });
+
+  it('does not reuse a stale peer window whose tracked group no longer exists', async () => {
+    let staleGroupId: number | null = null;
+    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
+      const humanPrimary = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
+      const groupId = await seedBrowser.groupTabs([humanPrimary.id]);
+      staleGroupId = groupId;
+      seedBrowser.groups.delete(groupId);
+      await seedStorage.save({
+        id: BINDING_ID_B,
+        label: 'bak agent',
+        color: 'blue',
+        windowId: humanWindow.id,
+        groupId,
+        tabIds: [humanPrimary.id],
+        activeTabId: humanPrimary.id,
+        primaryTabId: humanPrimary.id
+      });
+    });
+
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
+
+    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/isolated', active: false, focus: false });
+
+    expect(opened.binding.windowId).not.toBe(humanWindowId);
+    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
+    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
+    expect((await storage.load(BINDING_ID_B))?.groupId).toBe(staleGroupId);
+  });
+
   it('keeps multiple bindings isolated across storage, groups, and active tabs while sharing the bak window', async () => {
     const { storage, manager } = await createManager();
 
