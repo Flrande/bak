@@ -25,6 +25,7 @@ class FakeDriver extends StubDriver {
   sessionBindingCloseTabCalls = 0;
   pageTitleCalls = 0;
   pageSnapshotCalls = 0;
+  closeTabHook: ((closedTabId: number) => void | Promise<void>) | null = null;
   rawRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
   bindingLabels: string[] = [];
   replayEntry: { method: string; url: string } = {
@@ -157,6 +158,7 @@ class FakeDriver extends StubDriver {
       this.bindingExists = false;
       this.browser.windowId = null;
       this.browser.groupId = null;
+      await this.closeTabHook?.(resolvedTabId);
       return {
         browser: {
           windowId: null,
@@ -169,6 +171,7 @@ class FakeDriver extends StubDriver {
         closedTabId: resolvedTabId
       };
     }
+    await this.closeTabHook?.(resolvedTabId);
     return {
       browser: this.cloneBrowser(),
       closedTabId: resolvedTabId
@@ -704,6 +707,59 @@ describe('service runtime session bindings', () => {
     });
     expect(onManagedIdle).toHaveBeenCalledTimes(1);
     expect(driver.sessionBindingCloseCalls).toBe(0);
+  });
+
+  it('does not trigger managed idle stop until an in-flight close-tab request has returned', async () => {
+    const driver = new FakeDriver();
+    driver.browser = {
+      windowId: 1,
+      groupId: 2,
+      tabIds: [101],
+      activeTabId: 101,
+      primaryTabId: 101,
+      tabs: [
+        {
+          id: 101,
+          title: 'Only',
+          url: 'https://example.test/only',
+          active: true,
+          windowId: 1,
+          groupId: 2
+        }
+      ]
+    };
+    const onManagedIdle = vi.fn();
+    const service = createService(driver, {
+      managedRuntime: true,
+      onManagedIdle
+    });
+
+    const created = await service.invoke('session.create', { clientName: 'agent-a' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+    driver.closeTabHook = async (closedTabId) => {
+      service.handleBridgeEvent({
+        event: 'sessionBinding.updated',
+        data: {
+          bindingId: created.sessionId,
+          reason: 'tab-removed',
+          browser: null,
+          closedTabId
+        }
+      });
+      await waitForAsyncTurn();
+      expect(onManagedIdle).not.toHaveBeenCalled();
+    };
+
+    const closed = await service.invoke('session.closeTab', { sessionId: created.sessionId, tabId: 101 });
+    expect(closed).toEqual({
+      closed: true,
+      closedTabId: 101,
+      sessionClosed: true,
+      browser: null
+    });
+
+    await waitForAsyncTurn();
+    expect(onManagedIdle).toHaveBeenCalledTimes(1);
   });
 
   it('does not trigger managed idle stop before any session has existed', async () => {

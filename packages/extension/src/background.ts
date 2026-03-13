@@ -473,16 +473,52 @@ const sessionBindingBrowser: SessionBindingBrowser = {
       options.focused === true
         ? null
         : (await chrome.windows.getAll()).find((window) => window.focused === true && typeof window.id === 'number') ?? null;
+    const previouslyFocusedTabs =
+      previouslyFocusedWindow?.id !== undefined ? await chrome.tabs.query({ windowId: previouslyFocusedWindow.id }) : [];
+    const previouslyFocusedTabIds = new Set(
+      previouslyFocusedTabs.flatMap((tab) => (typeof tab.id === 'number' ? [tab.id] : []))
+    );
     const previouslyFocusedTab =
-      previouslyFocusedWindow?.id !== undefined
-        ? (await chrome.tabs.query({ windowId: previouslyFocusedWindow.id, active: true })).find((tab) => typeof tab.id === 'number') ?? null
-        : null;
-    const created = await chrome.windows.create({
-      url: options.url ?? 'about:blank',
+      previouslyFocusedTabs.find((tab) => tab.active === true && typeof tab.id === 'number') ?? null;
+    const desiredUrl = options.url ?? 'about:blank';
+    let created = await chrome.windows.create({
+      url: desiredUrl,
       focused: true
     });
     if (!created || typeof created.id !== 'number') {
       throw new Error('Window missing id');
+    }
+    const pickSeedTab = async (windowId: number): Promise<chrome.tabs.Tab | null> => {
+      const tabs = await chrome.tabs.query({ windowId });
+      const newlyCreatedTab =
+        windowId === previouslyFocusedWindow?.id
+          ? tabs.find((tab) => typeof tab.id === 'number' && !previouslyFocusedTabIds.has(tab.id))
+          : null;
+      const normalizedDesiredUrl = normalizeComparableTabUrl(desiredUrl);
+      return (
+        newlyCreatedTab ??
+        tabs.find((tab) => {
+          const pendingUrl = 'pendingUrl' in tab && typeof tab.pendingUrl === 'string' ? tab.pendingUrl : '';
+          return normalizeComparableTabUrl(tab.url ?? pendingUrl) === normalizedDesiredUrl;
+        }) ??
+        tabs.find((tab) => tab.active === true && typeof tab.id === 'number') ??
+        tabs.find((tab) => typeof tab.id === 'number') ??
+        null
+      );
+    };
+    let seedTab = await pickSeedTab(created.id);
+    const createdWindowTabs = await chrome.tabs.query({ windowId: created.id });
+    const createdWindowReusedFocusedWindow = previouslyFocusedWindow?.id === created.id;
+    const createdWindowLooksDirty = createdWindowTabs.length > 1;
+    if ((createdWindowReusedFocusedWindow || createdWindowLooksDirty) && typeof seedTab?.id === 'number') {
+      created = await chrome.windows.create({
+        tabId: seedTab.id,
+        focused: true
+      });
+      if (!created || typeof created.id !== 'number') {
+        throw new Error('Lifted window missing id');
+      }
+      seedTab = await pickSeedTab(created.id);
     }
     if (options.focused !== true && previouslyFocusedWindow?.id && previouslyFocusedWindow.id !== created.id) {
       await chrome.windows.update(previouslyFocusedWindow.id, { focused: true });
@@ -493,7 +529,8 @@ const sessionBindingBrowser: SessionBindingBrowser = {
     const finalWindow = await chrome.windows.get(created.id);
     return {
       id: finalWindow.id!,
-      focused: Boolean(finalWindow.focused)
+      focused: Boolean(finalWindow.focused),
+      initialTabId: seedTab?.id ?? null
     };
   },
   async updateWindow(windowId, options) {

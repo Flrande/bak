@@ -230,6 +230,7 @@ export class BakService {
   private readonly onManagedIdle?: () => void | Promise<void>;
   private idleStopArmed = false;
   private idleStopScheduled = false;
+  private activeRpcCount = 0;
 
   constructor(
     driver: BrowserDriver,
@@ -331,13 +332,20 @@ export class BakService {
       this.idleStopArmed = true;
       return;
     }
+    this.requestManagedIdleStop();
+  }
+
+  private requestManagedIdleStop(): void {
     if (!this.managedRuntime || !this.idleStopArmed || this.idleStopScheduled) {
+      return;
+    }
+    if (this.sessions.list().length > 0 || this.activeRpcCount > 0) {
       return;
     }
     this.idleStopScheduled = true;
     setTimeout(() => {
       this.idleStopScheduled = false;
-      if (!this.managedRuntime || !this.idleStopArmed || this.sessions.list().length > 0) {
+      if (!this.managedRuntime || !this.idleStopArmed || this.sessions.list().length > 0 || this.activeRpcCount > 0) {
         return;
       }
       void this.onManagedIdle?.();
@@ -461,6 +469,7 @@ export class BakService {
   }
 
   private async withTrace<T>(traceId: string, method: string, params: unknown, action: () => Promise<T>): Promise<T> {
+    this.activeRpcCount += 1;
     this.traceStore.append(traceId, { method: 'rpc.start', params: { method } });
     this.traceStore.append(traceId, { method, params: redactTraceParams(method, params) });
 
@@ -485,6 +494,9 @@ export class BakService {
       });
       this.traceStore.append(traceId, { method: 'rpc.failure', params: { method, bakCode: normalized.bakCode } });
       throw normalized;
+    } finally {
+      this.activeRpcCount = Math.max(0, this.activeRpcCount - 1);
+      this.requestManagedIdleStop();
     }
   }
 

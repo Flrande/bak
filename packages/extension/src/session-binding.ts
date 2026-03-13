@@ -19,6 +19,7 @@ export interface SessionBindingTab {
 export interface SessionBindingWindow {
   id: number;
   focused: boolean;
+  initialTabId?: number | null;
 }
 
 export interface SessionBindingGroup {
@@ -154,13 +155,17 @@ class SessionBindingManager {
       state.activeTabId = null;
       state.primaryTabId = null;
       window = createdWindow;
-      tabs = await this.waitForWindowTabs(createdWindow.id);
+      const initialTab =
+        typeof createdWindow.initialTabId === 'number'
+          ? await this.waitForTrackedTab(createdWindow.initialTabId, createdWindow.id)
+          : null;
+      tabs = initialTab ? [initialTab] : await this.waitForWindowTabs(createdWindow.id);
       state.tabIds = tabs.map((tab) => tab.id);
       if (state.primaryTabId === null) {
-        state.primaryTabId = tabs[0]?.id ?? null;
+        state.primaryTabId = initialTab?.id ?? tabs[0]?.id ?? null;
       }
       if (state.activeTabId === null) {
-        state.activeTabId = tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? null;
+        state.activeTabId = tabs.find((tab) => tab.active)?.id ?? initialTab?.id ?? tabs[0]?.id ?? null;
       }
       repairActions.push(created ? 'created-window' : 'recreated-window');
     }
@@ -736,7 +741,9 @@ class SessionBindingManager {
       url: seedUrl || DEFAULT_SESSION_BINDING_URL,
       focused: false
     });
-      const recreatedTabs = await this.waitForWindowTabs(window.id);
+    const initialTab =
+      typeof window.initialTabId === 'number' ? await this.waitForTrackedTab(window.initialTabId, window.id) : null;
+    const recreatedTabs = initialTab ? [initialTab] : await this.waitForWindowTabs(window.id);
     const firstTab = recreatedTabs[0] ?? null;
     const tabIdMap = new Map<number, number>();
     if (sourceTabs[0] && firstTab) {

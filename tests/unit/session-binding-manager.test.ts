@@ -44,6 +44,7 @@ class FakeBrowser implements SessionBindingBrowser {
   readonly windows = new Map<number, SessionBindingWindow>();
   readonly groups = new Map<number, { id: number; windowId: number; title: string; color: SessionBindingColor; collapsed: boolean }>();
   activeTabId: number | null = null;
+  reuseFocusedWindowOnCreate = false;
   readonly transientWindowMisses = new Map<number, number>();
   readonly transientGroupMisses = new Map<number, number>();
 
@@ -138,13 +139,35 @@ class FakeBrowser implements SessionBindingBrowser {
   }
 
   async createWindow(options: { url?: string; focused?: boolean }): Promise<SessionBindingWindow> {
+    if (this.reuseFocusedWindowOnCreate) {
+      this.reuseFocusedWindowOnCreate = false;
+      const focusedWindow =
+        [...this.windows.values()].find((window) => window.focused) ??
+        [...this.windows.values()][0] ??
+        null;
+      if (focusedWindow) {
+        const tab = await this.createTab({
+          windowId: focusedWindow.id,
+          url: options.url,
+          active: true
+        });
+        return {
+          id: focusedWindow.id,
+          focused: focusedWindow.focused,
+          initialTabId: tab.id
+        };
+      }
+    }
     const window: SessionBindingWindow = {
       id: this.nextWindowId++,
       focused: options.focused === true
     };
     this.windows.set(window.id, window);
-    await this.createTab({ windowId: window.id, url: options.url, active: true });
-    return window;
+    const tab = await this.createTab({ windowId: window.id, url: options.url, active: true });
+    return {
+      ...window,
+      initialTabId: tab.id
+    };
   }
 
   async updateWindow(windowId: number, options: { focused?: boolean }): Promise<SessionBindingWindow> {
@@ -591,6 +614,28 @@ describe('session binding manager', () => {
     expect(browser.windows.has(humanWindowId)).toBe(true);
     expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore.filter((tabId) => tabId !== orphanedTabId));
     expect(tabsInWindow(browser, humanWindowId).every((tab) => !tab.url.includes('/orphaned'))).toBe(true);
+    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
+    expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
+  });
+
+  it('creates a dedicated binding window even when the browser seeds the tab inside the focused human window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => {
+      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
+      await seedBrowser.createTab({
+        windowId: humanWindow.id,
+        url: 'https://human.local/watchlist',
+        active: false
+      });
+      seedBrowser.reuseFocusedWindowOnCreate = true;
+    });
+
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
+
+    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/recovered', active: false, focus: false });
+
+    expect(opened.binding.windowId).not.toBe(humanWindowId);
+    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
     expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
     expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
   });
