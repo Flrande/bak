@@ -133,6 +133,50 @@ async function sessionBrowserState(): Promise<{ browser: { windowId: number | nu
   return harness.rpcCall('session.listTabs');
 }
 
+async function openNamedSessionPage(
+  clientName: string,
+  path: string,
+  options: { active?: boolean } = {}
+): Promise<{
+  sessionId: string;
+  browser: { windowId: number | null; groupId: number | null; tabIds: number[]; activeTabId: number | null };
+  tab: { id: number; url: string; windowId: number; groupId: number | null };
+  page: Page;
+  url: string;
+}> {
+  if (!harness) {
+    throw new Error('Harness not initialized');
+  }
+  const resolved = await harness.rpcCall<{ sessionId: string }>('session.resolve', { clientName });
+  const sessionId = resolved.sessionId;
+  const marker = `__binding=${clientName}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const separator = path.includes('?') ? '&' : '?';
+  const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
+  await harness.rpcCall('session.ensure', { sessionId });
+  const opened = await harness.rpcCall<{
+    browser: { windowId: number | null; groupId: number | null; tabIds: number[]; activeTabId: number | null };
+    tab: { id: number; url: string; windowId: number; groupId: number | null };
+  }>('session.openTab', {
+    sessionId,
+    url,
+    active: options.active === true
+  });
+  await expect
+    .poll(() => harness!.context.pages().some((candidate) => candidate.url().includes(marker)), { timeout: 10_000 })
+    .toBe(true);
+  const page = must(
+    harness.context.pages().find((candidate) => candidate.url().includes(marker)),
+    'Expected named session page'
+  );
+  return {
+    sessionId,
+    browser: opened.browser,
+    tab: opened.tab,
+    page,
+    url
+  };
+}
+
 test.describe('CLI session binding workflows', () => {
   test.beforeEach(async () => {
     harness = await createHarness();
@@ -143,7 +187,7 @@ test.describe('CLI session binding workflows', () => {
     harness = undefined;
   });
 
-  test('keeps the human on page A while the agent works inside the dedicated session binding window', async () => {
+  test('keeps the human on page A while the agent works inside the bak-controlled session window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -378,7 +422,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('groups session-created tabs automatically inside the dedicated session binding window', async () => {
+  test('groups session-created tabs automatically inside the bak-controlled session window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -424,7 +468,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('session.close tears down the dedicated browser state and invalidates later session-scoped commands', async () => {
+  test('session.close tears down the session-owned browser state and invalidates later session-scoped commands', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -446,7 +490,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('auto-closes the session when the dedicated window is manually closed', async () => {
+  test('auto-closes the session when the bak-controlled window is manually closed', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -459,6 +503,53 @@ test.describe('CLI session binding workflows', () => {
 
     await expect.poll(() => runHarnessCliFailure(['session', 'ensure']), { timeout: 10_000 }).toContain('Session not found');
     await expect.poll(() => runHarnessCliFailure(['page', 'url']), { timeout: 10_000 }).toContain('Session not found');
+  });
+
+  test('keeps multiple sessions in one bak-controlled window while isolating them by group', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page: humanPage } = await harness.openHumanPage('/form.html');
+    const first = await openNamedSessionPage('shared-window-a', '/');
+    const second = await openNamedSessionPage('shared-window-b', '/spa.html');
+    try {
+      expect(first.browser.windowId).toBe(second.browser.windowId);
+      expect(first.tab.windowId).toBe(second.tab.windowId);
+      expect(first.browser.groupId).not.toBe(second.browser.groupId);
+      expect(first.tab.groupId).toBe(first.browser.groupId);
+      expect(second.tab.groupId).toBe(second.browser.groupId);
+      await expect(humanPage).toHaveURL(/\/form\.html\?/);
+
+      const closed = await harness.rpcCall<{ closed: boolean; closedTabId: number; sessionClosed: boolean; browser: null }>(
+        'session.closeTab',
+        {
+          sessionId: first.sessionId,
+          tabId: first.tab.id
+        }
+      );
+      expect(closed.closed).toBe(true);
+      expect(closed.closedTabId).toBe(first.tab.id);
+      expect(closed.sessionClosed).toBe(true);
+      expect(closed.browser).toBeNull();
+
+      const surviving = await harness.rpcCall<{
+        browser: { windowId: number | null; groupId: number | null; tabIds: number[]; activeTabId: number | null } | null;
+        tabs: Array<{ id: number; url: string; windowId: number; groupId: number | null }>;
+      }>('session.listTabs', { sessionId: second.sessionId });
+      const survivingBrowser = must(surviving.browser, 'Expected surviving session browser metadata');
+      expect(survivingBrowser.windowId).toBe(second.browser.windowId);
+      expect(survivingBrowser.groupId).toBe(second.browser.groupId);
+      expect(surviving.tabs).toHaveLength(1);
+      expect(surviving.tabs[0]?.groupId).toBe(second.browser.groupId);
+      expect(surviving.tabs[0]?.url).toContain('__binding=shared-window-b');
+    } finally {
+      await harness.rpcCall('session.close', { sessionId: first.sessionId }).catch(() => undefined);
+      await harness.rpcCall('session.close', { sessionId: second.sessionId }).catch(() => undefined);
+      await humanPage.close().catch(() => undefined);
+      await first.page.close().catch(() => undefined);
+      await second.page.close().catch(() => undefined);
+    }
   });
 
   test('rehomes a stale session binding that was incorrectly bound to the human window', async () => {

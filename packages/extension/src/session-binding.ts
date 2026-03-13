@@ -86,6 +86,7 @@ export interface SessionBindingBrowser {
 
 interface SessionBindingWindowOwnership {
   bindingTabs: SessionBindingTab[];
+  sharedBindingTabs: SessionBindingTab[];
   foreignTabs: SessionBindingTab[];
 }
 
@@ -145,29 +146,40 @@ class SessionBindingManager {
       }
     }
     if (!window) {
-      const createdWindow = await this.browser.createWindow({
-        url: initialUrl,
-        focused: options.focus === true
-      });
-      state.windowId = createdWindow.id;
-      state.groupId = null;
-      state.tabIds = [];
-      state.activeTabId = null;
-      state.primaryTabId = null;
-      window = createdWindow;
-      const initialTab =
-        typeof createdWindow.initialTabId === 'number'
-          ? await this.waitForTrackedTab(createdWindow.initialTabId, createdWindow.id)
-          : null;
-      tabs = initialTab ? [initialTab] : await this.waitForWindowTabs(createdWindow.id);
-      state.tabIds = tabs.map((tab) => tab.id);
-      if (state.primaryTabId === null) {
-        state.primaryTabId = initialTab?.id ?? tabs[0]?.id ?? null;
+      const sharedWindow = await this.findSharedBindingWindow(bindingId);
+      if (sharedWindow) {
+        state.windowId = sharedWindow.id;
+        state.groupId = null;
+        state.tabIds = [];
+        state.activeTabId = null;
+        state.primaryTabId = null;
+        window = sharedWindow;
+        repairActions.push('attached-shared-window');
+      } else {
+        const createdWindow = await this.browser.createWindow({
+          url: initialUrl,
+          focused: options.focus === true
+        });
+        state.windowId = createdWindow.id;
+        state.groupId = null;
+        state.tabIds = [];
+        state.activeTabId = null;
+        state.primaryTabId = null;
+        window = createdWindow;
+        const initialTab =
+          typeof createdWindow.initialTabId === 'number'
+            ? await this.waitForTrackedTab(createdWindow.initialTabId, createdWindow.id)
+            : null;
+        tabs = initialTab ? [initialTab] : await this.waitForWindowTabs(createdWindow.id);
+        state.tabIds = tabs.map((tab) => tab.id);
+        if (state.primaryTabId === null) {
+          state.primaryTabId = initialTab?.id ?? tabs[0]?.id ?? null;
+        }
+        if (state.activeTabId === null) {
+          state.activeTabId = tabs.find((tab) => tab.active)?.id ?? initialTab?.id ?? tabs[0]?.id ?? null;
+        }
+        repairActions.push(created ? 'created-window' : 'recreated-window');
       }
-      if (state.activeTabId === null) {
-        state.activeTabId = tabs.find((tab) => tab.active)?.id ?? initialTab?.id ?? tabs[0]?.id ?? null;
-      }
-      repairActions.push(created ? 'created-window' : 'recreated-window');
     }
 
     tabs = tabs.length > 0 ? tabs : await this.readTrackedTabs(state.tabIds, state.windowId);
@@ -183,12 +195,12 @@ class SessionBindingManager {
 
     if (state.windowId !== null) {
       const ownership = await this.inspectBindingWindowOwnership(state, state.windowId);
-      if (ownership.foreignTabs.length > 0) {
-        const migrated = await this.moveBindingIntoDedicatedWindow(state, ownership, initialUrl);
+      if (ownership.foreignTabs.length > 0 && ownership.bindingTabs.length > 0) {
+        const migrated = await this.moveBindingIntoBakWindow(state, ownership, initialUrl);
         window = migrated.window;
         tabs = migrated.tabs;
         state.tabIds = tabs.map((tab) => tab.id);
-        repairActions.push('migrated-dirty-window');
+        repairActions.push('evacuated-foreign-window');
       }
     }
 
@@ -297,8 +309,7 @@ class SessionBindingManager {
       state,
       ensured.created ||
         ensured.repairActions.includes('recreated-window') ||
-        ensured.repairActions.includes('created-primary-tab') ||
-        ensured.repairActions.includes('migrated-dirty-window')
+        ensured.repairActions.includes('created-primary-tab')
     );
 
     let createdTab: SessionBindingTab;
@@ -443,20 +454,23 @@ class SessionBindingManager {
   }
 
   async closeTab(bindingId: string, tabId?: number): Promise<{ binding: SessionBindingInfo | null; closedTabId: number }> {
-    const ensured = await this.ensureBinding({ bindingId, focus: false });
+    const binding = await this.inspectBinding(bindingId);
+    if (!binding) {
+      throw new Error(`Binding ${bindingId} does not exist`);
+    }
     const resolvedTabId =
       typeof tabId === 'number'
         ? tabId
-        : ensured.binding.activeTabId ?? ensured.binding.primaryTabId ?? ensured.binding.tabs[0]?.id;
-    if (typeof resolvedTabId !== 'number' || !ensured.binding.tabIds.includes(resolvedTabId)) {
+        : binding.activeTabId ?? binding.primaryTabId ?? binding.tabs[0]?.id;
+    if (typeof resolvedTabId !== 'number' || !binding.tabIds.includes(resolvedTabId)) {
       throw new Error(`Tab ${tabId ?? 'active'} does not belong to binding ${bindingId}`);
     }
 
     await this.browser.closeTab(resolvedTabId);
-    const remainingTabIds = ensured.binding.tabIds.filter((candidate) => candidate !== resolvedTabId);
+    const remainingTabIds = binding.tabIds.filter((candidate) => candidate !== resolvedTabId);
 
     if (remainingTabIds.length === 0) {
-      await this.storage.delete(ensured.binding.id);
+      await this.storage.delete(binding.id);
       return {
         binding: null,
         closedTabId: resolvedTabId
@@ -465,17 +479,17 @@ class SessionBindingManager {
 
     const tabs = await this.readLooseTrackedTabs(remainingTabIds);
     const nextPrimaryTabId =
-      ensured.binding.primaryTabId === resolvedTabId ? tabs[0]?.id ?? null : ensured.binding.primaryTabId;
+      binding.primaryTabId === resolvedTabId ? tabs[0]?.id ?? null : binding.primaryTabId;
     const nextActiveTabId =
-      ensured.binding.activeTabId === resolvedTabId
+      binding.activeTabId === resolvedTabId
         ? tabs.find((candidate) => candidate.active)?.id ?? nextPrimaryTabId ?? tabs[0]?.id ?? null
-        : ensured.binding.activeTabId;
+        : binding.activeTabId;
     const nextState: SessionBindingRecord = {
-      id: ensured.binding.id,
-      label: ensured.binding.label,
-      color: ensured.binding.color,
-      windowId: tabs[0]?.windowId ?? ensured.binding.windowId,
-      groupId: tabs[0]?.groupId ?? ensured.binding.groupId,
+      id: binding.id,
+      label: binding.label,
+      color: binding.color,
+      windowId: tabs[0]?.windowId ?? binding.windowId,
+      groupId: tabs[0]?.groupId ?? binding.groupId,
       tabIds: tabs.map((candidate) => candidate.id),
       activeTabId: nextActiveTabId,
       primaryTabId: nextPrimaryTabId
@@ -508,7 +522,7 @@ class SessionBindingManager {
     // Clear persisted state before closing the window so tab/window removal
     // listeners cannot race and resurrect an empty binding record.
     await this.storage.delete(bindingId);
-    const trackedTabs = await this.readLooseTrackedTabs(this.collectCandidateTabIds(state));
+    const trackedTabs = await this.collectBindingTabsForClose(state);
     for (const trackedTab of trackedTabs) {
       try {
         await this.browser.closeTab(trackedTab.id);
@@ -723,30 +737,72 @@ class SessionBindingManager {
 
   private async inspectBindingWindowOwnership(state: SessionBindingRecord, windowId: number): Promise<SessionBindingWindowOwnership> {
     const windowTabs = await this.waitForWindowTabs(windowId, 500);
-    const trackedIds = new Set(this.collectCandidateTabIds(state));
+    const bindingTabIds = new Set(this.collectCandidateTabIds(state));
+    const peerBindings = (await this.storage.list()).filter((candidate) => candidate.id !== state.id);
+    const peerTabIds = new Set<number>();
+    const peerGroupIds = new Set<number>();
+    for (const peer of peerBindings) {
+      for (const tabId of this.collectCandidateTabIds(peer)) {
+        peerTabIds.add(tabId);
+      }
+      if (peer.groupId !== null) {
+        peerGroupIds.add(peer.groupId);
+      }
+    }
+
+    const bindingTabs: SessionBindingTab[] = [];
+    const sharedBindingTabs: SessionBindingTab[] = [];
+    const foreignTabs: SessionBindingTab[] = [];
+    for (const tab of windowTabs) {
+      if (bindingTabIds.has(tab.id) || (state.groupId !== null && tab.groupId === state.groupId)) {
+        bindingTabs.push(tab);
+        continue;
+      }
+      if (peerTabIds.has(tab.id) || (tab.groupId !== null && peerGroupIds.has(tab.groupId))) {
+        sharedBindingTabs.push(tab);
+        continue;
+      }
+      foreignTabs.push(tab);
+    }
+
     return {
-      bindingTabs: windowTabs.filter((tab) => trackedIds.has(tab.id) || (state.groupId !== null && tab.groupId === state.groupId)),
-      foreignTabs: windowTabs.filter((tab) => !trackedIds.has(tab.id) && (state.groupId === null || tab.groupId !== state.groupId))
+      bindingTabs,
+      sharedBindingTabs,
+      foreignTabs
     };
   }
 
-  private async moveBindingIntoDedicatedWindow(
+  private async moveBindingIntoBakWindow(
     state: SessionBindingRecord,
     ownership: SessionBindingWindowOwnership,
     initialUrl: string
   ): Promise<{ window: SessionBindingWindow; tabs: SessionBindingTab[] }> {
     const sourceTabs = this.orderSessionBindingTabsForMigration(state, ownership.bindingTabs);
     const seedUrl = sourceTabs[0]?.url ?? initialUrl;
-    const window = await this.browser.createWindow({
-      url: seedUrl || DEFAULT_SESSION_BINDING_URL,
-      focused: false
-    });
+    const sharedWindow = await this.findSharedBindingWindow(state.id, state.windowId === null ? [] : [state.windowId]);
+    const window =
+      sharedWindow ??
+      (await this.browser.createWindow({
+        url: seedUrl || DEFAULT_SESSION_BINDING_URL,
+        focused: false
+      }));
     const initialTab =
-      typeof window.initialTabId === 'number' ? await this.waitForTrackedTab(window.initialTabId, window.id) : null;
-    const recreatedTabs = initialTab ? [initialTab] : await this.waitForWindowTabs(window.id);
-    const firstTab = recreatedTabs[0] ?? null;
+      sharedWindow || typeof window.initialTabId !== 'number' ? null : await this.waitForTrackedTab(window.initialTabId, window.id);
+    const recreatedTabs: SessionBindingTab[] = [];
     const tabIdMap = new Map<number, number>();
-    if (sourceTabs[0] && firstTab) {
+
+    if (sourceTabs[0]) {
+      const firstTab = initialTab
+        ? await this.browser.updateTab(initialTab.id, {
+            url: sourceTabs[0].url,
+            active: false
+          })
+        : await this.createBindingTab({
+            windowId: window.id,
+            url: sourceTabs[0].url,
+            active: false
+          });
+      recreatedTabs.push(firstTab);
       tabIdMap.set(sourceTabs[0].id, firstTab.id);
     }
 
@@ -762,7 +818,6 @@ class SessionBindingManager {
 
     const nextPrimaryTabId =
       (state.primaryTabId !== null ? tabIdMap.get(state.primaryTabId) : undefined) ??
-      firstTab?.id ??
       recreatedTabs[0]?.id ??
       null;
     const nextActiveTabId =
@@ -782,7 +837,11 @@ class SessionBindingManager {
     });
 
     for (const bindingTab of ownership.bindingTabs) {
-      await this.browser.closeTab(bindingTab.id);
+      try {
+        await this.browser.closeTab(bindingTab.id);
+      } catch {
+        // Ignore tabs that were already removed while evacuating the binding.
+      }
     }
 
     return {
@@ -818,6 +877,61 @@ class SessionBindingManager {
     return ordered;
   }
 
+  private async findSharedBindingWindow(bindingId: string, excludedWindowIds: number[] = []): Promise<SessionBindingWindow | null> {
+    const peers = (await this.storage.list()).filter((candidate) => candidate.id !== bindingId);
+    const candidateWindowIds: number[] = [];
+    const peerTabIds = new Set<number>();
+    const peerGroupIds = new Set<number>();
+    const pushWindowId = (windowId: number | null | undefined): void => {
+      if (typeof windowId !== 'number') {
+        return;
+      }
+      if (excludedWindowIds.includes(windowId) || candidateWindowIds.includes(windowId)) {
+        return;
+      }
+      candidateWindowIds.push(windowId);
+    };
+
+    for (const peer of peers) {
+      pushWindowId(peer.windowId);
+      if (peer.groupId !== null) {
+        peerGroupIds.add(peer.groupId);
+        const group = await this.waitForGroup(peer.groupId, 300);
+        pushWindowId(group?.windowId);
+      }
+      const trackedTabIds = this.collectCandidateTabIds(peer);
+      for (const trackedTabId of trackedTabIds) {
+        peerTabIds.add(trackedTabId);
+      }
+      const trackedTabs = await this.readLooseTrackedTabs(trackedTabIds);
+      for (const tab of trackedTabs) {
+        pushWindowId(tab.windowId);
+      }
+    }
+
+    for (const windowId of candidateWindowIds) {
+      const window = await this.waitForWindow(windowId, 300);
+      if (window) {
+        const windowTabs = await this.waitForWindowTabs(window.id, 300);
+        const ownedTabs = windowTabs.filter(
+          (tab) => peerTabIds.has(tab.id) || (tab.groupId !== null && peerGroupIds.has(tab.groupId))
+        );
+        if (ownedTabs.length === 0) {
+          continue;
+        }
+        const foreignTabs = windowTabs.filter(
+          (tab) => !peerTabIds.has(tab.id) && (tab.groupId === null || !peerGroupIds.has(tab.groupId))
+        );
+        if (foreignTabs.length > 0) {
+          continue;
+        }
+        return window;
+      }
+    }
+
+    return null;
+  }
+
   private async recoverBindingTabs(state: SessionBindingRecord, existingTabs: SessionBindingTab[]): Promise<SessionBindingTab[]> {
     if (state.windowId === null) {
       return existingTabs;
@@ -848,6 +962,20 @@ class SessionBindingManager {
     }
 
     return existingTabs;
+  }
+
+  private async collectBindingTabsForClose(state: SessionBindingRecord): Promise<SessionBindingTab[]> {
+    const trackedTabs = await this.readLooseTrackedTabs(this.collectCandidateTabIds(state));
+    if (state.windowId === null || state.groupId === null) {
+      return trackedTabs;
+    }
+    const windowTabs = await this.waitForWindowTabs(state.windowId, 300);
+    const groupedTabs = windowTabs.filter((tab) => tab.groupId === state.groupId);
+    const merged = new Map<number, SessionBindingTab>();
+    for (const tab of [...trackedTabs, ...groupedTabs]) {
+      merged.set(tab.id, tab);
+    }
+    return [...merged.values()];
   }
 
   private async createBindingTab(options: { windowId: number | null; url: string; active: boolean }): Promise<SessionBindingTab> {
@@ -884,6 +1012,7 @@ class SessionBindingManager {
     }
 
     let tabs = await this.readTrackedTabs(state.tabIds, state.windowId);
+    tabs = await this.recoverBindingTabs(state, tabs);
     const activeTab = state.activeTabId !== null ? await this.waitForTrackedTab(state.activeTabId, state.windowId, 300) : null;
     if (activeTab && !tabs.some((tab) => tab.id === activeTab.id)) {
       tabs = [...tabs, activeTab];

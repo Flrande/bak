@@ -107,11 +107,16 @@ class FakeBrowser implements SessionBindingBrowser {
     if (!tab) {
       return;
     }
+    const removedGroupId = tab.groupId;
+    const removedWindowId = tab.windowId;
     this.tabs.delete(tabId);
-    if (![...this.tabs.values()].some((item) => item.windowId === tab.windowId)) {
-      this.windows.delete(tab.windowId);
+    if (removedGroupId !== null && ![...this.tabs.values()].some((item) => item.groupId === removedGroupId)) {
+      this.groups.delete(removedGroupId);
+    }
+    if (![...this.tabs.values()].some((item) => item.windowId === removedWindowId)) {
+      this.windows.delete(removedWindowId);
       for (const [groupId, group] of this.groups.entries()) {
-        if (group.windowId === tab.windowId) {
+        if (group.windowId === removedWindowId) {
           this.groups.delete(groupId);
         }
       }
@@ -265,7 +270,7 @@ async function createManager(
 }
 
 describe('session binding manager', () => {
-  it('creates a dedicated window, group, and primary tab on ensure', async () => {
+  it('creates a bak-controlled window, group, and primary tab on ensure', async () => {
     const { manager } = await createManager();
 
     const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
@@ -414,7 +419,7 @@ describe('session binding manager', () => {
     expect(ensured.repairActions).toEqual(expect.arrayContaining(['recreated-group']));
   });
 
-  it('recovers binding tabs from the dedicated group when tracked tab ids are missing', async () => {
+  it('recovers binding tabs from the binding group when tracked tab ids are missing', async () => {
     const { manager } = await createManager(async (seedBrowser, seedStorage) => {
       const window = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
       const tab = [...seedBrowser.tabs.values()].find((item) => item.windowId === window.id)!;
@@ -618,7 +623,7 @@ describe('session binding manager', () => {
     expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
   });
 
-  it('creates a dedicated binding window even when the browser seeds the tab inside the focused human window', async () => {
+  it('creates a bak-controlled window even when the browser seeds the tab inside the focused human window', async () => {
     const { browser, manager } = await createManager(async (seedBrowser) => {
       const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
       await seedBrowser.createTab({
@@ -640,13 +645,13 @@ describe('session binding manager', () => {
     expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
   });
 
-  it('keeps multiple bindings isolated across storage, windows, and active tabs', async () => {
+  it('keeps multiple bindings isolated across storage, groups, and active tabs while sharing the bak window', async () => {
     const { storage, manager } = await createManager();
 
     const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: false, focus: false });
     const second = await manager.openTab({ bindingId: BINDING_ID_B, url: 'https://session.local/b', active: false, focus: false });
 
-    expect(first.binding.windowId).not.toBe(second.binding.windowId);
+    expect(first.binding.windowId).toBe(second.binding.windowId);
     expect(first.binding.groupId).not.toBe(second.binding.groupId);
     expect(first.binding.activeTabId).toBe(first.tab.id);
     expect(second.binding.activeTabId).toBe(second.tab.id);
@@ -705,6 +710,23 @@ describe('session binding manager', () => {
     expect(emptied.closedTabId).toBe(first.tab.id);
     expect(emptied.binding).toBeNull();
     await expect(storage.load(BINDING_ID)).resolves.toBeNull();
+  });
+
+  it('closes one binding in the shared bak window without disturbing sibling binding groups', async () => {
+    const { storage, manager } = await createManager();
+    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: true, focus: false });
+    const second = await manager.openTab({ bindingId: BINDING_ID_B, url: 'https://session.local/b', active: true, focus: false });
+
+    const closed = await manager.closeTab(BINDING_ID, first.tab.id);
+    expect(closed.closedTabId).toBe(first.tab.id);
+    expect(closed.binding).toBeNull();
+    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
+
+    const surviving = await manager.listTabs(BINDING_ID_B);
+    expect(surviving.binding.windowId).toBe(second.binding.windowId);
+    expect(surviving.binding.groupId).toBe(second.binding.groupId);
+    expect(surviving.tabs).toHaveLength(1);
+    expect(surviving.tabs[0]?.url).toBe('https://session.local/b');
   });
 });
 

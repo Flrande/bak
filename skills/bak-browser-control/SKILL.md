@@ -38,7 +38,7 @@ Use this skill when browser work should happen through `bak` instead of a direct
 
 1. Health-check the runtime with `bak doctor`, and use `bak status` or `bak stop` only when you need to inspect or reset it.
 2. If needed, follow the setup flow in [references/setup.md](./references/setup.md).
-3. Resolve the session from a stable client identity, ensure the dedicated session window if needed, and open or target the correct tab inside that session.
+3. Resolve the session from a stable client identity, ensure the shared bak-controlled window plus the session's group if needed, and open or target the correct tab inside that session.
 4. Use `bak session open-tab --active` when later session-scoped commands should move onto the new tab immediately.
 5. Use page, element, keyboard, mouse, file, context, network, table, inspect, capture, and debug commands with the same resolved session identity. Keep explicit `sessionId` values only when handoff or debugging needs them.
 6. For dynamic sites, prefer inspect, runtime, network, and table primitives before trying to scrape visible text only.

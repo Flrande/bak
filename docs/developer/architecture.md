@@ -19,13 +19,13 @@
 
 - the session is the default agent isolation boundary
 - browser commands prefer the current session tab once it exists
-- session commands are the only public path that creates or repairs the dedicated window and tab group
+- session commands are the only public path that creates or repairs the shared bak window plus per-session tab groups
 - reads, actions, and debug output share one context stack
 
 ## Public Command Surface
 
 - there is no public `workspace` namespace; user-facing terminology is `session` plus `tabs`
-- `session` owns the dedicated browser binding, default active tab, and shared context stack
+- `session` owns the per-session browser binding metadata, default active tab, and shared context stack inside the bak-controlled window
 - `tabs` is the browser-wide direct-control surface for listing, opening, focusing, inspecting, and closing tabs outside the session helpers
 - `page`, `context`, `element`, `debug`, `network`, `keyboard`, `mouse`, and `file` operate on the current session tab unless `--tab-id` overrides that target
 - planned first-class commands should extend these existing noun groups instead of introducing parallel naming

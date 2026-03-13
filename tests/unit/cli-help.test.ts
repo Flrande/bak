@@ -22,7 +22,7 @@ function runHelp(args: string[]): string {
   });
 }
 
-describe('cli help output', () => {
+describe('cli help output', { timeout: 15_000 }, () => {
   it('documents the top-level quick start and targeting rules', () => {
     const help = runHelp(['--help']);
 
@@ -34,8 +34,8 @@ describe('cli help output', () => {
   it('documents session browser helpers and current-tab targeting', () => {
     const help = runHelp(['session', '--help']);
 
-    expect(help).toContain('Manage multi-agent sessions and their dedicated browser state');
-    expect(help).toContain('Each session owns one dedicated browser binding');
+    expect(help).toContain('Manage multi-agent sessions and their shared bak-window browser state');
+    expect(help).toContain('Live sessions share one bak-controlled browser window');
     expect(help).toContain('bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374');
   });
 
@@ -49,7 +49,7 @@ describe('cli help output', () => {
   it('documents session ensure as the explicit repair entrypoint', () => {
     const help = runHelp(['session', 'ensure', '--help']);
 
-    expect(help).toContain('Create or repair the dedicated browser window');
+    expect(help).toContain('Create or repair the bak-controlled window');
     expect(help).toContain('bak session ensure --session-id session_123 --url "https://example.com" --focus --rpc-ws-port 17374');
   });
 

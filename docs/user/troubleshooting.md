@@ -93,8 +93,8 @@ Actions:
 5. Remember that `bak session open-tab ...` does not change the session's default current tab unless you passed `--active`.
 6. Set the intended session tab with `bak session set-active-tab --session-id <sessionId> --tab-id <id> --rpc-ws-port 17374`.
 7. Use `bak tabs list`, `bak tabs get`, and `bak tabs active` for browser-wide diagnostics. Treat `bak tabs new`, `bak tabs focus`, and `bak tabs close` as recovery-only compatibility commands that still stay inside the resolved session.
-8. If the correct browser tab exists outside the session-owned window, open a fresh session tab with `bak session open-tab --session-id <sessionId> --url <url> --active --rpc-ws-port 17374` instead of continuing on the unmanaged tab.
-9. If the dedicated session window or tracked tabs are missing, run `bak session ensure --session-id <sessionId> --rpc-ws-port 17374` or simply retry the browser-affecting command with the same session identity so the runtime can auto-repair first.
+8. If the correct browser tab exists outside the bak-controlled window, open a fresh session tab with `bak session open-tab --session-id <sessionId> --url <url> --active --rpc-ws-port 17374` instead of continuing on the unmanaged tab.
+9. If the bak-controlled window, a session group, or tracked tabs are missing, run `bak session ensure --session-id <sessionId> --rpc-ws-port 17374` or simply retry the browser-affecting command with the same session identity so the runtime can auto-repair first.
 
 ## Session Or Runtime Disappeared After Closing Tabs
 

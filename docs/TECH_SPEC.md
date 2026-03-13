@@ -14,8 +14,8 @@ Both are product surface, not internal implementation detail.
 The session is the default agent isolation boundary:
 
 - one explicit session id per agent
-- a dedicated browser window
-- a dedicated tab group inside that window
+- a shared bak-controlled browser window across live sessions
+- a dedicated tab group inside that shared window
 - tracked session tab ids plus primary and current tab pointers
 - an internal session binding id used to manage the browser resources
 

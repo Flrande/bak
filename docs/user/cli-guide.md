@@ -11,7 +11,7 @@ This page assumes the runtime is already installed and healthy. If you still nee
 - `bak tabs list`, `bak tabs get`, and `bak tabs active` are browser-wide diagnostics.
 - `bak tabs new`, `bak tabs focus`, and `bak tabs close` are recovery-only compatibility commands. They first resolve a session and only operate on that session's tabs.
 - `bak page`, `bak context`, `bak element`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` target the current resolved session tab unless you override with `--tab-id` inside that same session.
-- `bak session open-tab` opens a tab in the dedicated session window, but only `--active` or `bak session set-active-tab ...` changes which tab later session-scoped commands target by default.
+- `bak session open-tab` opens a tab in the session's group inside the shared bak-controlled window, but only `--active` or `bak session set-active-tab ...` changes which tab later session-scoped commands target by default.
 - `bak call` covers protocol-only methods until they graduate into one of those noun groups.
 - Older `workspace` wording is obsolete in the public CLI surface.
 
@@ -43,7 +43,7 @@ bak stop --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
 ```
 
-Then resolve or inspect the agent session window:
+Then resolve or inspect the agent session state:
 
 ```powershell
 $clientName = 'agent-a'
@@ -53,7 +53,7 @@ bak session info --client-name $clientName --rpc-ws-port 17374
 bak session ensure --client-name $clientName --rpc-ws-port 17374
 ```
 
-Common maintenance commands for the dedicated session window:
+Common maintenance commands for the shared bak-controlled window plus per-session groups:
 
 ```powershell
 bak session list --rpc-ws-port 17374

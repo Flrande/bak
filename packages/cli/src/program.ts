@@ -737,10 +737,10 @@ addStructuredHelp(
 const session = program
   .command('session')
   .summary('Create and inspect agent sessions')
-  .description('Manage multi-agent sessions and their dedicated browser state');
+  .description('Manage multi-agent sessions and their shared bak-window browser state');
 addStructuredHelp(session, {
   notes: [
-    'Each session owns one dedicated browser binding and one default active tab/context state.',
+    'Live sessions share one bak-controlled browser window, and each session owns one dedicated tab group plus one default active tab/context state.',
     'Use session resolve when you want a stable per-agent session without bookkeeping a session id yourself.'
   ],
   examples: [
@@ -807,7 +807,7 @@ addStructuredHelp(
     addSessionOption(
       session
         .command('ensure')
-        .description('Create or repair the dedicated browser window, group, and tracked tabs for a session')
+        .description('Create or repair the bak-controlled window, session group, and tracked tabs for a session')
         .option('--url <url>', 'initial or recovery URL')
         .option('--focus', 'focus the session window', false)
     )
@@ -835,7 +835,7 @@ addStructuredHelp(
     addSessionOption(
       session
         .command('open-tab')
-        .description('Open a tab inside the dedicated session window and tab group')
+        .description('Open a tab inside the session group in the bak-controlled window')
         .option('--url <url>', 'initial URL')
         .option('--active', 'activate the tab inside the session window', false)
         .option('--focus', 'focus the session window', false)
@@ -904,7 +904,7 @@ addStructuredHelp(
     parseRpcPort(options)
   )
 );
-addStructuredHelp(addRpcPortOption(addSessionOption(session.command('focus').description('Bring the dedicated session window to the front'))), {
+addStructuredHelp(addRpcPortOption(addSessionOption(session.command('focus').description('Bring the bak-controlled window to the front'))), {
   examples: ['bak session focus --session-id session_123 --rpc-ws-port 17374']
 }).action(async (options) =>
   invoke(
@@ -944,7 +944,7 @@ addStructuredHelp(
     addSessionOption(
       session
         .command('reset')
-        .description('Recreate the dedicated session window and grouping state')
+        .description('Recreate the session group and tracked state inside the bak-controlled window')
         .option('--url <url>', 'initial URL')
         .option('--focus', 'focus the session window', false)
     )
