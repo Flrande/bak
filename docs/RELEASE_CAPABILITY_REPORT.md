@@ -1,6 +1,6 @@
 # Release Capability Report
 
-- GeneratedAt: 2026-03-13 17:33:59 +08:00
+- GeneratedAt: 2026-03-14 01:27:07 +08:00
 - TotalCapabilities: 81
 - StabilityBreakdown: stable=55 beta=26 experimental=0
 - E2ECaseMapped: 81 / 81

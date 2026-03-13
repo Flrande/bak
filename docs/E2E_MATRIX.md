@@ -1,6 +1,6 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-13 14:36:38 +08:00
+- GeneratedAt: 2026-03-14 01:27:06 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
 | Method | Success Case | Failure Case | CaseMapped | CI Status |
