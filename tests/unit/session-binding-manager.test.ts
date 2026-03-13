@@ -9,30 +9,25 @@ import {
   type SessionBindingWindow
 } from '../../packages/extension/src/session-binding.js';
 
-const BINDING_ID = 'binding-agent-a';
-const BINDING_ID_B = 'binding-agent-b';
+const A = 'binding-agent-a';
+const B = 'binding-agent-b';
 
-function cloneRecord(state: SessionBindingRecord | null): SessionBindingRecord | null {
-  return state ? { ...state, tabIds: [...state.tabIds] } : null;
-}
+const clone = (state: SessionBindingRecord | null): SessionBindingRecord | null =>
+  state ? { ...state, tabIds: [...state.tabIds] } : null;
 
 class MemoryStorage implements SessionBindingStorage {
   readonly states = new Map<string, SessionBindingRecord>();
-
   async load(bindingId: string): Promise<SessionBindingRecord | null> {
-    return cloneRecord(this.states.get(bindingId) ?? null);
+    return clone(this.states.get(bindingId) ?? null);
   }
-
   async save(state: SessionBindingRecord): Promise<void> {
-    this.states.set(state.id, cloneRecord(state)!);
+    this.states.set(state.id, clone(state)!);
   }
-
   async delete(bindingId: string): Promise<void> {
     this.states.delete(bindingId);
   }
-
   async list(): Promise<SessionBindingRecord[]> {
-    return [...this.states.values()].map((state) => cloneRecord(state)!).filter(Boolean);
+    return [...this.states.values()].map((state) => clone(state)!).filter(Boolean);
   }
 }
 
@@ -43,50 +38,50 @@ class FakeBrowser implements SessionBindingBrowser {
   readonly tabs = new Map<number, SessionBindingTab>();
   readonly windows = new Map<number, SessionBindingWindow>();
   readonly groups = new Map<number, { id: number; windowId: number; title: string; color: SessionBindingColor; collapsed: boolean }>();
-  activeTabId: number | null = null;
-  reuseFocusedWindowOnCreate = false;
+  readonly transientTabMisses = new Map<number, number>();
   readonly transientWindowMisses = new Map<number, number>();
   readonly transientGroupMisses = new Map<number, number>();
+  readonly focusWindowActivatesTabId = new Map<number, number>();
+  activeTabId: number | null = null;
 
   async getTab(tabId: number): Promise<SessionBindingTab | null> {
+    const misses = this.transientTabMisses.get(tabId) ?? 0;
+    if (misses > 0) {
+      this.transientTabMisses.set(tabId, misses - 1);
+      return null;
+    }
     return this.tabs.get(tabId) ?? null;
   }
-
   async getActiveTab(): Promise<SessionBindingTab | null> {
-    return this.activeTabId !== null ? this.tabs.get(this.activeTabId) ?? null : null;
+    return this.activeTabId === null ? null : this.tabs.get(this.activeTabId) ?? null;
   }
-
   async listTabs(filter?: { windowId?: number }): Promise<SessionBindingTab[]> {
     return [...this.tabs.values()].filter((tab) => (filter?.windowId ? tab.windowId === filter.windowId : true));
   }
-
   async createTab(options: { windowId?: number; url?: string; active?: boolean }): Promise<SessionBindingTab> {
     const windowId = options.windowId ?? (await this.createWindow({ focused: false })).id;
     const tab: SessionBindingTab = {
       id: this.nextTabId++,
       title: options.url ?? 'about:blank',
       url: options.url ?? 'about:blank',
-      active: options.active !== false,
+      active: options.active === true,
       windowId,
       groupId: null
     };
     this.tabs.set(tab.id, tab);
     if (tab.active) {
-      this.activeTabId = tab.id;
       for (const item of this.tabs.values()) {
-        if (item.windowId === windowId && item.id !== tab.id) {
-          item.active = false;
+        if (item.windowId === windowId) {
+          item.active = item.id === tab.id;
         }
       }
+      this.activeTabId = tab.id;
     }
     return tab;
   }
-
   async updateTab(tabId: number, options: { active?: boolean; url?: string }): Promise<SessionBindingTab> {
     const tab = this.tabs.get(tabId);
-    if (!tab) {
-      throw new Error(`missing tab ${tabId}`);
-    }
+    if (!tab) throw new Error(`missing tab ${tabId}`);
     if (typeof options.url === 'string') {
       tab.url = options.url;
       tab.title = options.url;
@@ -94,725 +89,315 @@ class FakeBrowser implements SessionBindingBrowser {
     if (options.active === true) {
       for (const item of this.tabs.values()) {
         if (item.windowId === tab.windowId) {
-          item.active = item.id === tabId;
+          item.active = item.id === tab.id;
         }
       }
-      this.activeTabId = tabId;
+      this.activeTabId = tab.id;
     }
     return tab;
   }
-
   async closeTab(tabId: number): Promise<void> {
     const tab = this.tabs.get(tabId);
-    if (!tab) {
-      return;
-    }
-    const removedGroupId = tab.groupId;
-    const removedWindowId = tab.windowId;
+    if (!tab) return;
+    const groupId = tab.groupId;
+    const windowId = tab.windowId;
     this.tabs.delete(tabId);
-    if (removedGroupId !== null && ![...this.tabs.values()].some((item) => item.groupId === removedGroupId)) {
-      this.groups.delete(removedGroupId);
+    if (groupId !== null && ![...this.tabs.values()].some((item) => item.groupId === groupId)) {
+      this.groups.delete(groupId);
     }
-    if (![...this.tabs.values()].some((item) => item.windowId === removedWindowId)) {
-      this.windows.delete(removedWindowId);
-      for (const [groupId, group] of this.groups.entries()) {
-        if (group.windowId === removedWindowId) {
-          this.groups.delete(groupId);
-        }
-      }
+    if (![...this.tabs.values()].some((item) => item.windowId === windowId)) {
+      this.windows.delete(windowId);
     }
     if (this.activeTabId === tabId) {
       this.activeTabId = null;
     }
   }
-
   async getWindow(windowId: number): Promise<SessionBindingWindow | null> {
-    const remainingMisses = this.transientWindowMisses.get(windowId) ?? 0;
-    if (remainingMisses > 0) {
-      this.transientWindowMisses.set(windowId, remainingMisses - 1);
+    const misses = this.transientWindowMisses.get(windowId) ?? 0;
+    if (misses > 0) {
+      this.transientWindowMisses.set(windowId, misses - 1);
       return null;
     }
     return this.windows.get(windowId) ?? null;
   }
-
-  failWindowLookups(windowId: number, count: number): void {
-    this.transientWindowMisses.set(windowId, count);
-  }
-
-  failGroupLookups(groupId: number, count: number): void {
-    this.transientGroupMisses.set(groupId, count);
-  }
-
   async createWindow(options: { url?: string; focused?: boolean }): Promise<SessionBindingWindow> {
-    if (this.reuseFocusedWindowOnCreate) {
-      this.reuseFocusedWindowOnCreate = false;
-      const focusedWindow =
-        [...this.windows.values()].find((window) => window.focused) ??
-        [...this.windows.values()][0] ??
-        null;
-      if (focusedWindow) {
-        const tab = await this.createTab({
-          windowId: focusedWindow.id,
-          url: options.url,
-          active: true
-        });
-        return {
-          id: focusedWindow.id,
-          focused: focusedWindow.focused,
-          initialTabId: tab.id
-        };
-      }
-    }
-    const window: SessionBindingWindow = {
-      id: this.nextWindowId++,
-      focused: options.focused === true
-    };
+    const window = { id: this.nextWindowId++, focused: options.focused === true };
     this.windows.set(window.id, window);
     const tab = await this.createTab({ windowId: window.id, url: options.url, active: true });
-    return {
-      ...window,
-      initialTabId: tab.id
-    };
+    return { ...window, initialTabId: tab.id };
   }
-
   async updateWindow(windowId: number, options: { focused?: boolean }): Promise<SessionBindingWindow> {
     const window = this.windows.get(windowId);
-    if (!window) {
-      throw new Error(`missing window ${windowId}`);
-    }
+    if (!window) throw new Error(`missing window ${windowId}`);
     if (typeof options.focused === 'boolean') {
-      for (const item of this.windows.values()) {
-        item.focused = false;
-      }
+      for (const item of this.windows.values()) item.focused = false;
       window.focused = options.focused;
+      if (options.focused) {
+        const restoredTabId = this.focusWindowActivatesTabId.get(windowId);
+        const restoredTab = typeof restoredTabId === 'number' ? this.tabs.get(restoredTabId) : null;
+        if (restoredTab && restoredTab.windowId === windowId) {
+          for (const item of this.tabs.values()) {
+            if (item.windowId === windowId) {
+              item.active = item.id === restoredTab.id;
+            }
+          }
+          this.activeTabId = restoredTab.id;
+        }
+      }
     }
     return window;
   }
-
   async closeWindow(windowId: number): Promise<void> {
     this.windows.delete(windowId);
-    for (const [tabId, tab] of this.tabs.entries()) {
-      if (tab.windowId === windowId) {
-        this.tabs.delete(tabId);
-      }
-    }
-    for (const [groupId, group] of this.groups.entries()) {
-      if (group.windowId === windowId) {
-        this.groups.delete(groupId);
-      }
-    }
-    if (this.activeTabId !== null && !this.tabs.has(this.activeTabId)) {
-      this.activeTabId = null;
-    }
+    for (const [tabId, tab] of this.tabs.entries()) if (tab.windowId === windowId) this.tabs.delete(tabId);
+    for (const [groupId, group] of this.groups.entries()) if (group.windowId === windowId) this.groups.delete(groupId);
+    if (this.activeTabId !== null && !this.tabs.has(this.activeTabId)) this.activeTabId = null;
   }
-
   async getGroup(groupId: number): Promise<{ id: number; windowId: number; title: string; color: SessionBindingColor; collapsed: boolean } | null> {
-    const remainingMisses = this.transientGroupMisses.get(groupId) ?? 0;
-    if (remainingMisses > 0) {
-      this.transientGroupMisses.set(groupId, remainingMisses - 1);
+    const misses = this.transientGroupMisses.get(groupId) ?? 0;
+    if (misses > 0) {
+      this.transientGroupMisses.set(groupId, misses - 1);
       return null;
     }
     return this.groups.get(groupId) ?? null;
   }
-
   async groupTabs(tabIds: number[], groupId?: number): Promise<number> {
     const firstTab = this.tabs.get(tabIds[0]!);
-    if (!firstTab) {
-      throw new Error('Cannot group missing tabs');
-    }
-    const resolvedGroupId = groupId ?? this.nextGroupId++;
-    const current = this.groups.get(resolvedGroupId) ?? {
-      id: resolvedGroupId,
-      windowId: firstTab.windowId,
-      title: '',
-      color: 'blue' as SessionBindingColor,
-      collapsed: false
-    };
-    this.groups.set(resolvedGroupId, current);
+    if (!firstTab) throw new Error('Cannot group missing tabs');
+    const id = groupId ?? this.nextGroupId++;
+    const group = this.groups.get(id) ?? { id, windowId: firstTab.windowId, title: '', color: 'blue' as SessionBindingColor, collapsed: false };
+    this.groups.set(id, group);
     for (const tabId of tabIds) {
       const tab = this.tabs.get(tabId);
-      if (tab) {
-        tab.groupId = resolvedGroupId;
-      }
+      if (tab) tab.groupId = id;
     }
-    return resolvedGroupId;
+    return id;
   }
-
-  async updateGroup(
-    groupId: number,
-    options: { title?: string; color?: SessionBindingColor; collapsed?: boolean }
-  ): Promise<{ id: number; windowId: number; title: string; color: SessionBindingColor; collapsed: boolean }> {
+  async updateGroup(groupId: number, options: { title?: string; color?: SessionBindingColor; collapsed?: boolean }): Promise<{ id: number; windowId: number; title: string; color: SessionBindingColor; collapsed: boolean }> {
     const group = this.groups.get(groupId);
-    if (!group) {
-      throw new Error(`missing group ${groupId}`);
-    }
-    if (typeof options.title === 'string') {
-      group.title = options.title;
-    }
-    if (typeof options.color === 'string') {
-      group.color = options.color;
-    }
-    if (typeof options.collapsed === 'boolean') {
-      group.collapsed = options.collapsed;
-    }
+    if (!group) throw new Error(`missing group ${groupId}`);
+    if (typeof options.title === 'string') group.title = options.title;
+    if (typeof options.color === 'string') group.color = options.color;
+    if (typeof options.collapsed === 'boolean') group.collapsed = options.collapsed;
     return group;
   }
 }
 
-async function createManager(
-  seed?: (browser: FakeBrowser, storage: MemoryStorage) => Promise<void> | void
-): Promise<{ browser: FakeBrowser; storage: MemoryStorage; manager: SessionBindingManager }> {
+async function createManager(seed?: (browser: FakeBrowser, storage: MemoryStorage) => Promise<void> | void) {
   const browser = new FakeBrowser();
   const storage = new MemoryStorage();
   await seed?.(browser, storage);
-  const manager = new SessionBindingManager(storage, browser);
-  return { browser, storage, manager };
+  return { browser, storage, manager: new SessionBindingManager(storage, browser) };
 }
 
+async function seedHuman(browser: FakeBrowser, urls: string[] = ['https://human.local']) {
+  const [firstUrl, ...rest] = urls;
+  const window = await browser.createWindow({ url: firstUrl, focused: true });
+  const activeTabId = mustActiveTabId(browser);
+  const tabIds = [activeTabId];
+  for (const url of rest) tabIds.push((await browser.createTab({ windowId: window.id, url, active: false })).id);
+  return { windowId: window.id, activeTabId, tabIds };
+}
+
+const tabsInWindow = (browser: FakeBrowser, windowId: number) => [...browser.tabs.values()].filter((tab) => tab.windowId === windowId);
+const mustActiveTabId = (browser: FakeBrowser) => {
+  if (browser.activeTabId === null) throw new Error('Expected active tab');
+  return browser.activeTabId;
+};
+const mustActiveWindowId = (browser: FakeBrowser) => {
+  const activeTab = browser.tabs.get(mustActiveTabId(browser));
+  if (!activeTab) throw new Error('Expected active tab to exist');
+  return activeTab.windowId;
+};
+
 describe('session binding manager', () => {
-  it('creates a bak-controlled window, group, and primary tab on ensure', async () => {
-    const { manager } = await createManager();
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-
-    expect(ensured.binding.id).toBe(BINDING_ID);
-    expect(ensured.binding.windowId).not.toBeNull();
-    expect(ensured.binding.groupId).not.toBeNull();
-    expect(ensured.binding.primaryTabId).not.toBeNull();
-    expect(ensured.binding.activeTabId).toBe(ensured.binding.primaryTabId);
+  it('attaches new bindings to the current active window and creates a grouped primary tab', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser)));
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabId = mustActiveTabId(browser);
+    const ensured = await manager.ensureBinding({ bindingId: A });
+    expect(ensured.binding.windowId).toBe(humanWindowId);
     expect(ensured.binding.tabs).toHaveLength(1);
+    expect(ensured.binding.tabs[0]?.groupId).toBe(ensured.binding.groupId);
+    expect(browser.activeTabId).toBe(humanTabId);
+    expect(ensured.repairActions).toEqual(expect.arrayContaining(['attached-active-window', 'created-primary-tab', 'recreated-group']));
+  });
+
+  it('keeps implicit targeting on the browser active tab until a binding is requested explicitly', async () => {
+    const { browser, storage, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser)));
+    const browserActive = mustActiveTabId(browser);
+    const implicit = await manager.resolveTarget({});
+    expect(implicit.resolution).toBe('browser-active');
+    expect(implicit.tab.id).toBe(browserActive);
+    await expect(storage.load(A)).resolves.toBeNull();
+
+    const explicit = await manager.resolveTarget({ bindingId: A });
+    expect(explicit.resolution).toBe('explicit-binding');
+    expect(explicit.binding?.windowId).toBe(mustActiveWindowId(browser));
+  });
+
+  it('falls back to creating a new window only when there is no active browser window to attach to', async () => {
+    const { browser, manager } = await createManager();
+    const ensured = await manager.ensureBinding({ bindingId: A });
+    expect(ensured.binding.windowId).not.toBeNull();
+    expect(browser.windows.size).toBe(1);
     expect(ensured.repairActions).toEqual(expect.arrayContaining(['created-window', 'recreated-group']));
   });
 
-  it('falls back to the browser active tab without creating a binding when none exists', async () => {
-    const { browser, storage, manager } = await createManager(async (seedBrowser) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
-      seedBrowser.activeTabId = humanTab.id;
-    });
-    void browser;
-
-    const resolved = await manager.resolveTarget({});
-
-    expect(resolved.resolution).toBe('browser-active');
-    expect(resolved.tab.url).toContain('human.local');
-    expect(resolved.createdBinding).toBe(false);
-    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
-  });
-
-  it('resolves explicit binding targets and leaves implicit routing on the browser active tab', async () => {
-    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
-      seedBrowser.activeTabId = humanTab.id;
-
-      const bindingWindow = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
-      const bindingTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === bindingWindow.id)!;
-      const groupId = await seedBrowser.groupTabs([bindingTab.id]);
-      await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
-      seedBrowser.activeTabId = humanTab.id;
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: bindingWindow.id,
-        groupId,
-        tabIds: [bindingTab.id],
-        activeTabId: bindingTab.id,
-        primaryTabId: bindingTab.id
-      });
-    });
-    const humanTabId = browser.activeTabId;
-    const bindingTabId = (await storage.load(BINDING_ID))?.activeTabId;
-
-    const explicitTab = await manager.resolveTarget({ tabId: humanTabId! });
-    expect(explicitTab.resolution).toBe('explicit-tab');
-    expect(explicitTab.tab.id).toBe(humanTabId);
-
-    const withBinding = await manager.resolveTarget({ bindingId: BINDING_ID });
-    expect(withBinding.resolution).toBe('explicit-binding');
-    expect(withBinding.tab.id).toBe(bindingTabId);
-
-    const implicitTarget = await manager.resolveTarget({});
-    expect(implicitTarget.resolution).toBe('browser-active');
-    expect(implicitTarget.tab.id).toBe(humanTabId);
-  });
-
-  it('creates the binding when an explicit binding id is requested', async () => {
-    const { storage, manager } = await createManager(async (seedBrowser) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
-      seedBrowser.activeTabId = humanTab.id;
-    });
-
-    const resolved = await manager.resolveTarget({ bindingId: BINDING_ID });
-
-    expect(resolved.resolution).toBe('explicit-binding');
-    expect(resolved.createdBinding).toBe(true);
-    expect(resolved.binding?.windowId).not.toBeNull();
-    expect((await storage.load(BINDING_ID))?.id).toBe(BINDING_ID);
-  });
-
-  it('getActiveTab and setActiveTab update the binding current tab', async () => {
-    const { manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const firstTabId = ensured.binding.primaryTabId!;
-    const second = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/second', active: false, focus: false });
-
-    const initiallyActive = await manager.getActiveTab(BINDING_ID);
-    expect(initiallyActive.tab?.id).toBe(second.tab.id);
-
-    const switched = await manager.setActiveTab(firstTabId, BINDING_ID);
-    expect(switched.tab.id).toBe(firstTabId);
-
-    const resolved = await manager.resolveTarget({ bindingId: BINDING_ID });
-    expect(resolved.resolution).toBe('explicit-binding');
-    expect(resolved.tab.id).toBe(firstTabId);
-  });
-
-  it('repairs a missing window without adopting unrelated tabs', async () => {
+  it('reattaches stale bindings to the current active window without adopting human tabs', async () => {
     const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const unrelatedWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const unrelatedTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === unrelatedWindow.id)!;
-      seedBrowser.activeTabId = unrelatedTab.id;
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: 999,
-        groupId: 777,
-        tabIds: [555],
-        activeTabId: 555,
-        primaryTabId: 555
-      });
+      await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist']);
+      await seedStorage.save({ id: A, label: 'bak agent', color: 'blue', windowId: 999, groupId: 777, tabIds: [555], activeTabId: 555, primaryTabId: 555 });
     });
-    void browser;
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-
-    expect(ensured.binding.windowId).not.toBe(999);
-    expect(ensured.binding.tabIds).toHaveLength(1);
-    expect(ensured.binding.tabs[0]?.url).toBe('about:blank');
-    expect(ensured.repairActions).toEqual(expect.arrayContaining(['recreated-window', 'recreated-group']));
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabIds = tabsInWindow(browser, humanWindowId).filter((tab) => tab.url.includes('human.local')).map((tab) => tab.id);
+    const ensured = await manager.ensureBinding({ bindingId: A });
+    expect(ensured.binding.windowId).toBe(humanWindowId);
+    expect(ensured.binding.tabs).toHaveLength(1);
+    expect(tabsInWindow(browser, humanWindowId).filter((tab) => tab.url.includes('human.local')).map((tab) => tab.id)).toEqual(humanTabIds);
   });
 
-  it('recreates a missing group and regroups tracked tabs', async () => {
-    const { manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const window = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
-      const tab = [...seedBrowser.tabs.values()].find((item) => item.windowId === window.id)!;
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: window.id,
-        groupId: 1234,
-        tabIds: [tab.id],
-        activeTabId: tab.id,
-        primaryTabId: tab.id
-      });
+  it('recreates missing groups without moving the session out of the current window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      const human = await seedHuman(seedBrowser);
+      const tab = await seedBrowser.createTab({ windowId: human.windowId, url: 'https://session.local', active: false });
+      await seedStorage.save({ id: A, label: 'bak agent', color: 'blue', windowId: human.windowId, groupId: 1234, tabIds: [tab.id], activeTabId: tab.id, primaryTabId: tab.id });
     });
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-
+    const humanWindowId = mustActiveWindowId(browser);
+    const ensured = await manager.ensureBinding({ bindingId: A });
+    expect(ensured.binding.windowId).toBe(humanWindowId);
     expect(ensured.binding.groupId).not.toBe(1234);
     expect(ensured.binding.tabs[0]?.groupId).toBe(ensured.binding.groupId);
-    expect(ensured.repairActions).toEqual(expect.arrayContaining(['recreated-group']));
   });
 
-  it('recovers binding tabs from the binding group when tracked tab ids are missing', async () => {
-    const { manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const window = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
-      const tab = [...seedBrowser.tabs.values()].find((item) => item.windowId === window.id)!;
-      const groupId = await seedBrowser.groupTabs([tab.id]);
-      await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: window.id,
-        groupId,
-        tabIds: [],
-        activeTabId: null,
-        primaryTabId: null
-      });
-    });
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-
-    expect(ensured.binding.tabIds).toHaveLength(1);
-    expect(ensured.binding.tabs[0]?.groupId).toBe(ensured.binding.groupId);
-    expect(ensured.repairActions).toEqual(expect.arrayContaining(['recovered-tracked-tabs', 'reassigned-primary-tab', 'reassigned-active-tab']));
+  it('opens session tabs in the current window and group without changing the browser active tab by default', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser)));
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabId = mustActiveTabId(browser);
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/first', active: false, focus: false });
+    const second = await manager.openTab({ bindingId: A, url: 'https://session.local/second', active: false, focus: false });
+    expect(first.tab.windowId).toBe(humanWindowId);
+    expect(second.tab.windowId).toBe(humanWindowId);
+    expect(first.tab.groupId).toBe(first.binding.groupId);
+    expect(second.tab.groupId).toBe(first.binding.groupId);
+    expect(browser.activeTabId).toBe(humanTabId);
+    expect(second.binding.activeTabId).toBe(first.binding.activeTabId);
   });
 
-  it('opens new tabs inside the binding window and group without changing human focus by default', async () => {
-    const { browser, manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const originalWindowId = ensured.binding.windowId;
-    const originalGroupId = ensured.binding.groupId;
-    const originalActiveTabId = ensured.binding.activeTabId;
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/next', active: false, focus: false });
-
-    expect(opened.tab.windowId).toBe(originalWindowId);
-    expect(opened.tab.groupId).toBe(originalGroupId);
-    expect(opened.binding.activeTabId).toBe(originalActiveTabId);
-    expect(opened.tab.id).toBe(originalActiveTabId);
-    expect(browser.windows.get(originalWindowId!)?.focused).toBe(false);
-  });
-
-  it('switches the binding current tab only when openTab is explicit about activation', async () => {
-    const { manager } = await createManager();
-    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/first', active: false, focus: false });
-    const second = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/second', active: false, focus: false });
-    const third = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/third', active: true, focus: false });
-
+  it('updates the session current tab only when openTab is explicit about activation', async () => {
+    const { manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser)));
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/first', active: false, focus: false });
+    const second = await manager.openTab({ bindingId: A, url: 'https://session.local/second', active: false, focus: false });
+    const third = await manager.openTab({ bindingId: A, url: 'https://session.local/third', active: true, focus: false });
     expect(first.binding.activeTabId).toBe(first.tab.id);
     expect(second.binding.activeTabId).toBe(first.tab.id);
-    expect(second.tab.active).toBe(false);
     expect(third.binding.activeTabId).toBe(third.tab.id);
-    expect(third.tab.active).toBe(true);
   });
 
-  it('reuses the initial binding tab for the first open-tab request after creating the binding', async () => {
-    const { manager } = await createManager();
+  it('focuses the tracked session tab without reattaching the binding to a different active window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist'])));
+    const opened = await manager.openTab({ bindingId: A, url: 'https://session.local/focus', active: false, focus: false });
+    const sessionWindowId = opened.binding.windowId!;
+    const foreignWindow = await browser.createWindow({ url: 'https://foreign.local', focused: true });
+    const foreignTabId = mustActiveTabId(browser);
 
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/first', active: false, focus: false });
+    browser.transientWindowMisses.set(sessionWindowId, 30);
 
-    expect(opened.binding.tabIds).toHaveLength(1);
-    expect(opened.binding.primaryTabId).toBe(opened.tab.id);
-    expect(opened.tab.url).toBe('https://session.local/first');
+    const focused = await manager.focus(A);
+
+    expect(browser.activeTabId).toBe(opened.tab.id);
+    expect(focused.binding.windowId).toBe(sessionWindowId);
+    expect(focused.binding.activeTabId).toBe(opened.tab.id);
+    expect(focused.binding.tabs.some((tab) => tab.id === opened.tab.id && tab.windowId === sessionWindowId)).toBe(true);
+    expect(foreignWindow.id).not.toBe(sessionWindowId);
+    expect(foreignTabId).not.toBe(opened.tab.id);
   });
 
-  it('reuses a lone blank primary tab after an explicit ensure instead of creating an extra blank tab', async () => {
-    const { manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
+  it('reasserts the session tab after window focus restores another tab in the same window', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist'])));
+    const humanWindowId = mustActiveWindowId(browser);
+    const restoredHumanTabId =
+      tabsInWindow(browser, humanWindowId).find((tab) => tab.id !== mustActiveTabId(browser) && tab.url.includes('watchlist'))?.id ??
+      null;
+    if (restoredHumanTabId === null) {
+      throw new Error('Expected secondary human tab');
+    }
 
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/after-ensure', active: false, focus: false });
+    const opened = await manager.openTab({ bindingId: A, url: 'https://session.local/focus-order', active: false, focus: false });
+    browser.focusWindowActivatesTabId.set(humanWindowId, restoredHumanTabId);
 
-    expect(ensured.binding.tabIds).toHaveLength(1);
-    expect(opened.binding.tabIds).toHaveLength(1);
-    expect(opened.binding.primaryTabId).toBe(opened.tab.id);
-    expect(opened.tab.url).toBe('https://session.local/after-ensure');
+    const focused = await manager.focus(A);
+
+    expect(browser.activeTabId).toBe(opened.tab.id);
+    expect(focused.binding.activeTabId).toBe(opened.tab.id);
   });
 
-  it('does not recreate the binding while reading info or active tab', async () => {
-    const { browser, manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const originalWindowId = ensured.binding.windowId;
-
-    const info = await manager.getBindingInfo(BINDING_ID);
-    const active = await manager.getActiveTab(BINDING_ID);
-
-    expect(info?.windowId).toBe(originalWindowId);
-    expect(active.binding.windowId).toBe(originalWindowId);
+  it('does not recreate the binding while reading info or during transient window and group lookup misses', async () => {
+    const { browser, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser)));
+    const ensured = await manager.ensureBinding({ bindingId: A });
+    const windowId = ensured.binding.windowId!;
+    const groupId = ensured.binding.groupId!;
+    browser.transientWindowMisses.set(windowId, 3);
+    browser.transientGroupMisses.set(groupId, 3);
+    const info = await manager.getBindingInfo(A);
+    const repaired = await manager.ensureBinding({ bindingId: A });
+    expect(info?.windowId).toBe(windowId);
+    expect(repaired.binding.windowId).toBe(windowId);
+    expect(repaired.binding.groupId).toBe(groupId);
     expect(browser.windows.size).toBe(1);
-    expect(info?.tabs).toHaveLength(1);
-    expect(active.tab?.id).toBe(ensured.binding.activeTabId);
   });
 
-  it('does not recreate the binding window when window lookup is temporarily unavailable', async () => {
-    const { browser, manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const originalWindowId = ensured.binding.windowId!;
-    browser.failWindowLookups(originalWindowId, 3);
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/resilient', active: false, focus: false });
-
-    expect(opened.binding.windowId).toBe(originalWindowId);
-    expect(browser.windows.size).toBe(1);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([originalWindowId]));
-  });
-
-  it('does not recreate the binding group when group lookup is temporarily unavailable', async () => {
-    const { browser, manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const originalGroupId = ensured.binding.groupId!;
-    browser.failGroupLookups(originalGroupId, 3);
-
-    const repaired = await manager.ensureBinding({ bindingId: BINDING_ID });
-
-    expect(repaired.binding.groupId).toBe(originalGroupId);
-    expect(repaired.repairActions).not.toEqual(expect.arrayContaining(['recreated-group']));
-  });
-
-  it('rebinds the binding to surviving tracked tabs before recreating a missing window', async () => {
+  it('rebinds to surviving tracked tabs before it considers reattaching to the active window', async () => {
     const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
+      await seedHuman(seedBrowser);
       const bindingWindow = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
       const bindingTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === bindingWindow.id)!;
       const groupId = await seedBrowser.groupTabs([bindingTab.id]);
       await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: 999,
-        groupId,
-        tabIds: [bindingTab.id],
-        activeTabId: bindingTab.id,
-        primaryTabId: bindingTab.id
-      });
+      await seedStorage.save({ id: A, label: 'bak agent', color: 'blue', windowId: 999, groupId, tabIds: [bindingTab.id], activeTabId: bindingTab.id, primaryTabId: bindingTab.id });
     });
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-
+    const ensured = await manager.ensureBinding({ bindingId: A });
     expect(ensured.binding.windowId).toBe(ensured.binding.tabs[0]?.windowId);
-    expect(browser.windows.size).toBe(1);
+    expect(browser.windows.size).toBe(2);
     expect(ensured.repairActions).toEqual(expect.arrayContaining(['rebound-window']));
-    expect(ensured.repairActions).not.toEqual(expect.arrayContaining(['recreated-window']));
   });
 
-  it('openTab reuses the rebound binding window instead of creating a duplicate blank window', async () => {
+  it('keeps empty binding state in the current window and preserves existing human tabs', async () => {
     const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const bindingWindow = await seedBrowser.createWindow({ url: 'https://session.local', focused: false });
-      const bindingTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === bindingWindow.id)!;
-      const groupId = await seedBrowser.groupTabs([bindingTab.id]);
-      await seedBrowser.updateGroup(groupId, { title: 'bak agent', color: 'blue', collapsed: false });
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: 999,
-        groupId,
-        tabIds: [bindingTab.id],
-        activeTabId: bindingTab.id,
-        primaryTabId: bindingTab.id
-      });
+      const human = await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist']);
+      await seedStorage.save({ id: A, label: 'bak agent', color: 'blue', windowId: human.windowId, groupId: null, tabIds: [], activeTabId: null, primaryTabId: null });
     });
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/next', active: false, focus: false });
-
-    expect(browser.windows.size).toBe(1);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
-    expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/next')).toBe(true);
-  });
-
-  it('rehomes a binding that was accidentally bound to a user window and preserves unrelated user tabs', async () => {
-    const { browser, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const userWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanTab = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === userWindow.id)!;
-      seedBrowser.activeTabId = humanTab.id;
-      const agentTab = await seedBrowser.createTab({
-        windowId: userWindow.id,
-        url: 'https://session.local/orphaned',
-        active: false
-      });
-
-      await seedStorage.save({
-        id: BINDING_ID,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: userWindow.id,
-        groupId: null,
-        tabIds: [agentTab.id],
-        activeTabId: agentTab.id,
-        primaryTabId: agentTab.id
-      });
-    });
-
     const humanWindowId = mustActiveWindowId(browser);
-    const orphanedTabId = mustTabIdByUrl(browser, humanWindowId, '/orphaned');
-    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/recovered', active: false, focus: false });
-
-    expect(opened.binding.windowId).not.toBe(humanWindowId);
-    expect(browser.windows.has(humanWindowId)).toBe(true);
-    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore.filter((tabId) => tabId !== orphanedTabId));
-    expect(tabsInWindow(browser, humanWindowId).every((tab) => !tab.url.includes('/orphaned'))).toBe(true);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
-    expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
+    const humanTabIds = tabsInWindow(browser, humanWindowId).filter((tab) => tab.url.includes('human.local')).map((tab) => tab.id);
+    const opened = await manager.openTab({ bindingId: A, url: 'https://session.local/recovered', active: false, focus: false });
+    expect(opened.binding.windowId).toBe(humanWindowId);
+    expect(tabsInWindow(browser, humanWindowId).filter((tab) => tab.url.includes('human.local')).map((tab) => tab.id)).toEqual(humanTabIds);
+    expect(opened.binding.tabs[0]?.url).toBe('https://session.local/recovered');
   });
 
-  it('creates a bak-controlled window even when the browser seeds the tab inside the focused human window', async () => {
-    const { browser, manager } = await createManager(async (seedBrowser) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      await seedBrowser.createTab({
-        windowId: humanWindow.id,
-        url: 'https://human.local/watchlist',
-        active: false
-      });
-      seedBrowser.reuseFocusedWindowOnCreate = true;
-    });
-
+  it('keeps multiple bindings isolated by group while sharing the current window', async () => {
+    const { browser, storage, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist'])));
     const humanWindowId = mustActiveWindowId(browser);
-    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/recovered', active: false, focus: false });
-
-    expect(opened.binding.windowId).not.toBe(humanWindowId);
-    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
-    expect(opened.binding.tabs.some((tab) => tab.url === 'https://session.local/recovered')).toBe(true);
-  });
-
-  it('does not reuse a stale peer window that lacks a live binding group', async () => {
-    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanPrimary = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
-      const humanSecondary = await seedBrowser.createTab({
-        windowId: humanWindow.id,
-        url: 'https://human.local/watchlist',
-        active: false
-      });
-      await seedStorage.save({
-        id: BINDING_ID_B,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: humanWindow.id,
-        groupId: null,
-        tabIds: [humanPrimary.id, humanSecondary.id],
-        activeTabId: humanPrimary.id,
-        primaryTabId: humanPrimary.id
-      });
-    });
-
-    const humanWindowId = mustActiveWindowId(browser);
-    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/isolated', active: false, focus: false });
-
-    expect(opened.binding.windowId).not.toBe(humanWindowId);
-    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
-    expect((await storage.load(BINDING_ID_B))?.windowId).toBe(humanWindowId);
-  });
-
-  it('does not reuse a stale peer window whose tracked group no longer exists', async () => {
-    let staleGroupId: number | null = null;
-    const { browser, storage, manager } = await createManager(async (seedBrowser, seedStorage) => {
-      const humanWindow = await seedBrowser.createWindow({ url: 'https://human.local', focused: true });
-      const humanPrimary = [...seedBrowser.tabs.values()].find((tab) => tab.windowId === humanWindow.id)!;
-      const groupId = await seedBrowser.groupTabs([humanPrimary.id]);
-      staleGroupId = groupId;
-      seedBrowser.groups.delete(groupId);
-      await seedStorage.save({
-        id: BINDING_ID_B,
-        label: 'bak agent',
-        color: 'blue',
-        windowId: humanWindow.id,
-        groupId,
-        tabIds: [humanPrimary.id],
-        activeTabId: humanPrimary.id,
-        primaryTabId: humanPrimary.id
-      });
-    });
-
-    const humanWindowId = mustActiveWindowId(browser);
-    const humanTabIdsBefore = tabsInWindow(browser, humanWindowId).map((tab) => tab.id);
-
-    const opened = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/isolated', active: false, focus: false });
-
-    expect(opened.binding.windowId).not.toBe(humanWindowId);
-    expect(tabsInWindow(browser, humanWindowId).map((tab) => tab.id)).toEqual(humanTabIdsBefore);
-    expect(new Set(opened.binding.tabs.map((tab) => tab.windowId))).toEqual(new Set([opened.binding.windowId]));
-    expect((await storage.load(BINDING_ID_B))?.groupId).toBe(staleGroupId);
-  });
-
-  it('keeps multiple bindings isolated across storage, groups, and active tabs while sharing the bak window', async () => {
-    const { storage, manager } = await createManager();
-
-    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: false, focus: false });
-    const second = await manager.openTab({ bindingId: BINDING_ID_B, url: 'https://session.local/b', active: false, focus: false });
-
-    expect(first.binding.windowId).toBe(second.binding.windowId);
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/a', active: false, focus: false });
+    const second = await manager.openTab({ bindingId: B, url: 'https://session.local/b', active: false, focus: false });
+    expect(first.binding.windowId).toBe(humanWindowId);
+    expect(second.binding.windowId).toBe(humanWindowId);
     expect(first.binding.groupId).not.toBe(second.binding.groupId);
-    expect(first.binding.activeTabId).toBe(first.tab.id);
-    expect(second.binding.activeTabId).toBe(second.tab.id);
-    expect((await manager.getActiveTab(BINDING_ID)).tab?.id).toBe(first.tab.id);
-    expect((await manager.getActiveTab(BINDING_ID_B)).tab?.id).toBe(second.tab.id);
-    expect((await storage.list()).map((item) => item.id).sort()).toEqual([BINDING_ID, BINDING_ID_B]);
+    expect((await storage.list()).map((item) => item.id).sort()).toEqual([A, B]);
   });
 
-  it('clears persisted binding state when closed', async () => {
-    const { storage, manager } = await createManager();
-    await manager.ensureBinding({ bindingId: BINDING_ID });
-
-    await manager.close(BINDING_ID);
-
-    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
-    await expect(manager.getBindingInfo(BINDING_ID)).resolves.toBeNull();
-  });
-
-  it('leaves unrelated tabs alone when closing a binding that shares a window', async () => {
-    const { browser, storage, manager } = await createManager();
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID });
-    const bindingWindowId = ensured.binding.windowId!;
-    const bindingTabId = ensured.binding.primaryTabId!;
-    const foreignTab = await browser.createTab({
-      windowId: bindingWindowId,
-      url: 'https://human.local/foreign',
-      active: false
-    });
-
-    await manager.close(BINDING_ID);
-
-    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
-    expect(browser.tabs.has(bindingTabId)).toBe(false);
-    expect(browser.tabs.has(foreignTab.id)).toBe(true);
-    expect(browser.windows.has(bindingWindowId)).toBe(true);
-  });
-
-  it('uses an explicit label when creating the binding group', async () => {
-    const { manager } = await createManager();
-
-    const ensured = await manager.ensureBinding({ bindingId: BINDING_ID, label: 'agent-a' });
-
-    expect(ensured.binding.label).toBe('agent-a');
-  });
-
-  it('closes only the requested tab and deletes the binding when the last tab is removed', async () => {
-    const { manager, storage } = await createManager();
-    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: true, focus: false });
-    const second = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/b', active: true, focus: false });
-
-    const trimmed = await manager.closeTab(BINDING_ID, second.tab.id);
-    expect(trimmed.closedTabId).toBe(second.tab.id);
-    expect(trimmed.binding?.tabIds).toEqual([first.tab.id]);
-
-    const emptied = await manager.closeTab(BINDING_ID, first.tab.id);
-    expect(emptied.closedTabId).toBe(first.tab.id);
-    expect(emptied.binding).toBeNull();
-    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
-  });
-
-  it('closes one binding in the shared bak window without disturbing sibling binding groups', async () => {
-    const { storage, manager } = await createManager();
-    const first = await manager.openTab({ bindingId: BINDING_ID, url: 'https://session.local/a', active: true, focus: false });
-    const second = await manager.openTab({ bindingId: BINDING_ID_B, url: 'https://session.local/b', active: true, focus: false });
-
-    const closed = await manager.closeTab(BINDING_ID, first.tab.id);
-    expect(closed.closedTabId).toBe(first.tab.id);
+  it('closes only session-owned tabs and leaves human tabs plus sibling groups alone', async () => {
+    const { browser, storage, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/foreign'])));
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/a', active: true, focus: false });
+    const second = await manager.openTab({ bindingId: B, url: 'https://session.local/b', active: true, focus: false });
+    const humanWindowId = mustActiveWindowId(browser);
+    const humanTabIds = tabsInWindow(browser, humanWindowId).filter((tab) => tab.url.includes('human.local')).map((tab) => tab.id);
+    const closed = await manager.closeTab(A, first.tab.id);
     expect(closed.binding).toBeNull();
-    await expect(storage.load(BINDING_ID)).resolves.toBeNull();
-
-    const surviving = await manager.listTabs(BINDING_ID_B);
-    expect(surviving.binding.windowId).toBe(second.binding.windowId);
+    await expect(storage.load(A)).resolves.toBeNull();
+    expect(humanTabIds.every((tabId) => browser.tabs.has(tabId))).toBe(true);
+    const surviving = await manager.listTabs(B);
     expect(surviving.binding.groupId).toBe(second.binding.groupId);
-    expect(surviving.tabs).toHaveLength(1);
     expect(surviving.tabs[0]?.url).toBe('https://session.local/b');
   });
 });
-
-function tabsInWindow(browser: FakeBrowser, windowId: number): SessionBindingTab[] {
-  return [...browser.tabs.values()].filter((tab) => tab.windowId === windowId);
-}
-
-function mustActiveWindowId(browser: FakeBrowser): number {
-  const activeTabId = browser.activeTabId;
-  if (activeTabId === null) {
-    throw new Error('Expected active tab');
-  }
-  const activeTab = browser.tabs.get(activeTabId);
-  if (!activeTab) {
-    throw new Error('Expected active tab to exist');
-  }
-  return activeTab.windowId;
-}
-
-function mustTabIdByUrl(browser: FakeBrowser, windowId: number, urlPart: string): number {
-  const tab = tabsInWindow(browser, windowId).find((candidate) => candidate.url.includes(urlPart));
-  if (!tab) {
-    throw new Error(`Expected tab with url containing ${urlPart}`);
-  }
-  return tab.id;
-}

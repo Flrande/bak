@@ -19,7 +19,7 @@ Use this skill when browser work should happen through `bak` instead of a direct
 - Browser-affecting commands auto-resolve a session with this precedence: `--session-id` > `BAK_SESSION_ID` > `--client-name` > `BAK_CLIENT_NAME` > `CODEX_THREAD_ID`.
 - For normal agent work, prefer a stable `--client-name` or the existing `CODEX_THREAD_ID`. Use explicit `sessionId` values for handoff, debugging, or cross-process reuse. Use `bak session resolve --client-name <name> --rpc-ws-port 17374` when you need to see or create the concrete session mapping.
 - Use `bak session ensure --client-name <name> --rpc-ws-port 17374` before opening agent-owned tabs if you need an explicit repair step, but most browser-affecting commands can now auto-repair the session binding on demand.
-- Use `bak session open-tab --active` when later page or element commands should target the new tab immediately. Use `bak session close-tab` to close a session-owned tab. Add `--focus` only when the human user needs the session window brought forward.
+- Use `bak session open-tab --active` when later page or element commands should target the new tab immediately. Use `bak session close-tab` to close a session-owned tab. Add `--focus` only when the human user needs the session tab brought to the front in the current window.
 - Pass `--client-name` or another valid session identity on session-owned page, element, keyboard, mouse, file, context, network, table, inspect, capture, and debug commands. `--tab-id` only overrides the target tab inside the resolved session.
 - Use `bak tabs list`, `bak tabs get`, and `bak tabs active` for browser-wide diagnostics. Treat `bak tabs new`, `bak tabs focus`, and `bak tabs close` as recovery-only compatibility commands that still operate on the resolved session.
 - Verify each major action with `bak page wait`, `bak page title`, `bak page url`, `bak page snapshot`, or `bak debug dump-state`.
@@ -38,7 +38,7 @@ Use this skill when browser work should happen through `bak` instead of a direct
 
 1. Health-check the runtime with `bak doctor`, and use `bak status` or `bak stop` only when you need to inspect or reset it.
 2. If needed, follow the setup flow in [references/setup.md](./references/setup.md).
-3. Resolve the session from a stable client identity, ensure the shared bak-controlled window plus the session's group if needed, and open or target the correct tab inside that session.
+3. Resolve the session from a stable client identity, ensure the current browser window plus the session's group if needed, and open or target the correct tab inside that session.
 4. Use `bak session open-tab --active` when later session-scoped commands should move onto the new tab immediately.
 5. Use page, element, keyboard, mouse, file, context, network, table, inspect, capture, and debug commands with the same resolved session identity. Keep explicit `sessionId` values only when handoff or debugging needs them.
 6. For dynamic sites, prefer inspect, runtime, network, and table primitives before trying to scrape visible text only.

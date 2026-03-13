@@ -187,7 +187,7 @@ test.describe('CLI session binding workflows', () => {
     harness = undefined;
   });
 
-  test('keeps the human on page A while the agent works inside the bak-controlled session window', async () => {
+  test('keeps the human on page A while the agent works inside a grouped session tab in the same window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -202,11 +202,13 @@ test.describe('CLI session binding workflows', () => {
       const bindingPage = await openSessionPage('/spa.html');
       const info = await sessionBrowserState();
       const bindingWindowId = must(info.browser?.windowId, 'Expected session binding window id');
+      const bindingGroupId = must(info.browser?.groupId, 'Expected session binding group id');
       await expect(bindingPage.page).toHaveURL(/\/spa\.html\?/);
 
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
       await expect(humanPage.locator('#name-input')).toBeVisible();
-      expect(bindingWindowId).not.toBe(humanWindowId);
+      expect(bindingWindowId).toBe(humanWindowId);
+      expect(info.tabs.every((tab) => tab.groupId === bindingGroupId)).toBe(true);
 
       const bindingTabId = await sessionActiveTabId();
       const bindingUrl = await harness.rpcCall<{ url: string }>('page.url', { tabId: bindingTabId });
@@ -349,7 +351,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('repeated ensure and open-tab calls reuse the existing session binding window instead of spawning duplicate blank windows', async () => {
+  test('repeated ensure and open-tab calls reuse the current window and session group instead of spawning duplicate windows', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -371,7 +373,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('auto-closes the session when the last tracked tab is manually closed without hijacking unrelated tabs in the old binding window', async () => {
+  test('auto-closes the session when the last tracked tab is manually closed without hijacking unrelated tabs in the current window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -400,7 +402,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('does not focus the session binding window by default and focuses it only on explicit command', async () => {
+  test('does not focus the session tab by default and focuses it only on explicit command', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -422,11 +424,12 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('groups session-created tabs automatically inside the bak-controlled session window', async () => {
+  test('groups session-created tabs automatically inside the current browser window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
 
+    const humanWindowId = must((await harness.rpcCall<{ tab: { windowId: number } | null }>('tabs.getActive')).tab?.windowId, 'Expected active human window');
     const first = await openSessionPage('/');
     const second = await openSessionPage('/spa.html');
     try {
@@ -435,6 +438,7 @@ test.describe('CLI session binding workflows', () => {
       const groupId = must(bindingState.groupId, 'Expected session binding group id');
 
       expect(bindingState.tabs.length).toBeGreaterThanOrEqual(2);
+      expect(bindingState.windowId).toBe(humanWindowId);
       expect(new Set(bindingState.tabs.map((tab) => tab.windowId)).size).toBe(1);
       expect(bindingState.tabs.every((tab) => tab.groupId === groupId)).toBe(true);
     } finally {
@@ -450,6 +454,7 @@ test.describe('CLI session binding workflows', () => {
 
     const { page: humanPage } = await harness.openHumanPage('/form.html');
     try {
+      const humanWindowId = must((await harness.rpcCall<{ tab: { windowId: number } | null }>('tabs.getActive')).tab?.windowId, 'Expected active human window');
       const opened = await runHarnessCliWithRetry<{ browser: { windowId: number | null }; tab: { id: number; url: string; windowId: number } }>([
         'session',
         'open-tab',
@@ -459,7 +464,7 @@ test.describe('CLI session binding workflows', () => {
       const info = await sessionBrowserState();
       const bindingState = must(info.browser, 'Expected session browser metadata');
 
-      expect(bindingState.windowId).not.toBeNull();
+      expect(bindingState.windowId).toBe(humanWindowId);
       expect(opened.tab.windowId).toBe(bindingState.windowId);
       expect(opened.tab.url).toBe('http://127.0.0.1:4173/');
       await expect(humanPage).toHaveURL(/\/form\.html\?/);
@@ -490,7 +495,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('auto-closes the session when the bak-controlled window is manually closed', async () => {
+  test('auto-closes the session when all tracked session tabs are manually closed in the current window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -505,7 +510,7 @@ test.describe('CLI session binding workflows', () => {
     await expect.poll(() => runHarnessCliFailure(['page', 'url']), { timeout: 10_000 }).toContain('Session not found');
   });
 
-  test('keeps multiple sessions in one bak-controlled window while isolating them by group', async () => {
+  test('keeps multiple sessions in the current window while isolating them by group', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -514,6 +519,9 @@ test.describe('CLI session binding workflows', () => {
     const first = await openNamedSessionPage('shared-window-a', '/');
     const second = await openNamedSessionPage('shared-window-b', '/spa.html');
     try {
+      const humanWindowId = must((await harness.rpcCall<{ tab: { windowId: number } | null }>('tabs.getActive')).tab?.windowId, 'Expected active human window');
+      expect(first.browser.windowId).toBe(humanWindowId);
+      expect(second.browser.windowId).toBe(humanWindowId);
       expect(first.browser.windowId).toBe(second.browser.windowId);
       expect(first.tab.windowId).toBe(second.tab.windowId);
       expect(first.browser.groupId).not.toBe(second.browser.groupId);
@@ -552,7 +560,7 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
-  test('rehomes a stale session binding that was incorrectly bound to the human window', async () => {
+  test('repairs a stale session binding while keeping it grouped in the human window', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');
     }
@@ -596,12 +604,18 @@ test.describe('CLI session binding workflows', () => {
     const allTabs = await harness.rpcCall<{ tabs: Array<{ id: number; windowId: number; url: string }> }>('tabs.list');
     const humanWindowTabs = allTabs.tabs.filter((tab) => tab.windowId === humanWindowId);
 
-    expect(bindingState.windowId).not.toBe(humanWindowId);
-    expect(opened.browser.windowId).toBe(bindingState.windowId);
-    expect(opened.tab.windowId).toBe(bindingState.windowId);
+    const sessionTabs = await harness.rpcCall<{
+      tabs: Array<{ id: number; url: string; windowId: number; groupId: number | null }>;
+    }>('session.listTabs');
+
+    expect(bindingState.windowId).toBe(humanWindowId);
+    expect(opened.browser.windowId).toBe(humanWindowId);
+    expect(opened.tab.windowId).toBe(humanWindowId);
+    expect(bindingState.groupId).not.toBeNull();
+    expect(sessionTabs.tabs.some((tab) => tab.id === orphaned.tabId && tab.groupId === bindingState.groupId)).toBe(true);
     expect(humanWindowTabs.some((tab) => tab.id === humanTabId)).toBe(true);
-    expect(humanWindowTabs.some((tab) => tab.id === orphaned.tabId)).toBe(false);
-    expect(humanWindowTabs.every((tab) => !tab.url.includes(marker))).toBe(true);
+    expect(humanWindowTabs.some((tab) => tab.id === orphaned.tabId)).toBe(true);
+    expect(humanWindowTabs.some((tab) => tab.url.includes(marker))).toBe(true);
     await expect(humanPage).toHaveURL(/\/form\.html$/);
   });
 });
