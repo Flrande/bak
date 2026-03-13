@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 export interface ArtifactFreshness {
@@ -47,9 +47,43 @@ const PLAYWRIGHT_TEST_SITE_PAGES = [
   'upload.html',
   'network.html'
 ] as const;
+const BUILD_LOCK_DIRNAME = '.bak-e2e-build-lock';
+const BUILD_LOCK_TIMEOUT_MS = 120_000;
+const BUILD_LOCK_POLL_MS = 100;
 
 function repoRoot(): string {
   return resolve(__dirname, '../..', '..');
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withBuildLock<T>(root: string, action: () => T): T {
+  const lockPath = join(root, BUILD_LOCK_DIRNAME);
+  const deadline = Date.now() + BUILD_LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      mkdirSync(lockPath);
+      break;
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : '';
+      if (code !== 'EEXIST') {
+        throw error;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for e2e runtime build lock at ${lockPath}`);
+      }
+      sleepSync(BUILD_LOCK_POLL_MS);
+    }
+  }
+
+  try {
+    return action();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
 }
 
 function buildStampPath(outputDir: string): string {
@@ -325,20 +359,22 @@ export function ensureE2ERuntimeFresh(
   options: RuntimeFreshnessOptions = {},
   buildRunner: RuntimeBuildRunner = runBuild
 ): RuntimeBuildPlan {
-  const evaluations = evaluateRuntimeTargets(root, options);
-  const plan = resolveRuntimeBuildPlan({
-    protocolStale: evaluations.protocol.freshness.stale,
-    cliStale: evaluations.cli.freshness.stale,
-    extensionStale: evaluations.extension.freshness.stale,
-    testSitesStale: options.includeTestSites ? evaluations.testSites.freshness.stale : false
-  });
-  for (const target of ['protocol', 'cli', 'extension', 'testSites'] as RuntimeTargetName[]) {
-    if (plan[target]) {
-      buildRunner(root, target);
-      writeBuildStamp(evaluations[target].target.outputDir, evaluations[target].freshness.newestSourceMtimeMs);
+  return withBuildLock(root, () => {
+    const evaluations = evaluateRuntimeTargets(root, options);
+    const plan = resolveRuntimeBuildPlan({
+      protocolStale: evaluations.protocol.freshness.stale,
+      cliStale: evaluations.cli.freshness.stale,
+      extensionStale: evaluations.extension.freshness.stale,
+      testSitesStale: options.includeTestSites ? evaluations.testSites.freshness.stale : false
+    });
+    for (const target of ['protocol', 'cli', 'extension', 'testSites'] as RuntimeTargetName[]) {
+      if (plan[target]) {
+        buildRunner(root, target);
+        writeBuildStamp(evaluations[target].target.outputDir, evaluations[target].freshness.newestSourceMtimeMs);
+      }
     }
-  }
-  return plan;
+    return plan;
+  });
 }
 
 export function ensurePlaywrightRuntimeFresh(root = repoRoot(), buildRunner: RuntimeBuildRunner = runBuild): RuntimeBuildPlan {
