@@ -1,6 +1,6 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-14 01:42:20 +08:00
+- GeneratedAt: 2026-03-14 01:56:40 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
 | Method | Success Case | Failure Case | CaseMapped | CI Status |
@@ -17,32 +17,32 @@
 | context.reset | M005-S | M005-F | true | Passed |
 | context.set | M078-S | M078-F | true | NotRun |
 | debug.dumpState | M006-S | M006-F | true | Passed |
-| debug.getConsole | M007-S | M007-F | true | Passed |
+| debug.getConsole | M007-S | M007-F | true | NotRun |
 | element.blur | M008-S | M008-F | true | NotRun |
-| element.check | M009-S | M009-F | true | Passed |
+| element.check | M009-S | M009-F | true | NotRun |
 | element.click | M010-S | M010-F | true | Passed |
 | element.doubleClick | M011-S | M011-F | true | NotRun |
-| element.dragDrop | M012-S | M012-F | true | Passed |
-| element.focus | M013-S | M013-F | true | Passed |
+| element.dragDrop | M012-S | M012-F | true | NotRun |
+| element.focus | M013-S | M013-F | true | NotRun |
 | element.get | M014-S | M014-F | true | Passed |
 | element.hover | M015-S | M015-F | true | NotRun |
 | element.rightClick | M016-S | M016-F | true | NotRun |
-| element.scroll | M017-S | M017-F | true | Passed |
+| element.scroll | M017-S | M017-F | true | NotRun |
 | element.scrollIntoView | M018-S | M018-F | true | NotRun |
-| element.select | M019-S | M019-F | true | Passed |
+| element.select | M019-S | M019-F | true | NotRun |
 | element.type | M020-S | M020-F | true | Passed |
-| element.uncheck | M021-S | M021-F | true | Passed |
+| element.uncheck | M021-S | M021-F | true | NotRun |
 | file.upload | M022-S | M022-F | true | Passed |
 | inspect.freshness | M100-S | M100-F | true | Passed |
 | inspect.liveUpdates | M099-S | M099-F | true | Passed |
 | inspect.pageData | M098-S | M098-F | true | Passed |
 | keyboard.hotkey | M023-S | M023-F | true | NotRun |
 | keyboard.press | M024-S | M024-F | true | NotRun |
-| keyboard.type | M025-S | M025-F | true | Passed |
-| mouse.click | M047-S | M047-F | true | Passed |
-| mouse.move | M048-S | M048-F | true | Passed |
-| mouse.wheel | M049-S | M049-F | true | Passed |
-| network.clear | M050-S | M050-F | true | Passed |
+| keyboard.type | M025-S | M025-F | true | NotRun |
+| mouse.click | M047-S | M047-F | true | NotRun |
+| mouse.move | M048-S | M048-F | true | NotRun |
+| mouse.wheel | M049-S | M049-F | true | NotRun |
+| network.clear | M050-S | M050-F | true | NotRun |
 | network.get | M051-S | M051-F | true | Passed |
 | network.list | M052-S | M052-F | true | Passed |
 | network.replay | M093-S | M093-F | true | Passed |
@@ -60,7 +60,7 @@
 | page.metrics | M059-S | M059-F | true | NotRun |
 | page.reload | M060-S | M060-F | true | NotRun |
 | page.scrollTo | M061-S | M061-F | true | NotRun |
-| page.snapshot | M062-S | M062-F | true | Passed |
+| page.snapshot | M062-S | M062-F | true | NotRun |
 | page.text | M063-S | M063-F | true | Passed |
 | page.title | M064-S | M064-F | true | Passed |
 | page.url | M065-S | M065-F | true | Passed |
@@ -70,14 +70,14 @@
 | session.close | M068-S | M068-F | true | Passed |
 | session.create | M069-S | M069-F | true | NotRun |
 | session.ensure | M079-S | M079-F | true | Passed |
-| session.focus | M080-S | M080-F | true | Passed |
-| session.getActiveTab | M081-S | M081-F | true | Passed |
+| session.focus | M080-S | M080-F | true | NotRun |
+| session.getActiveTab | M081-S | M081-F | true | NotRun |
 | session.info | M082-S | M082-F | true | NotRun |
-| session.list | M083-S | M083-F | true | Passed |
-| session.listTabs | M084-S | M084-F | true | Passed |
+| session.list | M083-S | M083-F | true | NotRun |
+| session.listTabs | M084-S | M084-F | true | NotRun |
 | session.openTab | M085-S | M085-F | true | Passed |
 | session.reset | M086-S | M086-F | true | NotRun |
-| session.setActiveTab | M087-S | M087-F | true | Passed |
+| session.setActiveTab | M087-S | M087-F | true | NotRun |
 | table.export | M097-S | M097-F | true | Passed |
 | table.list | M094-S | M094-F | true | Passed |
 | table.rows | M096-S | M096-F | true | Passed |
@@ -85,8 +85,8 @@
 | tabs.close | M071-S | M071-F | true | NotRun |
 | tabs.focus | M072-S | M072-F | true | NotRun |
 | tabs.get | M073-S | M073-F | true | NotRun |
-| tabs.getActive | M074-S | M074-F | true | Passed |
-| tabs.list | M075-S | M075-F | true | Passed |
+| tabs.getActive | M074-S | M074-F | true | NotRun |
+| tabs.list | M075-S | M075-F | true | NotRun |
 | tabs.new | M076-S | M076-F | true | NotRun |
 
 Total methods: 81
