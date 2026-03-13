@@ -51,6 +51,13 @@ bak status --port 17373 --rpc-ws-port 17374
 ```
 
 `bak doctor` is the recommended first check. It auto-starts the local runtime when needed unless you are already running `bak serve` manually for debugging. Use `bak status` when you want to confirm whether the runtime is already up before continuing.
+If the runtime metadata or managed runtime state looks stale, rerun:
+
+```powershell
+bak doctor --fix --port 17373 --rpc-ws-port 17374
+```
+
+`--fix` only repairs safe local runtime/config state. It does not rotate the pairing token, reload the unpacked extension, or change any session tabs for you.
 At this stage, `bak doctor` can still show `extensionConnected: false` until you finish the extension load and popup setup steps below.
 
 ## 3. Load The Extension
@@ -77,6 +84,7 @@ If you later reinstall or upgrade `@flrande/bak-extension`, reload that unpacked
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
 bak status --port 17373 --rpc-ws-port 17374
+bak session dashboard --rpc-ws-port 17374
 bak tabs list --rpc-ws-port 17374
 ```
 
@@ -85,6 +93,14 @@ A healthy runtime reports:
 - `ok: true`
 - `extensionConnected: true`
 - no `versionCompatibility` warning in `summary.warningChecks`
+
+`bak doctor` now also reports:
+
+- `diagnosis[]` for the concrete issue code and root cause
+- `fixesApplied[]` for safe local repairs already attempted
+- `nextActions[]` for the exact command, path, or manual step to try next
+
+`bak session dashboard` is the fastest way to confirm which sessions are attached, which ones are detached, which tab is active, and what frame/shadow context depth the session is carrying.
 
 If `bak doctor` warns about `versionCompatibility`, update both packages and reload the unpacked extension:
 
@@ -102,9 +118,10 @@ Use these commands when you need to inspect or reset the local runtime:
 bak status --port 17373 --rpc-ws-port 17374
 bak stop --port 17373 --rpc-ws-port 17374
 bak doctor --port 17373 --rpc-ws-port 17374
+bak doctor --fix --port 17373 --rpc-ws-port 17374
 ```
 
-`bak stop` is useful when you want a clean restart or need to free the local ports. For normal use, do not keep `bak serve` running in a separate terminal. Let `bak doctor` or the next CLI command auto-start the runtime again, and let the managed runtime auto-stop once all sessions are gone.
+`bak stop` is useful when you want a clean restart or need to free the local ports. `bak doctor --fix` is the safe repair path when the stored runtime metadata no longer matches reality. For normal use, do not keep `bak serve` running in a separate terminal. Let `bak doctor` or the next CLI command auto-start the runtime again, and let the managed runtime auto-stop once all sessions are gone.
 
 ## 6. Advanced: Foreground Runtime Logs
 
@@ -123,6 +140,7 @@ $clientName = 'agent-a'
 $session = bak session resolve --client-name $clientName --rpc-ws-port 17374 | ConvertFrom-Json
 $sessionId = $session.sessionId
 bak session open-tab --client-name $clientName --url "https://example.com" --active --rpc-ws-port 17374
+bak session dashboard --rpc-ws-port 17374
 bak page title --client-name $clientName --rpc-ws-port 17374
 bak page snapshot --client-name $clientName --include-base64 --rpc-ws-port 17374
 bak session close-tab --client-name $clientName --rpc-ws-port 17374

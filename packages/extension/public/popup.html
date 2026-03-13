@@ -5,155 +5,372 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BAK Pairing</title>
     <style>
+      :root {
+        color-scheme: light;
+        --ink: #0f172a;
+        --muted: #475569;
+        --line: #cbd5e1;
+        --panel: rgba(255, 255, 255, 0.88);
+        --panel-strong: #ffffff;
+        --success-bg: #dcfce7;
+        --success-ink: #166534;
+        --warning-bg: #fef3c7;
+        --warning-ink: #b45309;
+        --error-bg: #fee2e2;
+        --error-ink: #b91c1c;
+        --neutral-bg: #e2e8f0;
+        --neutral-ink: #334155;
+      }
+
       body {
         margin: 0;
         padding: 14px;
-        width: 320px;
+        width: 360px;
         font-family: "Segoe UI", sans-serif;
-        color: #0f172a;
-        background: linear-gradient(160deg, #f8fafc, #eef2ff);
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 48%),
+          linear-gradient(165deg, #f8fafc, #edf4ff);
       }
+
       h1 {
         margin: 0 0 12px;
         font-size: 16px;
       }
+
       label {
         display: block;
         margin-top: 10px;
         font-size: 12px;
       }
+
       input {
         width: 100%;
         box-sizing: border-box;
         margin-top: 4px;
         padding: 8px;
-        border: 1px solid #cbd5e1;
-        border-radius: 6px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
         font-size: 12px;
+        background: var(--panel-strong);
       }
+
       .toggle {
         display: flex;
         align-items: flex-start;
         gap: 8px;
         margin-top: 12px;
-        padding: 8px;
+        padding: 10px;
         border: 1px solid #fbbf24;
-        border-radius: 6px;
+        border-radius: 8px;
         background: #fffbeb;
       }
+
       .toggle input {
         width: auto;
         margin-top: 2px;
       }
+
       .toggle-text {
         font-size: 11px;
         color: #92400e;
       }
+
       .row {
         display: flex;
         gap: 8px;
         margin-top: 12px;
       }
+
       .row[hidden] {
         display: none;
       }
+
       button {
         flex: 1;
         border: none;
-        border-radius: 6px;
-        padding: 8px;
+        border-radius: 8px;
+        padding: 9px 10px;
         font-size: 12px;
         cursor: pointer;
       }
+
       button:disabled {
         opacity: 0.55;
         cursor: default;
       }
+
       #save {
         background: #0f172a;
         color: #fff;
       }
+
       #disconnect {
         background: #e2e8f0;
         color: #0f172a;
       }
+
       #reconnect {
         background: #dbeafe;
         color: #1d4ed8;
       }
-      #status {
-        margin-top: 10px;
-        font-size: 12px;
-        font-weight: 600;
-      }
-      #statusNote {
-        margin-top: 4px;
-        font-size: 11px;
-        line-height: 1.45;
-        color: #475569;
-      }
+
       .panel {
         margin-top: 12px;
-        padding: 10px;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.8);
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+        backdrop-filter: blur(10px);
       }
+
       .panel h2 {
-        margin: 0 0 8px;
+        margin: 0 0 10px;
         font-size: 12px;
       }
+
+      .status-panel[data-tone="success"] {
+        border-color: #86efac;
+        background: linear-gradient(180deg, rgba(220, 252, 231, 0.92), rgba(255, 255, 255, 0.92));
+      }
+
+      .status-panel[data-tone="warning"] {
+        border-color: #fcd34d;
+        background: linear-gradient(180deg, rgba(254, 243, 199, 0.92), rgba(255, 255, 255, 0.92));
+      }
+
+      .status-panel[data-tone="error"] {
+        border-color: #fca5a5;
+        background: linear-gradient(180deg, rgba(254, 226, 226, 0.94), rgba(255, 255, 255, 0.92));
+      }
+
+      .status-panel[data-tone="neutral"] {
+        border-color: #cbd5e1;
+      }
+
+      .status-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .status-badge[data-tone="success"] {
+        background: var(--success-bg);
+        color: var(--success-ink);
+      }
+
+      .status-badge[data-tone="warning"] {
+        background: var(--warning-bg);
+        color: var(--warning-ink);
+      }
+
+      .status-badge[data-tone="error"] {
+        background: var(--error-bg);
+        color: var(--error-ink);
+      }
+
+      .status-badge[data-tone="neutral"] {
+        background: var(--neutral-bg);
+        color: var(--neutral-ink);
+      }
+
+      #status {
+        margin-top: 10px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      #statusBody {
+        margin-top: 6px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      #recoveryList {
+        margin: 10px 0 0;
+        padding-left: 18px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--ink);
+      }
+
       .meta-grid {
         display: grid;
         grid-template-columns: auto 1fr;
         gap: 6px 10px;
         font-size: 11px;
       }
+
       .meta-grid dt {
-        color: #475569;
+        color: var(--muted);
       }
+
       .meta-grid dd {
         margin: 0;
-        color: #0f172a;
+        color: var(--ink);
         word-break: break-word;
       }
-      #sessionList {
-        margin: 0;
-        padding-left: 16px;
+
+      #sessionCards {
+        display: grid;
+        gap: 10px;
+      }
+
+      .session-empty {
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        padding: 12px;
         font-size: 11px;
-        color: #0f172a;
+        line-height: 1.45;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.72);
       }
-      #sessionList:empty::before {
-        content: "No tracked sessions";
+
+      .session-card {
+        border: 1px solid #dbe4f0;
+        border-radius: 12px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .session-card[data-detached="true"] {
+        border-color: #f59e0b;
+        background: rgba(255, 251, 235, 0.95);
+      }
+
+      .session-card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .session-card-title-wrap {
+        min-width: 0;
+      }
+
+      .session-card-title {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .session-card-subtitle {
+        margin-top: 2px;
+        font-size: 10px;
         color: #64748b;
-        margin-left: -16px;
+        word-break: break-word;
       }
+
+      .session-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .session-badge[data-detached="true"] {
+        background: #fef3c7;
+        color: #b45309;
+      }
+
+      .session-badge[data-detached="false"] {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+
+      .session-active-title {
+        margin-top: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+        word-break: break-word;
+      }
+
+      .session-active-url {
+        margin-top: 4px;
+        font-size: 10px;
+        color: var(--muted);
+        word-break: break-all;
+      }
+
+      .session-meta-grid {
+        margin-top: 10px;
+        display: grid;
+        gap: 6px;
+      }
+
+      .session-meta-row {
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        gap: 8px;
+        font-size: 11px;
+      }
+
+      .session-meta-label {
+        color: var(--muted);
+      }
+
+      .session-meta-value {
+        color: var(--ink);
+        word-break: break-word;
+      }
+
+      .session-card-footer {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #e2e8f0;
+        font-size: 10px;
+        line-height: 1.45;
+        color: #64748b;
+      }
+
       .hint {
         margin-top: 10px;
         font-size: 11px;
         color: #334155;
       }
+
       .hint.compact {
         margin-top: 8px;
       }
+
       details.panel {
         padding-bottom: 12px;
       }
+
       details.panel summary {
         cursor: pointer;
         font-size: 12px;
         font-weight: 600;
         list-style: none;
       }
+
       details.panel summary::-webkit-details-marker {
         display: none;
       }
+
       details.panel summary::after {
         content: "Show";
         float: right;
         font-size: 11px;
         color: #64748b;
       }
+
       details.panel[open] summary::after {
         content: "Hide";
       }
@@ -173,10 +390,16 @@
       <input id="debugRichText" type="checkbox" />
       <span class="toggle-text">Allow richer text capture for debugging (still redacted, off by default)</span>
     </label>
-    <div id="status">Checking...</div>
-    <div id="statusNote">The extension reconnects automatically when the local bak runtime wakes up.</div>
     <div class="row" id="saveRow" hidden>
       <button id="save">Save settings</button>
+    </div>
+    <div class="panel status-panel" id="statusPanel" data-tone="neutral">
+      <div class="status-header">
+        <span class="status-badge" id="statusBadge" data-tone="neutral">Checking</span>
+      </div>
+      <div id="status">Checking...</div>
+      <div id="statusBody">The extension is checking local bak runtime health.</div>
+      <ul id="recoveryList"></ul>
     </div>
     <div class="panel">
       <h2>Connection</h2>
@@ -203,7 +426,7 @@
         <dt>Tracked</dt>
         <dd id="sessionSummary">-</dd>
       </dl>
-      <ul id="sessionList"></ul>
+      <div id="sessionCards"></div>
     </div>
     <details class="panel" id="advancedPanel">
       <summary>Advanced bridge controls</summary>

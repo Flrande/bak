@@ -4,7 +4,9 @@ import {
   assessPortAvailability,
   assessProtocolCompatibility,
   assessRuntimeInfoHealth,
-  assessVersionCompatibility
+  assessVersionCompatibility,
+  buildDoctorDiagnosis,
+  buildDoctorNextActions
 } from '../../packages/cli/src/doctor.js';
 
 describe('doctor runtime.info health assessment', () => {
@@ -157,5 +159,161 @@ describe('doctor runtime.info health assessment', () => {
 
     expect(check.ok).toBe(false);
     expect(check.message).toContain('already in use');
+  });
+});
+
+describe('doctor diagnosis classification', () => {
+  function createDiagnosisInput(): Parameters<typeof buildDoctorDiagnosis>[0] {
+    return {
+      cliVersion: '0.6.11',
+      port: 17373,
+      rpcWsPort: 17374,
+      pairing: {
+        paired: true,
+        createdAt: '2026-03-14T00:00:00.000Z',
+        expiresAt: '2026-04-14T00:00:00.000Z',
+        expired: false,
+        revoked: false,
+        tokenPreview: 'bak_abcd',
+        reason: 'paired'
+      },
+      runtimeInfo: null,
+      runtimeState: null,
+      runtimeStateRunning: false,
+      extensionPort: {
+        available: true
+      },
+      rpcPort: {
+        available: true
+      },
+      versionCompatibility: {
+        ok: true,
+        message: 'cli and extension versions are aligned'
+      }
+    };
+  }
+
+  it('classifies missing pairing and suggests setup', () => {
+    const diagnosis = buildDoctorDiagnosis({
+      ...createDiagnosisInput(),
+      pairing: {
+        paired: false,
+        createdAt: null,
+        expiresAt: null,
+        expired: false,
+        revoked: false,
+        tokenPreview: 'not-paired',
+        reason: 'missing'
+      }
+    });
+
+    expect(diagnosis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'PAIRING_MISSING',
+          severity: 'error',
+          canAutoFix: false
+        }),
+        expect.objectContaining({
+          code: 'RUNTIME_STOPPED',
+          canAutoFix: true
+        })
+      ])
+    );
+
+    const nextActions = buildDoctorNextActions(diagnosis, {
+      dataDir: 'C:\\bak-data',
+      port: 17373,
+      rpcWsPort: 17374
+    });
+    expect(nextActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'PAIRING_MISSING',
+          kind: 'command',
+          command: expect.stringContaining('bak setup')
+        }),
+        expect.objectContaining({
+          code: 'RUNTIME_STOPPED',
+          kind: 'command',
+          command: expect.stringContaining('bak doctor --fix')
+        })
+      ])
+    );
+  });
+
+  it('classifies token mismatch and version drift without duplicating disconnected bridge guidance', () => {
+    const diagnosis = buildDoctorDiagnosis({
+      ...createDiagnosisInput(),
+      runtimeInfo: {
+        extensionConnected: false,
+        connectionState: 'disconnected',
+        connectionReason: 'token-rejected',
+        heartbeatStale: false,
+        extensionVersion: '0.6.10',
+        bridgeLastError: 'token-mismatch'
+      },
+      versionCompatibility: {
+        ok: false,
+        message: 'cli/extension version drift detected (same major)',
+        severity: 'warn'
+      }
+    });
+
+    expect(diagnosis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'PAIRING_TOKEN_MISMATCH',
+          severity: 'error'
+        }),
+        expect.objectContaining({
+          code: 'EXTENSION_VERSION_DRIFT',
+          severity: 'warn'
+        })
+      ])
+    );
+    expect(diagnosis.some((item) => item.code === 'EXTENSION_NOT_CONNECTED')).toBe(false);
+  });
+
+  it('classifies stale runtime metadata and port conflicts deterministically', () => {
+    const diagnosis = buildDoctorDiagnosis({
+      ...createDiagnosisInput(),
+      runtimeState: {
+        version: 1,
+        pid: 4242,
+        managed: true,
+        mode: 'background',
+        port: 17373,
+        rpcWsPort: 17374,
+        startedAt: '2026-03-14T00:00:00.000Z',
+        stdoutLogPath: null,
+        stderrLogPath: null
+      },
+      runtimeStateRunning: false,
+      extensionPort: {
+        available: false,
+        code: 'EADDRINUSE'
+      },
+      rpcPort: {
+        available: false,
+        code: 'EADDRINUSE'
+      }
+    });
+
+    expect(diagnosis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'RUNTIME_STALE_METADATA',
+          severity: 'warn',
+          canAutoFix: true
+        }),
+        expect.objectContaining({
+          code: 'PORT_CONFLICT',
+          severity: 'error',
+          canAutoFix: false
+        })
+      ])
+    );
+    expect(diagnosis.some((item) => item.code === 'RUNTIME_STOPPED')).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { callRpc } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
 import { runGc } from './gc.js';
+import { loadSessionDashboard } from './session-dashboard.js';
 import {
   dragDropLocatorsFromOptions,
   hasLocatorOptions,
@@ -673,15 +674,18 @@ addStructuredHelp(
   .option('--port <port>', 'extension websocket port')
   .option('--rpc-ws-port <port>', 'JSON-RPC websocket port')
   .option('--data-dir <path>', 'override the data directory')
+  .option('--fix', 'apply safe local fixes before the final diagnostics pass', false)
   .option('--no-auto-start', 'skip runtime auto-start and run pure diagnostics'),
   {
     notes: [
       'Run doctor before browser work and again after any pairing or extension issue.',
       'If the local runtime is not running yet, doctor starts it unless you pass --no-auto-start.',
+      'Use --fix when you want doctor to repair local runtime config/state and restart the managed runtime if the ports are free.',
       'The result highlights blocking errors separately from advisory warnings.'
     ],
     examples: [
       'bak doctor --port 17373 --rpc-ws-port 17374',
+      'bak doctor --fix',
       'bak doctor --no-auto-start',
       'bak doctor --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')'
     ]
@@ -689,14 +693,13 @@ addStructuredHelp(
 )
   .action(async (options) => {
     const runtime = resolveRuntimeFromOptions(options);
-    if (options.autoStart !== false) {
-      await ensureRuntime(runtime);
-    }
     printResult(
       await runDoctor({
         port: runtime.port,
         rpcWsPort: runtime.rpcWsPort,
-        dataDir: runtime.dataDir
+        dataDir: runtime.dataDir,
+        autoStart: options.autoStart !== false,
+        fix: options.fix === true
       })
     );
   });
@@ -778,6 +781,14 @@ addStructuredHelp(
 addStructuredHelp(addRpcPortOption(session.command('list').description('List active sessions')), {
   examples: ['bak session list --rpc-ws-port 17374']
 }).action(async (options) => invoke('session.list', {}, parseRpcPort(options)));
+addStructuredHelp(addRpcPortOption(session.command('dashboard').description('Show runtime status plus session ownership and context details')), {
+  notes: ['This command aggregates runtime.info, session.list, session.info, and session.list-tabs into one stable JSON view.'],
+  examples: ['bak session dashboard --rpc-ws-port 17374']
+}).action(async (options) => {
+  const runtime = resolveRuntimeFromOptions(options);
+  await ensureRuntime(runtime);
+  printResult(await loadSessionDashboard(runtime.rpcWsPort));
+});
 addStructuredHelp(addRpcPortOption(addSessionOption(session.command('info').description('Show session state and current context'))), {
   examples: ['bak session info --session-id session_123 --rpc-ws-port 17374']
 }).action(async (options) =>

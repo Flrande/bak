@@ -69,7 +69,8 @@ describe('ops tools', () => {
     const report = await runDoctor({
       dataDir,
       port: 29973,
-      rpcWsPort: 29974
+      rpcWsPort: 29974,
+      autoStart: false
     });
 
     expect(report.checks.dataDirWritable.ok).toBe(true);
@@ -88,6 +89,18 @@ describe('ops tools', () => {
     expect(report.summary.warningChecks).toContain('rpcConnectionHealth');
     expect(report.summary.errorChecks).toContain('pairing');
     expect(report.summary.errorChecks).not.toContain('rpcRuntimeInfo');
+    expect(report.diagnosis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'PAIRING_MISSING' }),
+        expect.objectContaining({ code: 'RUNTIME_STOPPED' })
+      ])
+    );
+    expect(report.nextActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'PAIRING_MISSING', command: expect.stringContaining('bak setup') }),
+        expect.objectContaining({ code: 'RUNTIME_STOPPED', command: expect.stringContaining('bak doctor --fix') })
+      ])
+    );
     expect(report.cliVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(report.ok).toBe(false);
 
@@ -102,7 +115,8 @@ describe('ops tools', () => {
     const report = await runDoctor({
       dataDir,
       port: 29977,
-      rpcWsPort: 29978
+      rpcWsPort: 29978,
+      autoStart: false
     });
 
     expect(report.checks.pairing.ok).toBe(true);
@@ -113,7 +127,31 @@ describe('ops tools', () => {
     expect(report.summary.errorChecks).toContain('rpcRuntimeInfo');
     expect(report.summary.errorChecks).toContain('rpcConnectionHealth');
     expect(report.summary.warningChecks).not.toContain('rpcRuntimeInfo');
+    expect(report.diagnosis).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'RUNTIME_STOPPED' })])
+    );
     expect(report.ok).toBe(false);
+
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('doctor keeps reporting diagnostics when the pairing file is unreadable', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-doctor-bad-pairing-test-'));
+    writeFileSync(join(dataDir, 'pairing.json'), '{invalid-json', 'utf8');
+
+    const report = await runDoctor({
+      dataDir,
+      port: 29979,
+      rpcWsPort: 29980,
+      autoStart: false
+    });
+
+    expect(report.checks.pairing.ok).toBe(false);
+    expect(report.checks.pairing.message).toContain('unable to read pairing state');
+    expect(report.diagnosis.some((item) => item.code === 'PAIRING_MISSING')).toBe(false);
+    expect(report.diagnosis).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'RUNTIME_STOPPED' })])
+    );
 
     rmSync(dataDir, { recursive: true, force: true });
   });
@@ -160,7 +198,8 @@ describe('ops tools', () => {
     const doctorReport = await runDoctor({
       dataDir,
       port: 29975,
-      rpcWsPort: 29976
+      rpcWsPort: 29976,
+      autoStart: false
     });
     const outPath = join(dataDir, 'diag-doctor-protocol.zip');
 

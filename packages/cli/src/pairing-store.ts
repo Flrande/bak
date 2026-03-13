@@ -186,16 +186,19 @@ export class PairingStore {
     expired: boolean;
     revoked: boolean;
     tokenPreview: string;
+    reason: 'paired' | 'missing' | 'expired' | 'revoked';
   } {
-    const active = this.getTokenState();
+    const state = this.loadState();
+    const active = state.active;
     if (!active?.token) {
       return {
         paired: false,
         createdAt: null,
         expiresAt: null,
         expired: false,
-        revoked: false,
-        tokenPreview: 'not-paired'
+        revoked: state.revoked.length > 0,
+        tokenPreview: state.revoked.length > 0 ? 'revoked' : 'not-paired',
+        reason: state.revoked.length > 0 ? 'revoked' : 'missing'
       };
     }
 
@@ -207,7 +210,8 @@ export class PairingStore {
       expiresAt: active.expiresAt,
       expired,
       revoked,
-      tokenPreview: redacted(active.token)
+      tokenPreview: redacted(active.token),
+      reason: revoked ? 'revoked' : expired ? 'expired' : 'paired'
     };
   }
 

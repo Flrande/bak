@@ -8,6 +8,7 @@ This page assumes the runtime is already installed and healthy. If you still nee
 
 - `bak session ...` is the default agent surface for resolving, repairing, focusing, resetting, and closing session-owned browser state plus tracked tabs.
 - `bak session resolve` is the normal entrypoint when you have a stable client identity and want `bak` to find or create the matching session.
+- `bak session dashboard` is the fastest visibility command when you need runtime health plus per-session ownership, active tab, and context depth in one JSON payload.
 - `bak tabs list`, `bak tabs get`, and `bak tabs active` are browser-wide diagnostics.
 - `bak tabs new`, `bak tabs focus`, and `bak tabs close` are recovery-only compatibility commands. They first resolve a session and only operate on that session's tabs.
 - `bak page`, `bak context`, `bak element`, `bak debug`, `bak network`, `bak table`, `bak inspect`, `bak capture`, `bak keyboard`, `bak mouse`, and `bak file` target the current resolved session tab unless you override with `--tab-id` inside that same session.
@@ -31,10 +32,11 @@ If none of those are present, browser-affecting commands fail instead of silentl
 
 ```powershell
 bak doctor --port 17373 --rpc-ws-port 17374
+bak doctor --fix --port 17373 --rpc-ws-port 17374
 bak status --port 17373 --rpc-ws-port 17374
 ```
 
-`bak doctor` is the recommended first check and auto-starts the local runtime when needed unless you are intentionally running `bak serve` in the foreground for debugging. Use `bak status` when you want to inspect whether the runtime is already up without changing your session flow.
+`bak doctor` is the recommended first check and auto-starts the local runtime when needed unless you are intentionally running `bak serve` in the foreground for debugging. Use `bak doctor --fix` when you want the CLI to repair safe local runtime/config state before reporting the final diagnosis. Use `bak status` when you want to inspect whether the runtime is already up without changing your session flow.
 
 If you want a clean runtime restart:
 
@@ -49,6 +51,7 @@ Then resolve or inspect the agent session state:
 $clientName = 'agent-a'
 $session = bak session resolve --client-name $clientName --rpc-ws-port 17374 | ConvertFrom-Json
 $sessionId = $session.sessionId
+bak session dashboard --rpc-ws-port 17374
 bak session info --client-name $clientName --rpc-ws-port 17374
 bak session ensure --client-name $clientName --rpc-ws-port 17374
 ```
@@ -57,6 +60,7 @@ Common maintenance commands for the current browser window plus per-session grou
 
 ```powershell
 bak session list --rpc-ws-port 17374
+bak session dashboard --rpc-ws-port 17374
 bak session resolve --client-name $clientName --rpc-ws-port 17374
 bak session focus --client-name $clientName --rpc-ws-port 17374
 bak session reset --client-name $clientName --focus --rpc-ws-port 17374
@@ -65,6 +69,13 @@ bak session close --session-id $sessionId --rpc-ws-port 17374
 ```
 
 `bak session close-tab` closes a session-owned tab and auto-closes the session when that was the last one. When the managed background runtime sees the last live session disappear, it auto-stops. Foreground `bak serve` stays up until you stop it manually.
+
+`bak session dashboard` aggregates `runtime.info`, `session.list`, `session.info`, and `session.list-tabs` into one response so you can see:
+
+- whether the runtime is paired and connected
+- which sessions are attached or detached
+- the current active tab for each session
+- the current frame/shadow context depth
 
 ## Open And Target Pages
 

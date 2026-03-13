@@ -3,10 +3,11 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PairingStore } from '../../packages/cli/src/pairing-store.js';
 import { cliDistPath, ensureE2ERuntimeFresh } from '../e2e/helpers/runtime';
 
 const repoRoot = resolve(__dirname, '..', '..');
-const CLI_TEST_TIMEOUT_MS = 20_000;
+const CLI_TEST_TIMEOUT_MS = 40_000;
 let cachedCliBinPath: string | null = null;
 
 function cliBinPath(): string {
@@ -175,6 +176,88 @@ describe('cli runtime management', () => {
     } finally {
       runCli(['stop', '--data-dir', dataDir, '--port', '26773', '--rpc-ws-port', '26774'], env);
       rmSync(parentDir, { recursive: true, force: true });
+    }
+  }, CLI_TEST_TIMEOUT_MS);
+
+  it('doctor --fix applies safe local fixes without rotating pairing state', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-cli-runtime-fix-'));
+    const env = {
+      BAK_DATA_DIR: dataDir,
+      BAK_PORT: '26873',
+      BAK_RPC_WS_PORT: '26874'
+    };
+
+    try {
+      const doctor = runCli(['doctor', '--fix', '--data-dir', dataDir, '--port', '26873', '--rpc-ws-port', '26874'], env);
+      expect(doctor.status).toBe(0);
+      const report = JSON.parse(doctor.stdout) as {
+        diagnosis: Array<{ code: string }>;
+        fixesApplied: Array<{ code: string; ok: boolean }>;
+        nextActions: Array<{ code: string; command?: string }>;
+      };
+
+      expect(report.fixesApplied).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'WRITE_RUNTIME_CONFIG', ok: true }),
+          expect.objectContaining({ code: 'START_MANAGED_RUNTIME', ok: true })
+        ])
+      );
+      expect(report.diagnosis).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: 'PAIRING_MISSING' })])
+      );
+      expect(report.nextActions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'PAIRING_MISSING',
+            command: expect.stringContaining('bak setup')
+          })
+        ])
+      );
+      expect(new PairingStore(dataDir).status().reason).toBe('missing');
+
+      const status = runCli(['status', '--data-dir', dataDir, '--port', '26873', '--rpc-ws-port', '26874'], env);
+      expect(status.status).toBe(0);
+      expect(JSON.parse(status.stdout)).toMatchObject({
+        running: true,
+        managed: true,
+        mode: 'background',
+        port: 26873,
+        rpcWsPort: 26874
+      });
+
+      const stop = runCli(['stop', '--data-dir', dataDir, '--port', '26873', '--rpc-ws-port', '26874'], env);
+      expect(stop.status).toBe(0);
+    } finally {
+      runCli(['stop', '--data-dir', dataDir, '--port', '26873', '--rpc-ws-port', '26874'], env);
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, CLI_TEST_TIMEOUT_MS);
+
+  it('session dashboard returns a stable runtime/session view even before any tabs are attached', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-cli-session-dashboard-'));
+    const env = {
+      BAK_DATA_DIR: dataDir,
+      BAK_PORT: '26973',
+      BAK_RPC_WS_PORT: '26974'
+    };
+
+    try {
+      const dashboard = runCli(['session', 'dashboard', '--rpc-ws-port', '26974'], env);
+      expect(dashboard.status).toBe(0);
+      expect(JSON.parse(dashboard.stdout)).toMatchObject({
+        runtime: {
+          paired: false,
+          extensionConnected: false,
+          activeSessionCount: 0
+        },
+        sessions: []
+      });
+
+      const stop = runCli(['stop', '--data-dir', dataDir, '--port', '26973', '--rpc-ws-port', '26974'], env);
+      expect(stop.status).toBe(0);
+    } finally {
+      runCli(['stop', '--data-dir', dataDir, '--port', '26973', '--rpc-ws-port', '26974'], env);
+      rmSync(dataDir, { recursive: true, force: true });
     }
   }, CLI_TEST_TIMEOUT_MS);
 

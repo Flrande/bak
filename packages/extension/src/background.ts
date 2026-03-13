@@ -70,9 +70,13 @@ interface PopupSessionBindingSummary {
   label: string;
   tabCount: number;
   activeTabId: number | null;
+  activeTabTitle: string | null;
+  activeTabUrl: string | null;
   windowId: number | null;
   groupId: number | null;
   detached: boolean;
+  lastBindingUpdateAt: number | null;
+  lastBindingUpdateReason: string | null;
 }
 
 interface PopupState {
@@ -156,6 +160,7 @@ let sessionBindingStateMutationQueue: Promise<void> = Promise.resolve();
 let preserveHumanFocusDepth = 0;
 let lastBindingUpdateAt: number | null = null;
 let lastBindingUpdateReason: string | null = null;
+const bindingUpdateMetadata = new Map<string, { at: number; reason: string }>();
 
 async function getConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get([STORAGE_KEY_TOKEN, STORAGE_KEY_PORT, STORAGE_KEY_DEBUG_RICH_TEXT]);
@@ -308,19 +313,28 @@ async function listSessionBindingStates(): Promise<SessionBindingRecord[]> {
   return Object.values(await loadSessionBindingStateMap());
 }
 
-function summarizeSessionBindings(states: SessionBindingRecord[]): PopupState['sessionBindings'] {
-  const items = states.map((state) => {
-    const detached = state.windowId === null || state.tabIds.length === 0;
-    return {
-      id: state.id,
-      label: state.label,
-      tabCount: state.tabIds.length,
-      activeTabId: state.activeTabId,
-      windowId: state.windowId,
-      groupId: state.groupId,
-      detached
-    } satisfies PopupSessionBindingSummary;
-  });
+async function summarizeSessionBindings(states: SessionBindingRecord[]): Promise<PopupState['sessionBindings']> {
+  const items = await Promise.all(
+    states.map(async (state) => {
+      const detached = state.windowId === null || state.tabIds.length === 0;
+      const activeTab =
+        typeof state.activeTabId === 'number' ? await sessionBindingBrowser.getTab(state.activeTabId) : null;
+      const bindingUpdate = bindingUpdateMetadata.get(state.id);
+      return {
+        id: state.id,
+        label: state.label,
+        tabCount: state.tabIds.length,
+        activeTabId: state.activeTabId,
+        activeTabTitle: activeTab?.title ?? null,
+        activeTabUrl: activeTab?.url ?? null,
+        windowId: state.windowId,
+        groupId: state.groupId,
+        detached,
+        lastBindingUpdateAt: bindingUpdate?.at ?? null,
+        lastBindingUpdateReason: bindingUpdate?.reason ?? null
+      } satisfies PopupSessionBindingSummary;
+    })
+  );
   return {
     count: items.length,
     attachedCount: items.filter((item) => !item.detached).length,
@@ -332,7 +346,7 @@ function summarizeSessionBindings(states: SessionBindingRecord[]): PopupState['s
 
 async function buildPopupState(): Promise<PopupState> {
   const config = await getConfig();
-  const sessionBindings = summarizeSessionBindings(await listSessionBindingStates());
+  const sessionBindings = await summarizeSessionBindings(await listSessionBindingStates());
   const reconnectRemainingMs = nextReconnectAt === null ? null : Math.max(0, nextReconnectAt - Date.now());
   let connectionState: PopupState['connectionState'];
   if (!config.token) {
@@ -403,6 +417,10 @@ function emitSessionBindingUpdated(
 ): void {
   lastBindingUpdateAt = Date.now();
   lastBindingUpdateReason = reason;
+  bindingUpdateMetadata.set(bindingId, {
+    at: lastBindingUpdateAt,
+    reason
+  });
   sendEvent('sessionBinding.updated', {
     bindingId,
     reason,

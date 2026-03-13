@@ -37,6 +37,7 @@ describe('cli help output', { timeout: 30_000 }, () => {
     expect(help).toContain('Manage multi-agent sessions and their browser state plus per-session tab groups');
     expect(help).toContain('Live sessions attach to the current browser window by default');
     expect(help).toContain('bak session open-tab --session-id session_123 --url "https://example.com" --rpc-ws-port 17374');
+    expect(help).toContain('dashboard');
   });
 
   it('documents session resolve and close-tab as first-class lifecycle commands', () => {
@@ -51,6 +52,14 @@ describe('cli help output', { timeout: 30_000 }, () => {
 
     expect(help).toContain('Create or repair the session group and tracked tabs');
     expect(help).toContain('bak session ensure --session-id session_123 --url "https://example.com" --focus --rpc-ws-port 17374');
+  });
+
+  it('documents doctor --fix as the safe local repair path', () => {
+    const help = runHelp(['doctor', '--help']);
+
+    expect(help).toContain('--fix');
+    expect(help).toContain('repair local runtime config/state');
+    expect(help).toContain('bak doctor --fix');
   });
 
   it('documents page help and protocol-only navigation fallback', () => {
