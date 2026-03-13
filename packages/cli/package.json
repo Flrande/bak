@@ -1,6 +1,6 @@
 {
   "name": "@flrande/bak-cli",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "type": "module",
   "bin": {
     "bak": "dist/bin.js"

@@ -1,6 +1,6 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-12 17:44:48 +08:00
+- GeneratedAt: 2026-03-13 14:36:38 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
 | Method | Success Case | Failure Case | CaseMapped | CI Status |
@@ -68,12 +68,12 @@
 | page.wait | M067-S | M067-F | true | Passed |
 | runtime.info | M070-S | M070-F | true | Passed |
 | session.close | M068-S | M068-F | true | Passed |
-| session.create | M069-S | M069-F | true | Passed |
+| session.create | M069-S | M069-F | true | NotRun |
 | session.ensure | M079-S | M079-F | true | Passed |
 | session.focus | M080-S | M080-F | true | Passed |
 | session.getActiveTab | M081-S | M081-F | true | Passed |
 | session.info | M082-S | M082-F | true | NotRun |
-| session.list | M083-S | M083-F | true | NotRun |
+| session.list | M083-S | M083-F | true | Passed |
 | session.listTabs | M084-S | M084-F | true | Passed |
 | session.openTab | M085-S | M085-F | true | Passed |
 | session.reset | M086-S | M086-F | true | NotRun |
@@ -82,12 +82,12 @@
 | table.list | M094-S | M094-F | true | Passed |
 | table.rows | M096-S | M096-F | true | Passed |
 | table.schema | M095-S | M095-F | true | Passed |
-| tabs.close | M071-S | M071-F | true | Passed |
+| tabs.close | M071-S | M071-F | true | NotRun |
 | tabs.focus | M072-S | M072-F | true | NotRun |
 | tabs.get | M073-S | M073-F | true | NotRun |
 | tabs.getActive | M074-S | M074-F | true | Passed |
 | tabs.list | M075-S | M075-F | true | Passed |
-| tabs.new | M076-S | M076-F | true | Passed |
+| tabs.new | M076-S | M076-F | true | NotRun |
 
 Total methods: 81
 Missing mappings: 0
