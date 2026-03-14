@@ -1,10 +1,10 @@
 # Release Capability Report
 
-- GeneratedAt: 2026-03-14 01:56:40 +08:00
+- GeneratedAt: 2026-03-14 18:26:42 +08:00
 - TotalCapabilities: 81
 - StabilityBreakdown: stable=55 beta=26 experimental=0
 - E2ECaseMapped: 81 / 81
-- E2EExecutionStatus: passed=59 failed=0 notRun=22
+- E2EExecutionStatus: passed=39 failed=0 notRun=42
 - ReleaseScope: dynamic-data-v1
 - ReleaseScopeCoverage: mapped=15 / 15 passed=15 failed=0 notRun=0 missing=0
 - ReleaseScopeGate: pass
