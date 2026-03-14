@@ -507,6 +507,36 @@ class SessionBindingManager {
     }
 
     const tabs = await this.readLooseTrackedTabs(remainingTabIds);
+    if (tabs.length === 0) {
+      const liveWindow = binding.windowId !== null ? await this.waitForWindow(binding.windowId, 300) : null;
+      if (!liveWindow) {
+        await this.storage.delete(binding.id);
+        return {
+          binding: null,
+          closedTabId: resolvedTabId
+        };
+      }
+
+      const nextState: SessionBindingRecord = {
+        id: binding.id,
+        label: binding.label,
+        color: binding.color,
+        windowId: liveWindow.id,
+        groupId: null,
+        tabIds: [],
+        activeTabId: null,
+        primaryTabId: null
+      };
+      await this.storage.save(nextState);
+      return {
+        binding: {
+          ...nextState,
+          tabs: []
+        },
+        closedTabId: resolvedTabId
+      };
+    }
+
     const nextPrimaryTabId =
       binding.primaryTabId === resolvedTabId ? tabs[0]?.id ?? null : binding.primaryTabId;
     const nextActiveTabId =

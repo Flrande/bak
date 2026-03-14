@@ -21,6 +21,7 @@ const sessionSummaryEl = document.getElementById('sessionSummary') as HTMLDivEle
 const sessionCardsEl = document.getElementById('sessionCards') as HTMLDivElement;
 
 type PopupTone = 'neutral' | 'success' | 'warning' | 'error';
+type PopupSessionBindingStatus = 'attached' | 'window-only' | 'detached';
 
 interface PopupState {
   ok: boolean;
@@ -42,6 +43,7 @@ interface PopupState {
   sessionBindings: {
     count: number;
     attachedCount: number;
+    windowOnlyCount: number;
     detachedCount: number;
     tabCount: number;
     items: Array<{
@@ -53,7 +55,7 @@ interface PopupState {
       activeTabUrl: string | null;
       windowId: number | null;
       groupId: number | null;
-      detached: boolean;
+      status: PopupSessionBindingStatus;
       lastBindingUpdateAt: number | null;
       lastBindingUpdateReason: string | null;
     }>;
@@ -158,6 +160,8 @@ function describeStatus(state: PopupState): StatusDescriptor {
     const body =
       state.sessionBindings.detachedCount > 0
         ? `${pluralize(state.sessionBindings.detachedCount, 'remembered session')} are detached. Check the cards below before you continue browser work.`
+        : state.sessionBindings.windowOnlyCount > 0
+          ? `${pluralize(state.sessionBindings.windowOnlyCount, 'remembered session')} still point at a live window, but do not own tabs yet.`
         : 'The extension bridge is healthy and ready for CLI-driven browser work.';
     return {
       badge: 'Ready',
@@ -169,6 +173,11 @@ function describeStatus(state: PopupState): StatusDescriptor {
             'Resume or recreate detached work from the bak CLI before sending new page commands.',
             'Use the Sessions panel below to confirm which remembered session lost its owned tabs.'
           ]
+        : state.sessionBindings.windowOnlyCount > 0
+          ? [
+              'New bak page commands can reuse those remembered windows without disturbing your human tabs.',
+              'Use the Sessions panel below to confirm which binding is only waiting for a new owned tab.'
+            ]
         : [
             'Start browser work from the bak CLI.',
             'Use Reconnect bridge only when you intentionally changed token or port settings.'
@@ -311,6 +320,7 @@ function renderSessionBindings(state: PopupState['sessionBindings']): void {
     sessionSummaryEl.textContent =
       `${pluralize(state.count, 'session')}, ` +
       `${pluralize(state.attachedCount, 'attached binding')}, ` +
+      `${pluralize(state.windowOnlyCount, 'window-only binding')}, ` +
       `${pluralize(state.detachedCount, 'detached binding')}, ` +
       `${pluralize(state.tabCount, 'tracked tab')}`;
   }
@@ -328,7 +338,7 @@ function renderSessionBindings(state: PopupState['sessionBindings']): void {
   for (const item of state.items) {
     const card = document.createElement('section');
     card.className = 'session-card';
-    card.dataset.detached = item.detached ? 'true' : 'false';
+    card.dataset.status = item.status;
 
     const header = document.createElement('div');
     header.className = 'session-card-header';
@@ -348,19 +358,24 @@ function renderSessionBindings(state: PopupState['sessionBindings']): void {
 
     const badge = document.createElement('span');
     badge.className = 'session-badge';
-    badge.dataset.detached = item.detached ? 'true' : 'false';
-    badge.textContent = item.detached ? 'Detached' : 'Attached';
+    badge.dataset.status = item.status;
+    badge.textContent = item.status === 'attached' ? 'Attached' : item.status === 'window-only' ? 'Window only' : 'Detached';
 
     header.append(titleWrap, badge);
 
     const activeTitle = document.createElement('div');
     activeTitle.className = 'session-active-title';
-    activeTitle.textContent = item.activeTabTitle ? truncate(item.activeTabTitle, 72) : 'No active tab title';
+    activeTitle.textContent =
+      item.activeTabTitle
+        ? truncate(item.activeTabTitle, 72)
+        : item.status === 'window-only'
+          ? 'No owned tab yet'
+          : 'No active tab title';
     activeTitle.title = item.activeTabTitle ?? '';
 
     const activeUrl = document.createElement('div');
     activeUrl.className = 'session-active-url';
-    activeUrl.textContent = formatUrl(item.activeTabUrl);
+    activeUrl.textContent = item.status === 'window-only' && !item.activeTabUrl ? 'Next bak page command can reuse this window' : formatUrl(item.activeTabUrl);
     activeUrl.title = item.activeTabUrl ?? '';
 
     const meta = document.createElement('div');
@@ -380,9 +395,12 @@ function renderSessionBindings(state: PopupState['sessionBindings']): void {
 
     const footer = document.createElement('div');
     footer.className = 'session-card-footer';
-    footer.textContent = item.detached
-      ? 'bak still remembers this session, but its owned tabs or window are missing.'
-      : 'The saved binding still points at live browser tabs.';
+    footer.textContent =
+      item.status === 'attached'
+        ? 'The saved binding still points at live browser tabs.'
+        : item.status === 'window-only'
+          ? 'bak still remembers the target window for this session, but it does not own any live tabs right now.'
+          : 'bak still remembers this session, but its owned tabs or window are missing.';
 
     card.append(header, activeTitle, activeUrl, meta, footer);
     sessionCardsEl.appendChild(card);

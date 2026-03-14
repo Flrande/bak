@@ -18,10 +18,16 @@ function isSessionBindingRecord(value: unknown): value is SessionBindingRecord {
 }
 
 function cloneSessionBindingRecord(state: SessionBindingRecord): SessionBindingRecord {
-  return {
+  const cloned: SessionBindingRecord = {
     ...state,
     tabIds: [...state.tabIds]
   };
+  if (cloned.tabIds.length === 0) {
+    cloned.groupId = null;
+    cloned.activeTabId = null;
+    cloned.primaryTabId = null;
+  }
+  return cloned;
 }
 
 function normalizeSessionBindingRecordMap(value: unknown): { found: boolean; map: Record<string, SessionBindingRecord> } {

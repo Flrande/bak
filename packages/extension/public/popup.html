@@ -245,7 +245,12 @@
         background: rgba(255, 255, 255, 0.92);
       }
 
-      .session-card[data-detached="true"] {
+      .session-card[data-status="window-only"] {
+        border-color: #38bdf8;
+        background: rgba(240, 249, 255, 0.95);
+      }
+
+      .session-card[data-status="detached"] {
         border-color: #f59e0b;
         background: rgba(255, 251, 235, 0.95);
       }
@@ -283,12 +288,17 @@
         white-space: nowrap;
       }
 
-      .session-badge[data-detached="true"] {
+      .session-badge[data-status="window-only"] {
+        background: #e0f2fe;
+        color: #0369a1;
+      }
+
+      .session-badge[data-status="detached"] {
         background: #fef3c7;
         color: #b45309;
       }
 
-      .session-badge[data-detached="false"] {
+      .session-badge[data-status="attached"] {
         background: #dbeafe;
         color: #1d4ed8;
       }

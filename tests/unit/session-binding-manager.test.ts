@@ -400,4 +400,46 @@ describe('session binding manager', () => {
     expect(surviving.binding.groupId).toBe(second.binding.groupId);
     expect(surviving.tabs[0]?.url).toBe('https://session.local/b');
   });
+
+  it('keeps an empty binding anchored to the live window when sibling tracked tabs already disappeared', async () => {
+    const { browser, storage, manager } = await createManager(async (seedBrowser) => void (await seedHuman(seedBrowser, ['https://human.local', 'https://human.local/watchlist'])));
+    const humanWindowId = mustActiveWindowId(browser);
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/a', active: false, focus: false });
+    const second = await manager.openTab({ bindingId: A, url: 'https://session.local/b', active: false, focus: false });
+
+    await browser.closeTab(second.tab.id);
+
+    const closed = await manager.closeTab(A, first.tab.id);
+
+    expect(closed.binding?.windowId).toBe(humanWindowId);
+    expect(closed.binding?.groupId).toBeNull();
+    expect(closed.binding?.tabIds).toEqual([]);
+    expect(closed.binding?.activeTabId).toBeNull();
+    expect(closed.binding?.primaryTabId).toBeNull();
+    await expect(storage.load(A)).resolves.toEqual({
+      id: A,
+      label: 'bak agent',
+      color: 'blue',
+      windowId: humanWindowId,
+      groupId: null,
+      tabIds: [],
+      activeTabId: null,
+      primaryTabId: null
+    });
+  });
+
+  it('drops an empty binding when sibling tracked tabs already disappeared and no live window remains', async () => {
+    const { browser, storage, manager } = await createManager();
+    const first = await manager.openTab({ bindingId: A, url: 'https://session.local/a', active: false, focus: false });
+    const second = await manager.openTab({ bindingId: A, url: 'https://session.local/b', active: false, focus: false });
+    const bindingWindowId = first.binding.windowId;
+
+    await browser.closeTab(second.tab.id);
+
+    const closed = await manager.closeTab(A, first.tab.id);
+
+    expect(closed.binding).toBeNull();
+    await expect(storage.load(A)).resolves.toBeNull();
+    expect(bindingWindowId === null ? false : browser.windows.has(bindingWindowId)).toBe(false);
+  });
 });

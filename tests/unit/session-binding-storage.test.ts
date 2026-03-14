@@ -42,4 +42,26 @@ describe('session binding storage', () => {
 
     expect(stateMap).toEqual({});
   });
+
+  it('clears dangling group and active tab metadata when a stored binding has no tabs', () => {
+    const stateMap = resolveSessionBindingStateMap({
+      [STORAGE_KEY_SESSION_BINDINGS]: {
+        'session-a': {
+          ...bindingRecord,
+          tabIds: [],
+          groupId: 202,
+          activeTabId: 303,
+          primaryTabId: 303
+        }
+      }
+    });
+
+    expect(stateMap['session-a']).toEqual({
+      ...bindingRecord,
+      tabIds: [],
+      groupId: null,
+      activeTabId: null,
+      primaryTabId: null
+    });
+  });
 });

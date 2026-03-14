@@ -1,6 +1,6 @@
 {
   "name": "@flrande/bak-extension",
-  "version": "0.6.14",
+  "version": "0.6.15",
   "type": "module",
   "scripts": {
     "build": "tsup src/background.ts src/content.ts src/popup.ts --format iife --out-dir dist --clean && node scripts/copy-assets.mjs",

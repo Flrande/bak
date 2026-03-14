@@ -76,6 +76,8 @@ interface RuntimeErrorDetails {
   at: number;
 }
 
+type PopupSessionBindingStatus = 'attached' | 'window-only' | 'detached';
+
 interface PopupSessionBindingSummary {
   id: string;
   label: string;
@@ -85,7 +87,7 @@ interface PopupSessionBindingSummary {
   activeTabUrl: string | null;
   windowId: number | null;
   groupId: number | null;
-  detached: boolean;
+  status: PopupSessionBindingStatus;
   lastBindingUpdateAt: number | null;
   lastBindingUpdateReason: string | null;
 }
@@ -110,6 +112,7 @@ interface PopupState {
   sessionBindings: {
     count: number;
     attachedCount: number;
+    windowOnlyCount: number;
     detachedCount: number;
     tabCount: number;
     items: PopupSessionBindingSummary[];
@@ -348,32 +351,87 @@ async function listSessionBindingStates(): Promise<SessionBindingRecord[]> {
   return Object.values(await loadSessionBindingStateMap());
 }
 
-async function summarizeSessionBindings(states: SessionBindingRecord[]): Promise<PopupState['sessionBindings']> {
-  const items = await Promise.all(
-    states.map(async (state) => {
-      const detached = state.windowId === null || state.tabIds.length === 0;
-      const activeTab =
-        typeof state.activeTabId === 'number' ? await sessionBindingBrowser.getTab(state.activeTabId) : null;
-      const bindingUpdate = bindingUpdateMetadata.get(state.id);
-      return {
-        id: state.id,
-        label: state.label,
-        tabCount: state.tabIds.length,
-        activeTabId: state.activeTabId,
-        activeTabTitle: activeTab?.title ?? null,
-        activeTabUrl: activeTab?.url ?? null,
-        windowId: state.windowId,
-        groupId: state.groupId,
-        detached,
-        lastBindingUpdateAt: bindingUpdate?.at ?? null,
-        lastBindingUpdateReason: bindingUpdate?.reason ?? null
-      } satisfies PopupSessionBindingSummary;
-    })
-  );
+function collectPopupSessionBindingTabIds(state: SessionBindingRecord): number[] {
+  return [
+    ...new Set(state.tabIds.concat([state.activeTabId, state.primaryTabId].filter((value): value is number => typeof value === 'number')))
+  ];
+}
+
+async function inspectPopupSessionBinding(
+  state: SessionBindingRecord
+): Promise<{ summary: PopupSessionBindingSummary; prune: boolean }> {
+  const trackedTabs = (
+    await Promise.all(
+      collectPopupSessionBindingTabIds(state).map(async (tabId) => {
+        return await sessionBindingBrowser.getTab(tabId);
+      })
+    )
+  ).filter((tab): tab is SessionBindingTab => tab !== null);
+  const liveWindow = typeof state.windowId === 'number' ? await sessionBindingBrowser.getWindow(state.windowId) : null;
+  const activeTab = trackedTabs.find((tab) => tab.id === state.activeTabId) ?? trackedTabs.find((tab) => tab.active) ?? trackedTabs[0] ?? null;
+  const status: PopupSessionBindingStatus = trackedTabs.length > 0 ? 'attached' : liveWindow ? 'window-only' : 'detached';
+  const bindingUpdate = bindingUpdateMetadata.get(state.id);
+  return {
+    summary: {
+      id: state.id,
+      label: state.label,
+      tabCount: trackedTabs.length,
+      activeTabId: activeTab?.id ?? null,
+      activeTabTitle: activeTab?.title ?? null,
+      activeTabUrl: activeTab?.url ?? null,
+      windowId: activeTab?.windowId ?? trackedTabs[0]?.windowId ?? liveWindow?.id ?? state.windowId,
+      groupId:
+        trackedTabs.length > 0
+          ? activeTab?.groupId ?? trackedTabs.find((tab) => tab.groupId !== null)?.groupId ?? state.groupId
+          : null,
+      status,
+      lastBindingUpdateAt: bindingUpdate?.at ?? null,
+      lastBindingUpdateReason: bindingUpdate?.reason ?? null
+    },
+    prune: status === 'detached'
+  };
+}
+
+async function summarizeSessionBindings(): Promise<PopupState['sessionBindings']> {
+  const statusRank: Record<PopupSessionBindingStatus, number> = {
+    attached: 0,
+    'window-only': 1,
+    detached: 2
+  };
+  const items = await mutateSessionBindingStateMap(async (stateMap) => {
+    const inspected = await Promise.all(
+      Object.entries(stateMap).map(async ([bindingId, state]) => {
+        return {
+          bindingId,
+          inspected: await inspectPopupSessionBinding(state)
+        };
+      })
+    );
+    for (const entry of inspected) {
+      if (entry.inspected.prune) {
+        delete stateMap[entry.bindingId];
+      }
+    }
+    return inspected
+      .filter((entry) => !entry.inspected.prune)
+      .map((entry) => entry.inspected.summary)
+      .sort((left, right) => {
+        const byStatus = statusRank[left.status] - statusRank[right.status];
+        if (byStatus !== 0) {
+          return byStatus;
+        }
+        const byUpdate = (right.lastBindingUpdateAt ?? 0) - (left.lastBindingUpdateAt ?? 0);
+        if (byUpdate !== 0) {
+          return byUpdate;
+        }
+        return left.label.localeCompare(right.label);
+      });
+  });
   return {
     count: items.length,
-    attachedCount: items.filter((item) => !item.detached).length,
-    detachedCount: items.filter((item) => item.detached).length,
+    attachedCount: items.filter((item) => item.status === 'attached').length,
+    windowOnlyCount: items.filter((item) => item.status === 'window-only').length,
+    detachedCount: items.filter((item) => item.status === 'detached').length,
     tabCount: items.reduce((sum, item) => sum + item.tabCount, 0),
     items
   };
@@ -381,7 +439,7 @@ async function summarizeSessionBindings(states: SessionBindingRecord[]): Promise
 
 async function buildPopupState(): Promise<PopupState> {
   const config = await getConfig();
-  const sessionBindings = await summarizeSessionBindings(await listSessionBindingStates());
+  const sessionBindings = await summarizeSessionBindings();
   const reconnectRemainingMs = nextReconnectAt === null ? null : Math.max(0, nextReconnectAt - Date.now());
   let connectionState: PopupState['connectionState'];
   if (!config.token) {
