@@ -344,6 +344,7 @@ export interface TableHandle {
   selector?: string;
   rowCount?: number;
   columnCount?: number;
+  intelligence?: TableIntelligence;
 }
 
 export interface TableColumn {
@@ -357,9 +358,118 @@ export interface TableSchema {
 
 export type TableExtractionMode = 'dataSource' | 'scroll' | 'visibleOnly';
 
+export type TableCompleteness = 'complete' | 'partial' | 'unknown';
+
+export interface TableIntelligenceSignal {
+  code: string;
+  detail: string;
+}
+
+export interface TableIntelligence {
+  virtualized: boolean;
+  lazyLoaded: boolean;
+  preferredExtractionMode: TableExtractionMode;
+  estimatedTotalRows?: number;
+  completeness: TableCompleteness;
+  signals: TableIntelligenceSignal[];
+}
+
+export interface TableExtractionMetadata {
+  mode: TableExtractionMode;
+  complete: boolean;
+  observedRows: number;
+  estimatedTotalRows?: number;
+  warnings: string[];
+}
+
 export type PageExtractResolver = 'auto' | 'globalThis' | 'lexical';
 
 export type FreshnessTimestampCategory = 'data' | 'contract' | 'event' | 'unknown';
+
+export interface DynamicDataSchemaHint {
+  kind: 'rows-object' | 'rows-array' | 'object' | 'array' | 'scalar' | 'unknown';
+  columns?: string[];
+}
+
+export interface InspectPageDataCandidateProbe {
+  name: string;
+  resolver: 'globalThis' | 'lexical';
+  sample: unknown;
+  sampleSize: number | null;
+  schemaHint: DynamicDataSchemaHint | null;
+  lastObservedAt: number | null;
+  timestamps: Array<{
+    path: string;
+    value: string;
+    category: FreshnessTimestampCategory;
+  }>;
+}
+
+export type InspectPageDataSourceType = 'windowGlobal' | 'inlineJson' | 'networkResponse';
+
+export interface InspectPageDataSource {
+  sourceId: string;
+  type: InspectPageDataSourceType;
+  label: string;
+  path: string;
+  sampleSize: number | null;
+  schemaHint: DynamicDataSchemaHint | null;
+  lastObservedAt: number | null;
+}
+
+export type InspectPageDataSourceMappingConfidence = 'high' | 'medium' | 'low';
+
+export interface InspectPageDataSourceMappingBasis {
+  type: 'columnOverlap' | 'sampleValueOverlap' | 'timeProximity' | 'explicitReference';
+  detail: string;
+}
+
+export interface InspectPageDataSourceMapping {
+  tableId: string;
+  sourceId: string;
+  confidence: InspectPageDataSourceMappingConfidence;
+  basis: InspectPageDataSourceMappingBasis[];
+  matchedColumns: string[];
+}
+
+export interface InspectPageDataRecommendation {
+  title: string;
+  command: string;
+  note: string;
+}
+
+export interface InspectPageDataResult {
+  suspiciousGlobals: string[];
+  tables: TableHandle[];
+  visibleTimestamps: string[];
+  inlineTimestamps: string[];
+  pageDataCandidates: InspectPageDataCandidateProbe[];
+  recentNetwork: NetworkEntry[];
+  recommendedNextSteps: string[];
+  dataSources: InspectPageDataSource[];
+  sourceMappings: InspectPageDataSourceMapping[];
+  recommendedNextActions: InspectPageDataRecommendation[];
+}
+
+export interface InspectNetworkCadenceSummary {
+  sampleCount: number;
+  classification: 'none' | 'single-request' | 'bursty' | 'polling';
+  averageIntervalMs: number | null;
+  medianIntervalMs: number | null;
+  latestGapMs: number | null;
+  endpoints: string[];
+}
+
+export interface InspectLiveUpdatesResult {
+  lastMutationAt: number | null;
+  timers: {
+    timeouts: number;
+    intervals: number;
+  };
+  networkCount: number;
+  networkCadence: InspectNetworkCadenceSummary;
+  recentNetwork: NetworkEntry[];
+}
 
 export interface FreshnessEvidenceItem {
   value: string;
@@ -386,6 +496,10 @@ export interface PageFreshnessResult {
     classifiedTimestamps: FreshnessEvidenceItem[];
     networkSampleIds: string[];
   };
+}
+
+export interface InspectFreshnessResult extends PageFreshnessResult {
+  lagMs: number | null;
 }
 
 export type DebugDumpSection =
@@ -881,23 +995,33 @@ export interface MethodMap {
   };
   'table.rows': {
     params: { sessionId: string; tabId?: number; table: string; limit?: number; all?: boolean; maxRows?: number };
-    result: { table: TableHandle; extractionMode: TableExtractionMode; rows: Array<Record<string, unknown>> };
+    result: {
+      table: TableHandle;
+      extractionMode: TableExtractionMode;
+      extraction: TableExtractionMetadata;
+      rows: Array<Record<string, unknown>>;
+    };
   };
   'table.export': {
-    params: { sessionId: string; tabId?: number; table: string; format?: 'json' };
-    result: { table: TableHandle; extractionMode: TableExtractionMode; rows: Array<Record<string, unknown>> };
+    params: { sessionId: string; tabId?: number; table: string; format?: 'json'; all?: boolean; maxRows?: number };
+    result: {
+      table: TableHandle;
+      extractionMode: TableExtractionMode;
+      extraction: TableExtractionMetadata;
+      rows: Array<Record<string, unknown>>;
+    };
   };
   'inspect.pageData': {
     params: { sessionId: string; tabId?: number };
-    result: Record<string, unknown>;
+    result: InspectPageDataResult;
   };
   'inspect.liveUpdates': {
     params: { sessionId: string; tabId?: number };
-    result: Record<string, unknown>;
+    result: InspectLiveUpdatesResult;
   };
   'inspect.freshness': {
     params: { sessionId: string; tabId?: number; patterns?: string[] };
-    result: Record<string, unknown>;
+    result: InspectFreshnessResult;
   };
   'capture.snapshot': {
     params: { sessionId: string; tabId?: number; networkLimit?: number };

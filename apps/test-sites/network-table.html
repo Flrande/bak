@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - Network Table</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 20px;
+        color: #0f172a;
+        background: linear-gradient(160deg, #fef3c7, #fff7ed);
+      }
+      .panel {
+        max-width: 820px;
+        background: white;
+        border: 1px solid #fed7aa;
+        border-radius: 14px;
+        padding: 18px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+      }
+      th, td {
+        border: 1px solid #e5e7eb;
+        padding: 10px 12px;
+      }
+      th {
+        background: #ffedd5;
+      }
+      #network-table-status {
+        margin-top: 12px;
+        color: #7c2d12;
+      }
+    </style>
+  </head>
+  <body data-page="network-table">
+    <div class="panel">
+      <a href="/">Back</a>
+      <h1>Network Table Playground</h1>
+      <p>This table is rendered from a recent JSON response and should map back to the captured network entry.</p>
+      <div id="network-table-status">loading</div>
+      <table id="network-table" aria-label="Flow table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th>Premium</th>
+          </tr>
+        </thead>
+        <tbody id="network-table-rows"></tbody>
+      </table>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1635,12 +1635,15 @@ addStructuredHelp(
         .description('Export rows from a detected table or grid')
         .requiredOption('--table <table>', 'table id from table list')
         .option('--format <format>', 'export format', 'json')
+        .option('--all', 'attempt to read all rows up to --max-rows', false)
+        .option('--max-rows <maxRows>', 'max rows when --all is enabled', '10000')
         .option('--out <path>', 'write the export payload to a file')
     )
   ),
   {
     examples: [
       'bak table export --table table-1 --format json --rpc-ws-port 17374',
+      'bak table export --table table-1 --all --max-rows 10000 --rpc-ws-port 17374',
       'bak table export --table table-1 --out .\\table.json --rpc-ws-port 17374'
     ]
   }
@@ -1650,7 +1653,9 @@ addStructuredHelp(
     {
       ...targetParams(options),
       table: String(options.table),
-      format: options.format ? String(options.format) : undefined
+      format: options.format ? String(options.format) : undefined,
+      all: options.all === true,
+      maxRows: parsePositiveInt(options.maxRows, 'max-rows')
     },
     parseRpcPort(options)
   );

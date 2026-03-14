@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BAK Test - Virtual Table</title>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 20px;
+        color: #0f172a;
+        background: linear-gradient(160deg, #eff6ff, #ecfeff);
+      }
+      .panel {
+        max-width: 840px;
+        background: white;
+        border: 1px solid #bfdbfe;
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .grid-shell {
+        margin-top: 16px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        overflow-y: auto;
+        max-height: 320px;
+        background: #f8fafc;
+        position: relative;
+      }
+      .grid-header,
+      .grid-row {
+        display: grid;
+        grid-template-columns: 90px 1fr 120px;
+        align-items: center;
+      }
+      .grid-header {
+        background: #dbeafe;
+        font-weight: 700;
+        border-bottom: 1px solid #cbd5e1;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+      .grid-header > div,
+      .grid-row > div {
+        padding: 10px 12px;
+      }
+      #virtual-grid-inner {
+        position: relative;
+        background: white;
+      }
+      .grid-row {
+        position: absolute;
+        left: 0;
+        right: 0;
+        border-bottom: 1px solid #e2e8f0;
+        background: white;
+      }
+      .meta {
+        margin-top: 12px;
+        color: #475569;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body data-page="virtual-table">
+    <div class="panel">
+      <a href="/">Back</a>
+      <h1>Virtual Grid Playground</h1>
+      <p>Only a window of rows is mounted at once. Scroll extraction should stitch the full dataset back together.</p>
+      <div id="virtual-grid" class="grid-shell" role="grid" aria-label="Virtual positions" aria-rowcount="40" data-total-rows="40" data-bak-scroll-root="true">
+        <div class="grid-header" role="row">
+          <div role="columnheader">ID</div>
+          <div role="columnheader">Name</div>
+          <div role="columnheader">Bucket</div>
+        </div>
+        <div id="virtual-grid-inner"></div>
+      </div>
+      <div id="virtual-grid-status" class="meta">ready</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

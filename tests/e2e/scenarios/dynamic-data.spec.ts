@@ -67,18 +67,27 @@ test.describe('dynamic data e2e', () => {
       expect(singlePageValue<number>(evaluated)).toBe(1.23);
 
       const tables = (await harness.rpcCall('table.list', { tabId: tablePage.tabId })) as {
-        tables: Array<{ id: string; kind: string; rowCount: number }>;
+        tables: Array<{
+          id: string;
+          kind: string;
+          rowCount: number;
+          intelligence?: { preferredExtractionMode: string; completeness: string };
+        }>;
       };
       expect(tables.tables.length).toBeGreaterThan(0);
       expect(tables.tables[0]?.kind).toBe('html');
+      expect(tables.tables[0]?.intelligence?.preferredExtractionMode).toBe('dataSource');
+      expect(tables.tables[0]?.intelligence?.completeness).toBe('complete');
 
       const schema = (await harness.rpcCall('table.schema', {
         tabId: tablePage.tabId,
         table: tables.tables[0]!.id
       })) as {
+        table?: { intelligence?: { preferredExtractionMode: string } };
         schema: { columns: Array<{ label: string }> };
       };
       expect(schema.schema.columns.map((column) => column.label)).toEqual(['ID', 'Name', 'Action']);
+      expect(schema.table?.intelligence?.preferredExtractionMode).toBe('dataSource');
 
       const rows = (await harness.rpcCall('table.rows', {
         tabId: tablePage.tabId,
@@ -87,19 +96,28 @@ test.describe('dynamic data e2e', () => {
         maxRows: 100
       })) as {
         extractionMode: string;
+        extraction: { mode: string; complete: boolean; observedRows: number; estimatedTotalRows?: number };
         rows: Array<Record<string, unknown>>;
       };
       expect(rows.extractionMode).toBe('dataSource');
+      expect(rows.extraction.mode).toBe('dataSource');
+      expect(rows.extraction.complete).toBe(true);
+      expect(rows.extraction.observedRows).toBe(3);
       expect(rows.rows).toHaveLength(3);
       expect(rows.rows[1]?.Name).toBe('Beta');
 
       const exported = (await harness.rpcCall('table.export', {
         tabId: tablePage.tabId,
         table: tables.tables[0]!.id,
-        format: 'json'
+        format: 'json',
+        all: true,
+        maxRows: 100
       })) as {
+        extraction: { mode: string; complete: boolean; observedRows: number };
         rows: Array<Record<string, unknown>>;
       };
+      expect(exported.extraction.mode).toBe('dataSource');
+      expect(exported.extraction.complete).toBe(true);
       expect(exported.rows).toHaveLength(3);
 
       const inspected = (await harness.rpcCall('inspect.pageData', {
@@ -107,12 +125,30 @@ test.describe('dynamic data e2e', () => {
       })) as {
         suspiciousGlobals: string[];
         tables: Array<{ id: string }>;
-        pageDataCandidates?: Array<{ name: string; resolver: string }>;
+        pageDataCandidates?: Array<{ name: string; resolver: string; schemaHint?: { columns?: string[] } }>;
+        dataSources?: Array<{ sourceId: string; type: string; path: string }>;
+        sourceMappings?: Array<{ tableId: string; sourceId: string; confidence: string; matchedColumns: string[] }>;
+        recommendedNextActions?: Array<{ command: string }>;
       };
       expect(inspected.suspiciousGlobals).toEqual(expect.arrayContaining(['table_data', 'market_data']));
       expect(inspected.tables.length).toBeGreaterThan(0);
       expect(inspected.pageDataCandidates).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: 'lexical_market_snapshot', resolver: 'lexical' })])
+      );
+      expect(inspected.dataSources).toEqual(
+        expect.arrayContaining([expect.objectContaining({ sourceId: 'windowGlobal:table_data', type: 'windowGlobal', path: 'table_data' })])
+      );
+      expect(inspected.sourceMappings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tableId: tables.tables[0]!.id,
+            sourceId: 'windowGlobal:table_data',
+            confidence: 'high'
+          })
+        ])
+      );
+      expect(inspected.recommendedNextActions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ command: 'bak page extract --path "table_data" --resolver auto' })])
       );
 
       await tablePage.page.evaluate(async () => {
@@ -167,6 +203,154 @@ test.describe('dynamic data e2e', () => {
       }
     } finally {
       await tablePage.page.close();
+    }
+  });
+
+  test('detects virtualized grids and stitches all rows with scroll extraction', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const virtualPage = await harness.openPage('/virtual-table.html');
+    try {
+      const tables = (await harness.rpcCall('table.list', { tabId: virtualPage.tabId })) as {
+        tables: Array<{
+          id: string;
+          intelligence?: {
+            virtualized: boolean;
+            preferredExtractionMode: string;
+            completeness: string;
+            estimatedTotalRows?: number;
+          };
+        }>;
+      };
+      expect(tables.tables).toHaveLength(1);
+      expect(tables.tables[0]?.intelligence?.virtualized).toBe(true);
+      expect(tables.tables[0]?.intelligence?.preferredExtractionMode).toBe('scroll');
+      expect(tables.tables[0]?.intelligence?.completeness).toBe('partial');
+      expect(tables.tables[0]?.intelligence?.estimatedTotalRows).toBe(40);
+
+      const rows = (await harness.rpcCall('table.rows', {
+        tabId: virtualPage.tabId,
+        table: tables.tables[0]!.id,
+        all: true,
+        maxRows: 100
+      })) as {
+        extractionMode: string;
+        extraction: { mode: string; complete: boolean; observedRows: number; estimatedTotalRows?: number; warnings: string[] };
+        rows: Array<Record<string, unknown>>;
+      };
+      expect(rows.extractionMode).toBe('scroll');
+      expect(rows.extraction.mode).toBe('scroll');
+      expect(rows.extraction.complete).toBe(true);
+      expect(rows.extraction.observedRows).toBe(40);
+      expect(rows.extraction.estimatedTotalRows).toBe(40);
+      expect(rows.rows).toHaveLength(40);
+      expect(rows.rows[0]).toEqual({ ID: '1', Name: 'Virtual Row 1', Bucket: 'Primary' });
+      expect(rows.rows[39]).toEqual({ ID: '40', Name: 'Virtual Row 40', Bucket: 'Secondary' });
+
+      const exported = (await harness.rpcCall('table.export', {
+        tabId: virtualPage.tabId,
+        table: tables.tables[0]!.id,
+        format: 'json',
+        all: true,
+        maxRows: 100
+      })) as {
+        extraction: { mode: string; complete: boolean; observedRows: number };
+        rows: Array<Record<string, unknown>>;
+      };
+      expect(exported.extraction.mode).toBe('scroll');
+      expect(exported.extraction.complete).toBe(true);
+      expect(exported.rows).toHaveLength(40);
+
+      const inspected = (await harness.rpcCall('inspect.pageData', {
+        tabId: virtualPage.tabId
+      })) as {
+        recommendedNextActions?: Array<{ command: string }>;
+      };
+      expect(inspected.recommendedNextActions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ command: `bak table rows --table ${tables.tables[0]!.id} --all --max-rows 10000` })])
+      );
+    } finally {
+      await virtualPage.page.close();
+    }
+  });
+
+  test('maps network-backed tables to recent responses and reuses schema on replay', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const networkTablePage = await harness.openPage('/network-table.html');
+    try {
+      await expect(networkTablePage.page.locator('#network-table-status')).toContainText('loaded');
+
+      const tables = (await harness.rpcCall('table.list', { tabId: networkTablePage.tabId })) as {
+        tables: Array<{ id: string; intelligence?: { preferredExtractionMode: string } }>;
+      };
+      expect(tables.tables).toHaveLength(1);
+      expect(tables.tables[0]?.intelligence?.preferredExtractionMode).toBe('dataSource');
+
+      const rows = (await harness.rpcCall('table.rows', {
+        tabId: networkTablePage.tabId,
+        table: tables.tables[0]!.id,
+        all: true,
+        maxRows: 20
+      })) as {
+        rows: Array<Record<string, unknown>>;
+      };
+      expect(rows.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ ID: '101', Symbol: 'QQQ', Side: 'Buy', Premium: '125000' })
+        ])
+      );
+
+      const inspected = (await harness.rpcCall('inspect.pageData', {
+        tabId: networkTablePage.tabId
+      })) as {
+        dataSources?: Array<{ sourceId: string; type: string }>;
+        sourceMappings?: Array<{ tableId: string; sourceId: string; confidence: string; matchedColumns: string[] }>;
+      };
+      const networkSource = inspected.dataSources?.find((source) => source.type === 'networkResponse' && source.sourceId.includes('networkResponse:'));
+      expect(networkSource).toBeDefined();
+      expect(inspected.sourceMappings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tableId: tables.tables[0]!.id,
+            sourceId: networkSource?.sourceId,
+            confidence: 'high',
+            matchedColumns: ['ID', 'Symbol', 'Side', 'Premium']
+          })
+        ])
+      );
+
+      const search = (await harness.rpcCall('network.search', {
+        tabId: networkTablePage.tabId,
+        pattern: 'network-table-rows',
+        limit: 5
+      })) as {
+        entries: Array<{ id: string }>;
+      };
+      expect(search.entries.length).toBeGreaterThan(0);
+
+      const replay = (await harness.rpcCall('network.replay', {
+        tabId: networkTablePage.tabId,
+        id: search.entries[0]!.id,
+        mode: 'json',
+        withSchema: 'auto'
+      })) as {
+        schema?: { columns: Array<{ label: string }> };
+        mappedRows?: Array<Record<string, unknown>>;
+      };
+      expect(replay.schema?.columns.map((column) => column.label)).toEqual(['ID', 'Symbol', 'Side', 'Premium']);
+      expect(replay.mappedRows?.[0]).toEqual({
+        ID: 101,
+        Symbol: 'QQQ',
+        Side: 'Buy',
+        Premium: 125000
+      });
+    } finally {
+      await networkTablePage.page.close();
     }
   });
 

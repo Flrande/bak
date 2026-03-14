@@ -11,9 +11,20 @@ import type {
   PageMetrics,
   PageTextChunk,
   TableColumn,
-  TableHandle
+  TableExtractionMetadata,
+  TableHandle,
+  TableIntelligence
 } from '@flrande/bak-protocol';
 import { documentMetadata, isDocumentNode, isShadowRootNode } from './context-metadata.js';
+import {
+  buildExtractionMetadata,
+  buildTableIntelligence,
+  collectTimestampProbes,
+  estimateSampleSize,
+  inferSchemaHint,
+  sampleValue,
+  type InlineJsonInspectionSource
+} from './dynamic-data-tools.js';
 import { inferSafeName, redactElementText, redactHtmlSnapshot, type RedactTextOptions } from './privacy.js';
 import { unsupportedLocatorHint } from './limitations.js';
 
@@ -1785,6 +1796,135 @@ function buildTableId(kind: TableHandle['kind'], index: number): string {
   return `${kind}:${index + 1}`;
 }
 
+function gridRowNodes(grid: Element): HTMLElement[] {
+  return Array.from(grid.querySelectorAll<HTMLElement>('[role="row"]')).filter(
+    (row) => row.querySelector('[role="gridcell"], [role="cell"]') !== null
+  );
+}
+
+function tableSchemaFromElement(element: Element): TableColumn[] {
+  return element instanceof HTMLTableElement ? htmlTableSchema(element) : gridSchema(element);
+}
+
+function tableRowsFromElement(element: Element, limit: number): Array<Record<string, unknown>> {
+  return element instanceof HTMLTableElement ? htmlTableRows(element, limit) : gridRows(element, limit);
+}
+
+function findScrollableTableContainer(element: Element): HTMLElement | null {
+  const explicitCandidate =
+    (isHtmlElement(element) && (element.matches('[data-bak-scroll-root], [data-virtual-scroll]') ? element : null)) ||
+    ('querySelector' in element
+      ? (element.querySelector<HTMLElement>('[data-bak-scroll-root], [data-virtual-scroll]') ?? null)
+      : null);
+  if (explicitCandidate) {
+    return explicitCandidate;
+  }
+
+  const candidates: HTMLElement[] = [];
+  if (isHtmlElement(element)) {
+    candidates.push(element);
+  }
+  if ('querySelectorAll' in element) {
+    candidates.push(...Array.from(element.querySelectorAll<HTMLElement>('[role="rowgroup"], *')));
+  }
+  let current: HTMLElement | null = element.parentElement;
+  while (current && candidates.length < 80) {
+    candidates.push(current);
+    current = current.parentElement;
+  }
+  const uniqueCandidates = [...new Set(candidates)];
+  return (
+    uniqueCandidates.find((candidate) => {
+      const style = getComputedStyle(candidate);
+      return (
+        (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+        candidate.scrollHeight > candidate.clientHeight + 4 &&
+        candidate.clientHeight > 0
+      );
+    }) ?? null
+  );
+}
+
+function observedRowIndexes(rows: HTMLElement[]): number[] {
+  return rows
+    .map((row) => {
+      const raw = row.getAttribute('aria-rowindex') || row.getAttribute('data-row-index') || row.dataset.rowIndex;
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    })
+    .filter((value): value is number => value !== null);
+}
+
+function inferEstimatedTotalRows(element: Element, rows: HTMLElement[], scrollContainer: HTMLElement | null): number | undefined {
+  const attrCandidates = [
+    element.getAttribute('aria-rowcount'),
+    (scrollContainer ?? undefined)?.getAttribute('aria-rowcount'),
+    element.getAttribute('data-total-rows'),
+    (scrollContainer ?? undefined)?.getAttribute('data-total-rows')
+  ]
+    .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)
+    .map((candidate) => Number.parseInt(candidate, 10))
+    .filter((candidate) => Number.isFinite(candidate) && candidate > 0);
+  if (attrCandidates.length > 0) {
+    return Math.max(...attrCandidates);
+  }
+  const indexes = observedRowIndexes(rows);
+  if (indexes.length > 0) {
+    return Math.max(...indexes);
+  }
+  const rowHeight = rows[0]?.getBoundingClientRect().height ?? 0;
+  if (scrollContainer && rowHeight > 0) {
+    const estimate = Math.round(scrollContainer.scrollHeight / rowHeight);
+    if (estimate > rows.length) {
+      return estimate;
+    }
+  }
+  return undefined;
+}
+
+function tableIntelligenceForElement(table: TableHandle, element: Element): TableIntelligence {
+  if (element instanceof HTMLTableElement) {
+    return buildTableIntelligence({
+      kind: table.kind,
+      visibleRowCount: htmlTableRows(element, Number.MAX_SAFE_INTEGER).length,
+      rowCount: table.rowCount,
+      estimatedTotalRows: table.rowCount,
+      hasScrollContainer: false,
+      hasTranslatedRows: false,
+      knownGridKind: false
+    });
+  }
+  const rows = gridRowNodes(element);
+  const scrollContainer = findScrollableTableContainer(element);
+  const rowIndexes = observedRowIndexes(rows);
+  const estimatedTotalRows = inferEstimatedTotalRows(element, rows, scrollContainer);
+  const hasTranslatedRows = rows.some((row) => {
+    const style = row.style.transform || getComputedStyle(row).transform;
+    return typeof style === 'string' && style !== '' && style !== 'none';
+  });
+  return buildTableIntelligence({
+    kind: table.kind,
+    visibleRowCount: rows.length,
+    rowCount: table.rowCount,
+    estimatedTotalRows,
+    hasScrollContainer: scrollContainer !== null,
+    hasTranslatedRows,
+    maxObservedRowIndex: rowIndexes.length > 0 ? Math.max(...rowIndexes) : undefined,
+    minObservedRowIndex: rowIndexes.length > 0 ? Math.min(...rowIndexes) : undefined,
+    knownGridKind: table.kind !== 'aria-grid'
+  });
+}
+
+function withTableIntelligence(table: TableHandle, element: Element | null): TableHandle {
+  if (!(element instanceof Element)) {
+    return table;
+  }
+  return {
+    ...table,
+    intelligence: tableIntelligenceForElement(table, element)
+  };
+}
+
 function describeTables(): TableHandle[] {
   const rootResult = resolveRootForLocator();
   if (!rootResult.ok) {
@@ -1794,26 +1934,28 @@ function describeTables(): TableHandle[] {
   const tables: TableHandle[] = [];
   const htmlTables = Array.from(root.querySelectorAll('table'));
   for (const [index, table] of htmlTables.entries()) {
-    tables.push({
+    const handle: TableHandle = {
       id: buildTableId(table.closest('.dataTables_wrapper') ? 'dataTables' : 'html', index),
       name: (table.getAttribute('aria-label') || table.getAttribute('data-testid') || table.id || `table-${index + 1}`).trim(),
       kind: table.closest('.dataTables_wrapper') ? 'dataTables' : 'html',
       selector: table.id ? `#${table.id}` : undefined,
       rowCount: table.querySelectorAll('tbody tr').length || table.querySelectorAll('tr').length,
       columnCount: table.querySelectorAll('thead th').length || table.querySelectorAll('tr:first-child th, tr:first-child td').length
-    });
+    };
+    tables.push(withTableIntelligence(handle, table));
   }
   const gridRoots = Array.from(root.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .ag-root, .ag-root-wrapper'));
   for (const [index, grid] of gridRoots.entries()) {
     const kind: TableHandle['kind'] = grid.className.includes('ag-') ? 'ag-grid' : 'aria-grid';
-    tables.push({
+    const handle: TableHandle = {
       id: buildTableId(kind, index),
       name: (grid.getAttribute('aria-label') || grid.getAttribute('data-testid') || grid.id || `grid-${index + 1}`).trim(),
       kind,
       selector: grid.id ? `#${grid.id}` : undefined,
-      rowCount: grid.querySelectorAll('[role="row"]').length,
+      rowCount: gridRowNodes(grid).length,
       columnCount: grid.querySelectorAll('[role="columnheader"]').length
-    });
+    };
+    tables.push(withTableIntelligence(handle, grid));
   }
   return tables;
 }
@@ -1878,17 +2020,198 @@ function gridSchema(grid: Element): TableColumn[] {
 
 function gridRows(grid: Element, limit: number): Array<Record<string, unknown>> {
   const columns = gridSchema(grid);
-  return Array.from(grid.querySelectorAll('[role="row"]'))
+  return gridRowNodes(grid)
     .slice(0, limit)
     .map((row) => {
       const record: Record<string, unknown> = {};
-      Array.from(row.querySelectorAll('[role="gridcell"], [role="cell"], [role="columnheader"]')).forEach((cell, index) => {
+      Array.from(row.querySelectorAll('[role="gridcell"], [role="cell"]')).forEach((cell, index) => {
         const key = columns[index]?.label ?? `Column ${index + 1}`;
         record[key] = (cell.textContent ?? '').trim();
       });
       return record;
     })
     .filter((row) => Object.values(row).some((value) => String(value).trim().length > 0));
+}
+
+function rowSignature(row: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.entries(row)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [key, value === undefined ? null : value])
+  );
+}
+
+function mergeUniqueRows(target: Map<string, Record<string, unknown>>, rows: Array<Record<string, unknown>>, limit: number): number {
+  let added = 0;
+  for (const row of rows) {
+    const signature = rowSignature(row);
+    if (target.has(signature)) {
+      continue;
+    }
+    target.set(signature, row);
+    added += 1;
+    if (target.size >= limit) {
+      break;
+    }
+  }
+  return added;
+}
+
+function waitForPaint(frames = 2): Promise<void> {
+  return new Promise((resolve) => {
+    const schedule = (remaining: number): void => {
+      if (remaining <= 0) {
+        window.setTimeout(() => resolve(), 24);
+        return;
+      }
+      requestAnimationFrame(() => schedule(remaining - 1));
+    };
+    schedule(frames);
+  });
+}
+
+function currentTableWindowSignature(element: Element): string {
+  const rowIndexes = observedRowIndexes(gridRowNodes(element));
+  if (rowIndexes.length > 0) {
+    return `indexes:${rowIndexes.join(',')}`;
+  }
+  const visibleRows = tableRowsFromElement(element, 24);
+  return `rows:${visibleRows.map((row) => rowSignature(row)).join('|')}`;
+}
+
+async function waitForTableWindowChange(
+  element: Element,
+  previousSignature: string,
+  timeoutMs = 200
+): Promise<string> {
+  const start = Date.now();
+  let currentSignature = previousSignature;
+  while (Date.now() - start < timeoutMs) {
+    await waitForPaint(1);
+    currentSignature = currentTableWindowSignature(element);
+    if (currentSignature !== previousSignature) {
+      return currentSignature;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 16));
+  }
+  return currentSignature;
+}
+
+async function scrollExtractRows(
+  element: Element,
+  limit: number,
+  intelligence?: TableIntelligence
+): Promise<{ rows: Array<Record<string, unknown>>; extraction: TableExtractionMetadata; extractionMode: TableExtractionMetadata['mode'] }> {
+  const scrollContainer = findScrollableTableContainer(element);
+  if (!scrollContainer) {
+    const rows = tableRowsFromElement(element, limit);
+    return {
+      rows,
+      extractionMode: 'visibleOnly',
+      extraction: buildExtractionMetadata('visibleOnly', rows, intelligence, [
+        'Fell back to visible rows because no scroll container was detected.'
+      ])
+    };
+  }
+
+  const originalScrollTop = scrollContainer.scrollTop;
+  const collected = new Map<string, Record<string, unknown>>();
+  const seenRowIndexes = new Set<number>();
+  let stagnantPasses = 0;
+  let reachedEnd = false;
+  let limitApplied = false;
+  const rowHeight = gridRowNodes(element)[0]?.getBoundingClientRect().height ?? 0;
+  const step = Math.max(80, Math.round(scrollContainer.clientHeight * 0.8), rowHeight > 0 ? Math.round(rowHeight * 4) : 0);
+  const initialMaxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+  const maxIterations = Math.max(8, Math.min(80, Math.ceil(initialMaxScrollTop / Math.max(step, 1)) + 6, limit * 2));
+
+  try {
+    scrollContainer.scrollTop = 0;
+    scrollContainer.dispatchEvent(new Event('scroll'));
+    await waitForPaint();
+    let currentWindowSignature = currentTableWindowSignature(element);
+    for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+      const currentRows = tableRowsFromElement(element, limit);
+      const added = mergeUniqueRows(collected, currentRows, limit);
+      observedRowIndexes(gridRowNodes(element)).forEach((rowIndex) => {
+        seenRowIndexes.add(rowIndex);
+      });
+      const estimatedTotalRows = intelligence?.estimatedTotalRows;
+      if (
+        typeof estimatedTotalRows === 'number' &&
+        (collected.size >= estimatedTotalRows || seenRowIndexes.size >= estimatedTotalRows)
+      ) {
+        reachedEnd = true;
+        break;
+      }
+      if (collected.size >= limit) {
+        limitApplied = true;
+        break;
+      }
+      if (added === 0) {
+        stagnantPasses += 1;
+      } else {
+        stagnantPasses = 0;
+      }
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      if (scrollContainer.scrollTop >= maxScrollTop - 2) {
+        reachedEnd = true;
+        if (stagnantPasses >= 1) {
+          break;
+        }
+      }
+      if (stagnantPasses >= 2) {
+        break;
+      }
+      const nextScrollTop = Math.min(maxScrollTop, scrollContainer.scrollTop + step);
+      if (nextScrollTop === scrollContainer.scrollTop) {
+        reachedEnd = true;
+        break;
+      }
+      scrollContainer.scrollTop = nextScrollTop;
+      scrollContainer.dispatchEvent(new Event('scroll'));
+      currentWindowSignature = await waitForTableWindowChange(element, currentWindowSignature);
+    }
+    if (!reachedEnd) {
+      const maxScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      if (scrollContainer.scrollTop < maxScrollTop) {
+        const previousWindowSignature = currentTableWindowSignature(element);
+        scrollContainer.scrollTop = maxScrollTop;
+        scrollContainer.dispatchEvent(new Event('scroll'));
+        await waitForTableWindowChange(element, previousWindowSignature);
+        mergeUniqueRows(collected, tableRowsFromElement(element, limit), limit);
+        observedRowIndexes(gridRowNodes(element)).forEach((rowIndex) => {
+          seenRowIndexes.add(rowIndex);
+        });
+      }
+    }
+  } finally {
+    scrollContainer.scrollTop = originalScrollTop;
+    await waitForPaint();
+  }
+
+  const rows = [...collected.values()].slice(0, limit);
+  if (
+    typeof intelligence?.estimatedTotalRows === 'number' &&
+    (rows.length >= intelligence.estimatedTotalRows || seenRowIndexes.size >= intelligence.estimatedTotalRows)
+  ) {
+    reachedEnd = true;
+  }
+  const warnings: string[] = [];
+  if (limitApplied) {
+    warnings.push('Stopped after reaching maxRows before confirming the end of the table.');
+  }
+  if (!reachedEnd && (intelligence?.estimatedTotalRows ?? rows.length) > rows.length) {
+    warnings.push('Could not confirm the end of scrollable content; result may be partial.');
+  }
+  return {
+    rows,
+    extractionMode: 'scroll',
+    extraction: buildExtractionMetadata('scroll', rows, intelligence, warnings, {
+      reachedEnd,
+      limitApplied
+    })
+  };
 }
 
 function runPageWorldRequest<T>(action: string, payload: Record<string, unknown>): Promise<T> {
@@ -2284,6 +2607,34 @@ async function globalsPreview(): Promise<string[]> {
     .slice(0, 50);
 }
 
+function collectInlineJsonSources(root: ParentNode): InlineJsonInspectionSource[] {
+  const scripts = Array.from(root.querySelectorAll<HTMLScriptElement>('script[type="application/json"], script[type="application/ld+json"]'));
+  return scripts
+    .map((script, index) => {
+      const raw = script.textContent?.trim() ?? '';
+      if (!raw) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const path = script.id ? `#${script.id}` : `inline-json:${index + 1}`;
+        const timestamps = collectTimestampProbes(parsed, path);
+        return {
+          label: script.id || script.getAttribute('data-testid') || script.type || `inline-json-${index + 1}`,
+          path,
+          sample: sampleValue(parsed),
+          sampleSize: estimateSampleSize(parsed),
+          schemaHint: inferSchemaHint(parsed),
+          lastObservedAt: timestamps.length > 0 ? Math.max(...timestamps.map((item) => Date.parse(item.value)).filter(Number.isFinite)) : null,
+          timestamps
+        } satisfies InlineJsonInspectionSource;
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is InlineJsonInspectionSource => item !== null);
+}
+
 async function collectInspectionState(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const rootResult = resolveRootForLocator();
   if (!rootResult.ok) {
@@ -2304,6 +2655,7 @@ async function collectInspectionState(params: Record<string, unknown> = {}): Pro
   );
   const previewGlobals = await globalsPreview();
   const suspiciousGlobals = [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50);
+  const inlineJsonSources = collectInlineJsonSources(root);
   return {
     url: metadata.url,
     title: metadata.title,
@@ -2322,6 +2674,7 @@ async function collectInspectionState(params: Record<string, unknown> = {}): Pro
     storage: storageMetadata(),
     cookies: cookieMetadata(),
     frames: collectFrames(),
+    inlineJsonSources,
     tables: describeTables(),
     timers: {
       timeouts: 0,
@@ -3076,12 +3429,10 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
       if (!resolved || !(resolved.element instanceof Element)) {
         throw { code: 'E_NOT_FOUND', message: `table not found: ${String(params.table ?? '')}` } satisfies ActionError;
       }
-      const schema =
-        resolved.element instanceof HTMLTableElement
-          ? { columns: htmlTableSchema(resolved.element) }
-          : { columns: gridSchema(resolved.element) };
+      const table = withTableIntelligence(resolved.table, resolved.element);
+      const schema = { columns: tableSchemaFromElement(resolved.element) };
       return {
-        table: resolved.table,
+        table,
         schema
       };
     }
@@ -3099,15 +3450,32 @@ async function dispatchRpc(method: string, params: Record<string, unknown> = {})
           : typeof params.limit === 'number'
             ? Math.max(1, Math.floor(params.limit))
             : 100;
-      const extractionMode =
-        resolved.table.kind === 'html' || resolved.table.kind === 'dataTables' ? 'dataSource' : 'visibleOnly';
-      const rows =
-        resolved.element instanceof HTMLTableElement
-          ? htmlTableRows(resolved.element, requestedLimit)
-          : gridRows(resolved.element, requestedLimit);
-      return {
-        table: resolved.table,
+      const table = withTableIntelligence(resolved.table, resolved.element);
+      let rows = tableRowsFromElement(resolved.element, requestedLimit);
+      let extractionMode: TableExtractionMetadata['mode'] =
+        table.intelligence?.preferredExtractionMode ?? (resolved.element instanceof HTMLTableElement ? 'dataSource' : 'visibleOnly');
+      let extraction = buildExtractionMetadata(
         extractionMode,
+        rows,
+        table.intelligence,
+        params.all === true && extractionMode === 'visibleOnly'
+          ? ['Only visible rows could be read from this table region.']
+          : [],
+        {
+          reachedEnd: extractionMode === 'dataSource',
+          limitApplied: params.all === true && rows.length >= requestedLimit
+        }
+      );
+      if (params.all === true && extractionMode === 'scroll') {
+        const scrolled = await scrollExtractRows(resolved.element, requestedLimit, table.intelligence);
+        rows = scrolled.rows;
+        extractionMode = scrolled.extractionMode;
+        extraction = scrolled.extraction;
+      }
+      return {
+        table,
+        extractionMode,
+        extraction,
         rows
       };
     }

@@ -8,6 +8,19 @@ interface QueuedTask {
   title: string;
 }
 
+interface VirtualRowItem {
+  id: number;
+  name: string;
+  bucket: string;
+}
+
+interface NetworkTableRow {
+  id: number;
+  symbol: string;
+  side: string;
+  premium: number;
+}
+
 declare global {
   interface Window {
     table_data?: Array<RowItem>;
@@ -392,6 +405,79 @@ function initNetworkPage(): void {
   });
 }
 
+function initVirtualTablePage(): void {
+  const viewport = document.getElementById('virtual-grid') as HTMLDivElement;
+  const inner = document.getElementById('virtual-grid-inner') as HTMLDivElement;
+  const status = document.getElementById('virtual-grid-status') as HTMLDivElement;
+  const rowHeight = 44;
+  const overscan = 2;
+  const rows: VirtualRowItem[] = Array.from({ length: 40 }, (_, index) => ({
+    id: index + 1,
+    name: `Virtual Row ${index + 1}`,
+    bucket: index % 2 === 0 ? 'Primary' : 'Secondary'
+  }));
+
+  inner.style.height = `${rows.length * rowHeight}px`;
+
+  const render = (): void => {
+    const startIndex = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - overscan);
+    const visibleCount = Math.ceil(viewport.clientHeight / rowHeight) + overscan * 2;
+    const slice = rows.slice(startIndex, startIndex + visibleCount);
+    inner.innerHTML = '';
+    for (const [offset, row] of slice.entries()) {
+      const absoluteIndex = startIndex + offset;
+      const rowElement = document.createElement('div');
+      rowElement.className = 'grid-row';
+      rowElement.setAttribute('role', 'row');
+      rowElement.setAttribute('aria-rowindex', String(absoluteIndex + 1));
+      rowElement.dataset.rowIndex = String(absoluteIndex + 1);
+      rowElement.style.transform = `translateY(${absoluteIndex * rowHeight}px)`;
+      rowElement.innerHTML = `
+        <div role="gridcell">${row.id}</div>
+        <div role="gridcell">${row.name}</div>
+        <div role="gridcell">${row.bucket}</div>
+      `;
+      inner.appendChild(rowElement);
+    }
+    status.textContent = `mounted ${slice.length} / ${rows.length}`;
+  };
+
+  viewport.addEventListener('scroll', () => {
+    render();
+  });
+
+  render();
+}
+
+function initNetworkTablePage(): void {
+  const tbody = document.getElementById('network-table-rows') as HTMLTableSectionElement;
+  const status = document.getElementById('network-table-status') as HTMLDivElement;
+
+  const render = (rows: NetworkTableRow[]): void => {
+    tbody.innerHTML = '';
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${row.id}</td>
+        <td>${row.symbol}</td>
+        <td>${row.side}</td>
+        <td>${row.premium}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  };
+
+  void fetch('/api/network-table-rows')
+    .then(async (response) => {
+      const payload = (await response.json()) as { rows: NetworkTableRow[]; generatedAt: string };
+      render(payload.rows);
+      status.textContent = `loaded ${payload.rows.length} rows @ ${payload.generatedAt}`;
+    })
+    .catch((error: unknown) => {
+      status.textContent = `error: ${error instanceof Error ? error.message : String(error)}`;
+    });
+}
+
 if (page === 'form') {
   initFormPage();
 }
@@ -422,4 +508,12 @@ if (page === 'upload') {
 
 if (page === 'network') {
   initNetworkPage();
+}
+
+if (page === 'virtual-table') {
+  initVirtualTablePage();
+}
+
+if (page === 'network-table') {
+  initNetworkTablePage();
 }

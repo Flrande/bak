@@ -71,13 +71,17 @@ function seedProjectRoot(root: string): void {
   writeFile(join(root, 'apps', 'test-sites', 'iframe-child.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'iframe-host.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'network.html'), '<!doctype html>', 1_000);
+  writeFile(join(root, 'apps', 'test-sites', 'network-table.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'shadow.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'spa.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'table.html'), '<!doctype html>', 1_000);
+  writeFile(join(root, 'apps', 'test-sites', 'virtual-table.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'upload.html'), '<!doctype html>', 1_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'index.html'), '<!doctype html><script type="module" src="/assets/main-test.js"></script>', 2_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'form.html'), '<!doctype html>', 2_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'table.html'), '<!doctype html>', 2_000);
+  writeFile(join(root, 'apps', 'test-sites', 'dist', 'virtual-table.html'), '<!doctype html>', 2_000);
+  writeFile(join(root, 'apps', 'test-sites', 'dist', 'network-table.html'), '<!doctype html>', 2_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'controlled.html'), '<!doctype html>', 2_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'spa.html'), '<!doctype html>', 2_000);
   writeFile(join(root, 'apps', 'test-sites', 'dist', 'iframe-host.html'), '<!doctype html>', 2_000);
@@ -322,6 +326,8 @@ describe('e2e runtime freshness helper', () => {
           );
           writeFile(join(root, 'apps', 'test-sites', 'dist', 'form.html'), '<!doctype html>', outputTime);
           writeFile(join(root, 'apps', 'test-sites', 'dist', 'table.html'), '<!doctype html>', outputTime);
+          writeFile(join(root, 'apps', 'test-sites', 'dist', 'virtual-table.html'), '<!doctype html>', outputTime);
+          writeFile(join(root, 'apps', 'test-sites', 'dist', 'network-table.html'), '<!doctype html>', outputTime);
           writeFile(join(root, 'apps', 'test-sites', 'dist', 'controlled.html'), '<!doctype html>', outputTime);
           writeFile(join(root, 'apps', 'test-sites', 'dist', 'spa.html'), '<!doctype html>', outputTime);
           writeFile(join(root, 'apps', 'test-sites', 'dist', 'iframe-host.html'), '<!doctype html>', outputTime);

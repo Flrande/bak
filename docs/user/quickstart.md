@@ -168,12 +168,13 @@ bak network search --client-name $clientName --pattern "table_data" --rpc-ws-por
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
 bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
 bak table list --client-name $clientName --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --all --rpc-ws-port 17374
+bak table rows --client-name $clientName --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table export --client-name $clientName --table table-1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
 bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 ```
 
-`bak inspect page-data` returns likely globals, tables, recent requests, and `recommendedNextSteps`. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
+`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the legacy discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
 
 Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 

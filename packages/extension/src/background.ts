@@ -1,6 +1,10 @@
 import type {
   ConsoleEntry,
   DebugDumpSection,
+  InspectFreshnessResult,
+  InspectLiveUpdatesResult,
+  InspectPageDataCandidateProbe,
+  InspectPageDataResult,
   Locator,
   NetworkEntry,
   PageExecutionScope,
@@ -10,6 +14,13 @@ import type {
   TableHandle,
   TableSchema
 } from '@flrande/bak-protocol';
+import {
+  buildInspectPageDataResult,
+  buildPageDataProbe,
+  selectReplaySchemaMatch,
+  type InlineJsonInspectionSource,
+  type TableAnalysis
+} from './dynamic-data-tools.js';
 import {
   clearNetworkEntries,
   dropNetworkCapture,
@@ -126,15 +137,39 @@ interface TimestampEvidenceCandidate {
   category?: 'data' | 'contract' | 'event' | 'unknown';
 }
 
-interface PageDataCandidateProbe {
-  name: string;
-  resolver: 'globalThis' | 'lexical';
-  sample: unknown;
-  timestamps: Array<{
-    path: string;
-    value: string;
-    category: 'data' | 'contract' | 'event' | 'unknown';
-  }>;
+interface PageInspectionState {
+  url?: string;
+  title?: string;
+  html?: string;
+  visibleText?: Array<{ chunkId: string; text: string; sourceTag: string }>;
+  suspiciousGlobals?: string[];
+  globalsPreview?: string[];
+  visibleTimestamps?: string[];
+  visibleTimestampCandidates?: Array<Record<string, unknown>>;
+  inlineTimestamps?: string[];
+  inlineTimestampCandidates?: Array<Record<string, unknown>>;
+  tables?: TableHandle[];
+  inlineJsonSources?: InlineJsonInspectionSource[];
+  cookies?: Array<{ name: string }>;
+  lastMutationAt?: number;
+  pageLoadedAt?: number;
+  scripts?: {
+    inlineCount: number;
+    suspectedDataVars: string[];
+  };
+  storage?: {
+    localStorageKeys: string[];
+    sessionStorageKeys: string[];
+  };
+  frames?: Array<{ framePath: string[]; url: string }>;
+  context?: {
+    framePath: string[];
+    shadowPath: string[];
+  };
+  timers?: {
+    timeouts: number;
+    intervals: number;
+  };
 }
 const REPLAY_FORBIDDEN_HEADER_NAMES = new Set([
   'accept-encoding',
@@ -1409,11 +1444,11 @@ function computeFreshnessAssessment(input: {
   return 'unknown';
 }
 
-async function collectPageInspection(tabId: number, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  return (await forwardContentRpc(tabId, 'bak.internal.inspectState', params)) as Record<string, unknown>;
+async function collectPageInspection(tabId: number, params: Record<string, unknown> = {}): Promise<PageInspectionState> {
+  return (await forwardContentRpc(tabId, 'bak.internal.inspectState', params)) as PageInspectionState;
 }
 
-async function probePageDataCandidatesForTab(tabId: number, inspection: Record<string, unknown>): Promise<PageDataCandidateProbe[]> {
+async function probePageDataCandidatesForTab(tabId: number, inspection: PageInspectionState): Promise<InspectPageDataCandidateProbe[]> {
   const candidateNames = [
     ...(Array.isArray(inspection.suspiciousGlobals) ? inspection.suspiciousGlobals.map(String) : []),
     ...(Array.isArray(inspection.globalsPreview) ? inspection.globalsPreview.map(String) : [])
@@ -1429,15 +1464,6 @@ async function probePageDataCandidatesForTab(tabId: number, inspection: Record<s
     const dataPattern = /\\b(updated|update|updatedat|asof|timestamp|generated|generatedat|refresh|latest|last|quote|trade|price|flow|market|time|snapshot|signal)\\b/i;
     const contractPattern = /\\b(expiry|expiration|expires|option|contract|strike|maturity|dte|call|put|exercise)\\b/i;
     const eventPattern = /\\b(earnings|event|report|dividend|split|meeting|fomc|release|filing)\\b/i;
-    const isTimestampString = (value) => typeof value === 'string' && value.trim().length > 0 && !Number.isNaN(Date.parse(value.trim()));
-    const classify = (path, value) => {
-      const normalized = String(path || '').toLowerCase();
-      if (dataPattern.test(normalized)) return 'data';
-      if (contractPattern.test(normalized)) return 'contract';
-      if (eventPattern.test(normalized)) return 'event';
-      const parsed = Date.parse(String(value || '').trim());
-      return Number.isFinite(parsed) && parsed > Date.now() + 36 * 60 * 60 * 1000 ? 'contract' : 'unknown';
-    };
     const sampleValue = (value, depth = 0) => {
       if (depth >= 2 || value == null || typeof value !== 'object') {
         if (typeof value === 'string') {
@@ -1461,29 +1487,6 @@ async function probePageDataCandidatesForTab(tabId: number, inspection: Record<s
       }
       return sampled;
     };
-    const collectTimestamps = (value, path, depth, collected) => {
-      if (collected.length >= 16) return;
-      if (isTimestampString(value)) {
-        collected.push({ path, value: String(value), category: classify(path, value) });
-        return;
-      }
-      if (depth >= 3) return;
-      if (Array.isArray(value)) {
-        value.slice(0, 3).forEach((item, index) => collectTimestamps(item, path + '[' + index + ']', depth + 1, collected));
-        return;
-      }
-      if (value && typeof value === 'object') {
-        Object.keys(value)
-          .slice(0, 8)
-          .forEach((key) => {
-            try {
-              collectTimestamps(value[key], path ? path + '.' + key : key, depth + 1, collected);
-            } catch {
-              // Ignore unreadable nested properties.
-            }
-          });
-      }
-    };
     const readCandidate = (name) => {
       if (name in globalThis) {
         return { resolver: 'globalThis', value: globalThis[name] };
@@ -1494,13 +1497,10 @@ async function probePageDataCandidatesForTab(tabId: number, inspection: Record<s
     for (const name of candidates) {
       try {
         const resolved = readCandidate(name);
-        const timestamps = [];
-        collectTimestamps(resolved.value, name, 0, timestamps);
         results.push({
           name,
           resolver: resolved.resolver,
-          sample: sampleValue(resolved.value),
-          timestamps
+          sample: sampleValue(resolved.value)
         });
       } catch {
         // Ignore inaccessible candidates.
@@ -1510,13 +1510,21 @@ async function probePageDataCandidatesForTab(tabId: number, inspection: Record<s
   })()`;
 
   try {
-    const evaluated = await executePageWorld<PageDataCandidateProbe[]>(tabId, 'eval', {
+    const evaluated = await executePageWorld<Array<{ name: string; resolver: 'globalThis' | 'lexical'; sample: unknown }>>(tabId, 'eval', {
       expr,
       scope: 'current',
       maxBytes: 64 * 1024
     });
     const frameResult = evaluated.result ?? evaluated.results?.find((candidate) => candidate.value || candidate.error);
-    return Array.isArray(frameResult?.value) ? frameResult.value : [];
+    if (!Array.isArray(frameResult?.value)) {
+      return [];
+    }
+    return frameResult.value
+      .filter(
+        (candidate): candidate is { name: string; resolver: 'globalThis' | 'lexical'; sample: unknown } =>
+          typeof candidate === 'object' && candidate !== null && typeof candidate.name === 'string'
+      )
+      .map((candidate) => buildPageDataProbe(candidate.name, candidate.resolver, candidate.sample));
   } catch {
     return [];
   }
@@ -1616,7 +1624,7 @@ async function buildFreshnessForTab(tabId: number, params: Record<string, unknow
   };
 }
 
-function summarizeNetworkCadence(entries: NetworkEntry[]): Record<string, unknown> {
+function summarizeNetworkCadence(entries: NetworkEntry[]): InspectLiveUpdatesResult['networkCadence'] {
   const relevant = entries
     .filter((entry) => entry.kind === 'fetch' || entry.kind === 'xhr')
     .slice()
@@ -1674,62 +1682,68 @@ function extractReplayRowsCandidate(json: unknown): { rows: unknown[]; source: s
   return null;
 }
 
-async function enrichReplayWithSchema(tabId: number, response: PageFetchResponse): Promise<PageFetchResponse> {
-  const candidate = extractReplayRowsCandidate(response.json);
-  if (!candidate || candidate.rows.length === 0) {
-    return response;
-  }
-
-  const firstRow = candidate.rows[0];
+async function collectTableAnalyses(tabId: number): Promise<TableAnalysis[]> {
   const tablesResult = (await forwardContentRpc(tabId, 'table.list', {})) as { tables?: TableHandle[] };
   const tables = Array.isArray(tablesResult.tables) ? tablesResult.tables : [];
-  if (tables.length === 0) {
-    return response;
-  }
-
-  const schemas: Array<{ table: TableHandle; schema: TableSchema }> = [];
+  const analyses: TableAnalysis[] = [];
   for (const table of tables) {
     const schemaResult = (await forwardContentRpc(tabId, 'table.schema', { table: table.id })) as {
       table?: TableHandle;
       schema?: TableSchema;
     };
+    const rowsResult = (await forwardContentRpc(tabId, 'table.rows', {
+      table: table.id,
+      limit: 8
+    })) as {
+      table?: TableHandle;
+      rows?: Array<Record<string, unknown>>;
+    };
     if (schemaResult.schema && Array.isArray(schemaResult.schema.columns)) {
-      schemas.push({ table: schemaResult.table ?? table, schema: schemaResult.schema });
+      analyses.push({
+        table: schemaResult.table ?? rowsResult.table ?? table,
+        schema: schemaResult.schema,
+        sampleRows: Array.isArray(rowsResult.rows) ? rowsResult.rows.slice(0, 8) : []
+      });
     }
   }
+  return analyses;
+}
 
-  if (schemas.length === 0) {
+async function enrichReplayWithSchema(tabId: number, requestId: string, response: PageFetchResponse): Promise<PageFetchResponse> {
+  const candidate = extractReplayRowsCandidate(response.json);
+  if (!candidate || candidate.rows.length === 0) {
     return response;
   }
 
-  if (Array.isArray(firstRow)) {
-    const matchingSchema = schemas.find(({ schema }) => schema.columns.length === firstRow.length) ?? schemas[0];
-    if (!matchingSchema) {
-      return response;
-    }
-    const mappedRows = candidate.rows
-      .filter((row): row is unknown[] => Array.isArray(row))
-      .map((row) => {
-        const mapped: Record<string, unknown> = {};
-        matchingSchema.schema.columns.forEach((column, index) => {
-          mapped[column.label] = row[index];
-        });
-        return mapped;
-      });
-    return {
-      ...response,
-      table: matchingSchema.table,
-      schema: matchingSchema.schema,
-      mappedRows,
-      mappingSource: candidate.source
-    };
+  const tables = await collectTableAnalyses(tabId);
+  if (tables.length === 0) {
+    return response;
   }
 
-  if (typeof firstRow === 'object' && firstRow !== null) {
+  const inspection = await collectPageInspection(tabId, {});
+  const pageDataCandidates = await probePageDataCandidatesForTab(tabId, inspection);
+  const recentNetwork = listNetworkEntries(tabId, { limit: 25 });
+  const pageDataReport = buildInspectPageDataResult({
+    suspiciousGlobals: inspection.suspiciousGlobals ?? [],
+    tables: inspection.tables ?? [],
+    visibleTimestamps: inspection.visibleTimestamps ?? [],
+    inlineTimestamps: inspection.inlineTimestamps ?? [],
+    pageDataCandidates,
+    recentNetwork,
+    tableAnalyses: tables,
+    inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : []
+  });
+  const matched = selectReplaySchemaMatch(response.json, tables, {
+    preferredSourceId: `networkResponse:${requestId}`,
+    mappings: pageDataReport.sourceMappings
+  });
+  if (matched) {
     return {
       ...response,
-      mappedRows: candidate.rows.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null),
-      mappingSource: candidate.source
+      table: matched.table,
+      schema: matched.schema,
+      mappedRows: matched.mappedRows,
+      mappingSource: matched.mappingSource
     };
   }
 
@@ -2259,7 +2273,9 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         if (!first) {
           throw toError('E_EXECUTION', 'network replay returned no response payload');
         }
-        return params.withSchema === 'auto' && params.mode === 'json' ? await enrichReplayWithSchema(tab.id!, first) : first;
+        return params.withSchema === 'auto' && params.mode === 'json'
+          ? await enrichReplayWithSchema(tab.id!, String(params.id ?? ''), first)
+          : first;
       });
     }
     case 'page.freshness': {
@@ -2337,6 +2353,18 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         const inspection = await collectPageInspection(tab.id!, params);
         const pageDataCandidates = await probePageDataCandidatesForTab(tab.id!, inspection);
         const network = listNetworkEntries(tab.id!, { limit: 10 });
+        const tableAnalyses = await collectTableAnalyses(tab.id!);
+        const enriched = buildInspectPageDataResult({
+          suspiciousGlobals: inspection.suspiciousGlobals ?? [],
+          tables: inspection.tables ?? [],
+          visibleTimestamps: inspection.visibleTimestamps ?? [],
+          inlineTimestamps: inspection.inlineTimestamps ?? [],
+          pageDataCandidates,
+          recentNetwork: network,
+          tableAnalyses,
+          inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : []
+        });
+        const recommendedNextSteps = enriched.recommendedNextActions.map((action) => action.command);
         return {
           suspiciousGlobals: inspection.suspiciousGlobals ?? [],
           tables: inspection.tables ?? [],
@@ -2344,12 +2372,14 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           inlineTimestamps: inspection.inlineTimestamps ?? [],
           pageDataCandidates,
           recentNetwork: network,
+          dataSources: enriched.dataSources,
+          sourceMappings: enriched.sourceMappings,
+          recommendedNextActions: enriched.recommendedNextActions,
           recommendedNextSteps: [
-            'bak page extract --path table_data --resolver auto',
-            'bak network search --pattern table_data',
-            'bak page freshness'
+            ...recommendedNextSteps,
+            ...['bak page freshness'].filter((command) => !recommendedNextSteps.includes(command))
           ]
-        };
+        } satisfies InspectPageDataResult;
       });
     }
     case 'inspect.liveUpdates': {
@@ -2364,7 +2394,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           networkCount: network.length,
           networkCadence: summarizeNetworkCadence(network),
           recentNetwork: network.slice(0, 10)
-        };
+        } satisfies InspectLiveUpdatesResult;
       });
     }
     case 'inspect.freshness': {
@@ -2382,7 +2412,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
                     (freshness.latestPageDataTimestamp ?? freshness.latestInlineDataTimestamp ?? freshness.latestNetworkTimestamp)
                 )
               : null
-        };
+        } satisfies InspectFreshnessResult;
       });
     }
     case 'capture.snapshot': {

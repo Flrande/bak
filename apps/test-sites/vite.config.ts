@@ -89,6 +89,21 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
     return true;
   }
 
+  if (url.pathname === '/api/network-table-rows') {
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify({
+        rows: [
+          { id: 101, symbol: 'QQQ', side: 'Buy', premium: 125000 },
+          { id: 102, symbol: 'SPY', side: 'Sell', premium: 98000 },
+          { id: 103, symbol: 'IWM', side: 'Buy', premium: 64500 }
+        ],
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return true;
+  }
+
   response.statusCode = 404;
   response.end(JSON.stringify({ ok: false, message: 'not found' }));
   return true;
@@ -126,6 +141,8 @@ export default defineConfig({
         index: resolve(__dirname, 'index.html'),
         form: resolve(__dirname, 'form.html'),
         table: resolve(__dirname, 'table.html'),
+        virtualTable: resolve(__dirname, 'virtual-table.html'),
+        networkTable: resolve(__dirname, 'network-table.html'),
         controlled: resolve(__dirname, 'controlled.html'),
         spa: resolve(__dirname, 'spa.html'),
         iframeHost: resolve(__dirname, 'iframe-host.html'),
