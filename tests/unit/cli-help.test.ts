@@ -66,7 +66,17 @@ describe('cli help output', { timeout: 30_000 }, () => {
     const help = runHelp(['page', '--help']);
 
     expect(help).toContain('Use bak call for protocol-only navigation helpers');
-    expect(help).toContain('bak page snapshot --include-base64 --rpc-ws-port 17374');
+    expect(help).toContain('bak page snapshot --include-base64 --annotate --rpc-ws-port 17374');
+  });
+
+  it('documents snapshot annotation and diff flags on page and debug commands', () => {
+    const pageSnapshotHelp = runHelp(['page', 'snapshot', '--help']);
+    const debugDumpHelp = runHelp(['debug', 'dump-state', '--help']);
+
+    expect(pageSnapshotHelp).toContain('--annotate');
+    expect(pageSnapshotHelp).toContain('--diff-with <path>');
+    expect(debugDumpHelp).toContain('--annotate-snapshot');
+    expect(debugDumpHelp).toContain('--snapshot-diff-with <path>');
   });
 
   it('documents tabs new as a recovery-only session-aware compatibility command', () => {

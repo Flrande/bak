@@ -79,6 +79,15 @@ export const BBoxSchema = z.object({
 
 export type BBox = z.infer<typeof BBoxSchema>;
 
+export const ElementSelectorsSchema = z.object({
+  css: z.string().nullable(),
+  xpath: z.string().nullable().optional(),
+  text: z.string().nullable(),
+  aria: z.string().nullable()
+});
+
+export type ElementSelectors = z.infer<typeof ElementSelectorsSchema>;
+
 export const ElementMapItemSchema = z.object({
   eid: z.string(),
   tag: z.string(),
@@ -88,16 +97,125 @@ export const ElementMapItemSchema = z.object({
   visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   bbox: BBoxSchema,
-  selectors: z.object({
-    css: z.string().nullable(),
-    xpath: z.string().nullable().optional(),
-    text: z.string().nullable(),
-    aria: z.string().nullable()
-  }),
+  selectors: ElementSelectorsSchema,
   risk: z.enum(['low', 'high'])
 });
 
 export type ElementMapItem = z.infer<typeof ElementMapItemSchema>;
+
+export const SnapshotActionabilitySchema = z.enum(['click', 'type', 'select', 'check', 'unknown']);
+
+export type SnapshotActionability = z.infer<typeof SnapshotActionabilitySchema>;
+
+export const SnapshotRefSchema = z.object({
+  ref: z.string(),
+  eid: z.string(),
+  role: z.string().nullable(),
+  name: z.string(),
+  text: z.string(),
+  risk: z.enum(['low', 'high']),
+  bbox: BBoxSchema,
+  selectors: ElementSelectorsSchema,
+  actionability: SnapshotActionabilitySchema
+});
+
+export type SnapshotRef = z.infer<typeof SnapshotRefSchema>;
+
+export const SnapshotSummaryItemSchema = z.object({
+  ref: z.string(),
+  eid: z.string(),
+  label: z.string(),
+  role: z.string().nullable(),
+  risk: z.enum(['low', 'high']),
+  actionability: SnapshotActionabilitySchema
+});
+
+export type SnapshotSummaryItem = z.infer<typeof SnapshotSummaryItemSchema>;
+
+export const SnapshotRecommendationSchema = z.object({
+  ref: z.string(),
+  actionability: SnapshotActionabilitySchema,
+  summary: z.string()
+});
+
+export type SnapshotRecommendation = z.infer<typeof SnapshotRecommendationSchema>;
+
+export const SnapshotActionSummarySchema = z.object({
+  clickable: z.array(SnapshotSummaryItemSchema),
+  inputs: z.array(SnapshotSummaryItemSchema),
+  highRisk: z.array(SnapshotSummaryItemSchema),
+  recommendedNextActions: z.array(SnapshotRecommendationSchema)
+});
+
+export type SnapshotActionSummary = z.infer<typeof SnapshotActionSummarySchema>;
+
+export const SnapshotDiffChangeFieldSchema = z.enum(['name', 'text', 'risk', 'bbox', 'actionability']);
+
+export type SnapshotDiffChangeField = z.infer<typeof SnapshotDiffChangeFieldSchema>;
+
+export const SnapshotRefStateSchema = z.object({
+  name: z.string(),
+  text: z.string(),
+  risk: z.enum(['low', 'high']),
+  bbox: BBoxSchema,
+  actionability: SnapshotActionabilitySchema
+});
+
+export type SnapshotRefState = z.infer<typeof SnapshotRefStateSchema>;
+
+export const SnapshotChangedRefSchema = z.object({
+  ref: z.string().nullable(),
+  previousRef: z.string().nullable(),
+  eid: z.string(),
+  previousEid: z.string().nullable(),
+  label: z.string(),
+  changes: z.array(SnapshotDiffChangeFieldSchema),
+  before: SnapshotRefStateSchema,
+  after: SnapshotRefStateSchema
+});
+
+export type SnapshotChangedRef = z.infer<typeof SnapshotChangedRefSchema>;
+
+export const SnapshotFocusChangeSchema = z.object({
+  type: z.enum(['entered', 'left', 'moved']),
+  ref: z.string().nullable(),
+  previousRef: z.string().nullable(),
+  eid: z.string(),
+  label: z.string(),
+  previousRank: z.number().int().nullable(),
+  currentRank: z.number().int().nullable()
+});
+
+export type SnapshotFocusChange = z.infer<typeof SnapshotFocusChangeSchema>;
+
+export const SnapshotDiffSchema = z.object({
+  comparedTo: z.string(),
+  addedRefs: z.array(SnapshotRefSchema),
+  removedRefs: z.array(SnapshotRefSchema),
+  changedRefs: z.array(SnapshotChangedRefSchema),
+  focusChanges: z.array(SnapshotFocusChangeSchema),
+  summary: z.object({
+    added: z.number().int().min(0),
+    removed: z.number().int().min(0),
+    changed: z.number().int().min(0),
+    focusChanged: z.number().int().min(0)
+  })
+});
+
+export type SnapshotDiff = z.infer<typeof SnapshotDiffSchema>;
+
+export interface PersistedPageSnapshot {
+  traceId: string;
+  imagePath: string;
+  elementsPath: string;
+  imageBase64?: string;
+  elementCount: number;
+  refs?: SnapshotRef[];
+  annotatedImagePath?: string;
+  annotatedImageBase64?: string;
+  actionSummary?: SnapshotActionSummary;
+  diff?: SnapshotDiff;
+}
 
 export const ConsoleEntrySchema = z.object({
   level: z.enum(['log', 'debug', 'info', 'warn', 'error']),
@@ -493,14 +611,8 @@ export interface MethodMap {
   'page.forward': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
   'page.reload': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
   'page.snapshot': {
-    params: { sessionId: string; tabId?: number; includeBase64?: boolean };
-    result: {
-      traceId: string;
-      imagePath: string;
-      elementsPath: string;
-      imageBase64?: string;
-      elementCount: number;
-    };
+    params: { sessionId: string; tabId?: number; includeBase64?: boolean; annotate?: boolean; diffWith?: string };
+    result: PersistedPageSnapshot;
   };
   'page.wait': {
     params: {
@@ -723,6 +835,8 @@ export interface MethodMap {
       includeAccessibility?: boolean;
       includeSnapshot?: boolean;
       includeSnapshotBase64?: boolean;
+      annotateSnapshot?: boolean;
+      snapshotDiffWith?: string;
       section?: DebugDumpSection[];
     };
     result: {
@@ -754,13 +868,7 @@ export interface MethodMap {
         total: number;
         recent: NetworkEntry[];
       };
-      snapshot?: {
-        traceId: string;
-        imagePath: string;
-        elementsPath: string;
-        imageBase64?: string;
-        elementCount: number;
-      };
+      snapshot?: PersistedPageSnapshot;
     };
   };
   'table.list': {

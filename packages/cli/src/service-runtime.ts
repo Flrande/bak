@@ -8,6 +8,7 @@ import {
   type MethodName,
   type MethodParams,
   type MethodResult,
+  type PersistedPageSnapshot,
   RpcError,
   type SessionBrowserState,
   type SessionContextSnapshot,
@@ -23,6 +24,13 @@ import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy
 import { redactElements, redactText, redactUnknown } from './privacy.js';
 import type { PairingStore } from './pairing-store.js';
 import { SessionManager, type SessionState } from './session-manager.js';
+import {
+  buildSnapshotDiff,
+  buildSnapshotPresentation,
+  parsePngDimensions,
+  readSnapshotComparisonInput,
+  renderAnnotatedSnapshotSvg
+} from './snapshot-ux.js';
 import type { TraceStore } from './trace-store.js';
 import { ensureDir, getDomain, getPathname, id, nowIso, resolveDataDir } from './utils.js';
 
@@ -181,25 +189,33 @@ function redactTraceResult(method: string, result: unknown): unknown {
   const redacted = redactUnknown(result);
   if (method === 'page.snapshot') {
     const payload = asRecord(redacted);
-    if (typeof payload.imageBase64 !== 'string') {
-      return payload;
+    const nextPayload = { ...payload };
+    if (typeof payload.imageBase64 === 'string') {
+      nextPayload.imageBase64 = '[REDACTED:base64]';
     }
-    return { ...payload, imageBase64: '[REDACTED:base64]' };
+    if (typeof payload.annotatedImageBase64 === 'string') {
+      nextPayload.annotatedImageBase64 = '[REDACTED:base64]';
+    }
+    return nextPayload;
   }
   if (method !== 'debug.dumpState') {
     return redacted;
   }
   const payload = asRecord(redacted);
   const snapshot = asRecord(payload.snapshot);
-  if (typeof snapshot.imageBase64 !== 'string') {
+  if (Object.keys(snapshot).length === 0) {
     return payload;
+  }
+  const nextSnapshot = { ...snapshot };
+  if (typeof snapshot.imageBase64 === 'string') {
+    nextSnapshot.imageBase64 = '[REDACTED:base64]';
+  }
+  if (typeof snapshot.annotatedImageBase64 === 'string') {
+    nextSnapshot.annotatedImageBase64 = '[REDACTED:base64]';
   }
   return {
     ...payload,
-    snapshot: {
-      ...snapshot,
-      imageBase64: '[REDACTED:base64]'
-    }
+    snapshot: nextSnapshot
   };
 }
 
@@ -757,28 +773,50 @@ export class BakService {
 
   private async persistPageSnapshot(
     tabId: number | undefined,
-    includeBase64: boolean,
+    options: {
+      includeBase64: boolean;
+      annotate?: boolean;
+      diffWith?: string;
+    },
     traceId: string
-  ): Promise<{
-    traceId: string;
-    imagePath: string;
-    elementsPath: string;
-    imageBase64?: string;
-    elementCount: number;
-  }> {
+  ): Promise<PersistedPageSnapshot> {
     const snapshot = await this.driver.pageSnapshot(tabId, true);
     const redactedElements = redactElements(snapshot.elements);
     const snapshotDir = ensureDir(join(this.dataDir, 'snapshots', traceId));
-    const imagePath = join(snapshotDir, `${Date.now()}_viewport.png`);
-    const elementsPath = join(snapshotDir, `${Date.now()}_elements.json`);
+    const timestamp = Date.now();
+    const imagePath = join(snapshotDir, `${timestamp}_viewport.png`);
+    const elementsPath = join(snapshotDir, `${timestamp}_elements.json`);
+    const viewport = parsePngDimensions(snapshot.imageBase64);
+    const { refs, actionSummary } = buildSnapshotPresentation(redactedElements, { viewport });
     writeFileSync(imagePath, Buffer.from(snapshot.imageBase64, 'base64'));
     writeFileSync(elementsPath, `${JSON.stringify(redactedElements, null, 2)}\n`, 'utf8');
+    let annotatedImagePath: string | undefined;
+    let annotatedImageBase64: string | undefined;
+    if (options.annotate === true) {
+      const annotatedSvg = renderAnnotatedSnapshotSvg(snapshot.imageBase64, refs, viewport);
+      annotatedImagePath = join(snapshotDir, `${timestamp}_annotated.svg`);
+      writeFileSync(annotatedImagePath, annotatedSvg, 'utf8');
+      if (options.includeBase64) {
+        annotatedImageBase64 = Buffer.from(annotatedSvg, 'utf8').toString('base64');
+      }
+    }
+
+    let diff: PersistedPageSnapshot['diff'];
+    if (typeof options.diffWith === 'string' && options.diffWith.trim().length > 0) {
+      diff = buildSnapshotDiff(refs, readSnapshotComparisonInput(options.diffWith));
+    }
+
     return {
       traceId,
       imagePath,
       elementsPath,
-      imageBase64: includeBase64 ? snapshot.imageBase64 : undefined,
-      elementCount: redactedElements.length
+      imageBase64: options.includeBase64 ? snapshot.imageBase64 : undefined,
+      elementCount: redactedElements.length,
+      refs,
+      annotatedImagePath,
+      annotatedImageBase64,
+      actionSummary,
+      diff
     };
   }
 
@@ -1405,7 +1443,15 @@ export class BakService {
           if (typeof target.tabId === 'number') {
             await this.applyStoredContext(sessionId, target.tabId);
           }
-          return (await this.persistPageSnapshot(target.tabId, args.includeBase64 === true, session.traceId)) as MethodResult<TMethod>;
+          return (await this.persistPageSnapshot(
+            target.tabId,
+            {
+              includeBase64: args.includeBase64 === true,
+              annotate: args.annotate === true,
+              diffWith: typeof args.diffWith === 'string' ? args.diffWith : undefined
+            },
+            session.traceId
+          )) as MethodResult<TMethod>;
         });
       }
       case 'element.click': {
@@ -1590,7 +1636,11 @@ export class BakService {
           ...asRecord(result),
           snapshot: await this.persistPageSnapshot(
             target.tabId,
-            args.includeSnapshotBase64 === true,
+            {
+              includeBase64: args.includeSnapshotBase64 === true,
+              annotate: args.annotateSnapshot === true,
+              diffWith: typeof args.snapshotDiffWith === 'string' ? args.snapshotDiffWith : undefined
+            },
             session.traceId
           )
         } as MethodResult<TMethod>;

@@ -142,13 +142,15 @@ $sessionId = $session.sessionId
 bak session open-tab --client-name $clientName --url "https://example.com" --active --rpc-ws-port 17374
 bak session dashboard --rpc-ws-port 17374
 bak page title --client-name $clientName --rpc-ws-port 17374
-bak page snapshot --client-name $clientName --include-base64 --rpc-ws-port 17374
+bak page snapshot --client-name $clientName --include-base64 --annotate --rpc-ws-port 17374
 bak session close-tab --client-name $clientName --rpc-ws-port 17374
 ```
 
 Use `bak session ...` for agent-owned tabs. The normal agent workflow is to pass a stable `--client-name` and let `bak` auto-resolve the session on browser-affecting commands. The resolution order is `--session-id` > `BAK_SESSION_ID` > `--client-name` > `BAK_CLIENT_NAME` > `CODEX_THREAD_ID`. Use an explicit `sessionId` when you are handing work off, debugging, or reusing a session across processes.
 
 `bak tabs list`, `bak tabs get`, and `bak tabs active` remain browser-wide diagnostics. Reach for `bak tabs new`, `bak tabs focus`, and `bak tabs close` only when you need recovery-oriented compatibility commands that still stay inside the resolved session instead of acting on arbitrary browser tabs.
+
+For page understanding, `bak page snapshot --annotate` adds a numbered visual overlay plus `refs[]`/`actionSummary` in JSON. When you need to compare page states, add `--diff-with <older-elements-or-snapshot.json>` to get structured `addedRefs`, `removedRefs`, and `changedRefs` output.
 
 `bak session open-tab` keeps the current default session tab unchanged unless you pass `--active` or later call `bak session set-active-tab`. `bak session close-tab` closes a tab in the current session; closing the last session tab auto-closes that session, and when all sessions are gone the managed background runtime auto-stops. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
 

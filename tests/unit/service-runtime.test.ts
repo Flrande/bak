@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -601,8 +601,86 @@ describe('service runtime session bindings', () => {
     expect(dump.snapshot).toBeDefined();
     expect(existsSync(dump.snapshot!.imagePath)).toBe(true);
     expect(existsSync(dump.snapshot!.elementsPath)).toBe(true);
+    expect(Array.isArray(dump.snapshot!.refs)).toBe(true);
+    expect(dump.snapshot!.refs?.[0]).toMatchObject({
+      ref: '@e1',
+      eid: 'el-1',
+      actionability: 'click'
+    });
+    expect(dump.snapshot!.actionSummary?.clickable[0]).toMatchObject({
+      ref: '@e1',
+      eid: 'el-1'
+    });
     expect(dump.snapshot!.imageBase64).toBeUndefined();
     expect(JSON.parse(readFileSync(dump.snapshot!.elementsPath, 'utf8'))).toHaveLength(1);
+  });
+
+  it('adds annotated snapshot output and structured diffs for page.snapshot', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+
+    const previousElementsPath = join(process.env.BAK_DATA_DIR!, 'previous-elements.json');
+    writeFileSync(
+      previousElementsPath,
+      `${JSON.stringify(
+        [
+          {
+            eid: 'el-previous',
+            tag: 'button',
+            role: 'button',
+            name: 'Save draft',
+            text: 'Save draft',
+            bbox: { x: 25, y: 48, width: 24, height: 24 },
+            selectors: {
+              css: '#save',
+              xpath: null,
+              text: 'Save draft',
+              aria: 'button "Save draft"'
+            },
+            risk: 'low'
+          }
+        ],
+        null,
+        2
+      )}\n`,
+      'utf8'
+    );
+    const previousSnapshotPath = join(process.env.BAK_DATA_DIR!, 'previous-snapshot.json');
+    writeFileSync(
+      previousSnapshotPath,
+      `${JSON.stringify(
+        {
+          elementsPath: previousElementsPath
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    );
+
+    const snapshot = await service.invoke('page.snapshot', {
+      sessionId: created.sessionId,
+      includeBase64: true,
+      annotate: true,
+      diffWith: previousSnapshotPath
+    });
+
+    expect(existsSync(snapshot.imagePath)).toBe(true);
+    expect(existsSync(snapshot.annotatedImagePath!)).toBe(true);
+    expect(snapshot.imageBase64).toBeTruthy();
+    expect(snapshot.annotatedImageBase64).toBeTruthy();
+    expect(snapshot.refs?.[0]).toMatchObject({
+      ref: '@e1',
+      eid: 'el-1',
+      actionability: 'click'
+    });
+    expect(snapshot.actionSummary?.recommendedNextActions[0]?.summary).toContain('@e1');
+    expect(snapshot.diff?.comparedTo).toContain('previous-elements.json');
+    expect(snapshot.diff?.summary.changed).toBe(1);
+    expect(snapshot.diff?.changedRefs[0]?.changes).toEqual(expect.arrayContaining(['name', 'text', 'bbox']));
   });
 
   it('requires explicit confirmation for mutating page.fetch requests', async () => {

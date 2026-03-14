@@ -117,7 +117,7 @@ bak page url --client-name $clientName --rpc-ws-port 17374
 ## Read And Debug
 
 ```powershell
-bak page snapshot --client-name $clientName --include-base64 --rpc-ws-port 17374
+bak page snapshot --client-name $clientName --include-base64 --annotate --rpc-ws-port 17374
 bak page text --client-name $clientName --rpc-ws-port 17374
 bak page dom --client-name $clientName --rpc-ws-port 17374
 bak page a11y --client-name $clientName --rpc-ws-port 17374
@@ -129,7 +129,7 @@ bak page extract --client-name $clientName --path "market_data.QQQ.quotes.change
 bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
 bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak debug console --client-name $clientName --limit 20 --rpc-ws-port 17374
-bak debug dump-state --client-name $clientName --section dom visible-text network-summary --include-snapshot --rpc-ws-port 17374
+bak debug dump-state --client-name $clientName --section dom visible-text network-summary --include-snapshot --annotate-snapshot --rpc-ws-port 17374
 bak network list --client-name $clientName --limit 20 --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
 bak network wait --client-name $clientName --url-includes "/api/save" --rpc-ws-port 17374
@@ -137,6 +137,8 @@ bak network search --client-name $clientName --pattern "table_data" --rpc-ws-por
 bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
 bak network clear --client-name $clientName --rpc-ws-port 17374
 ```
+
+Use `bak page snapshot --annotate` when you want numbered `@eN` refs that line up with the returned `refs[]` payload and the annotated image. Use `--diff-with` against an older elements JSON, page snapshot JSON, or debug dump JSON when you need a structured before/after interaction diff instead of a raw screenshot.
 
 Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
 

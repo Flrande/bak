@@ -1063,7 +1063,7 @@ addStructuredHelp(page, {
     'bak page goto "https://example.com" --rpc-ws-port 17374',
     'bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374',
     'bak page extract --path "market_data.QQQ" --rpc-ws-port 17374',
-    'bak page snapshot --include-base64 --rpc-ws-port 17374'
+    'bak page snapshot --include-base64 --annotate --rpc-ws-port 17374'
   ]
 });
 addStructuredHelp(addRpcPortOption(addTabOption(page.command('goto <url>').description('Navigate the target tab to a URL'))), {
@@ -1091,8 +1091,17 @@ for (const [name, method, description] of [
   const command = addRpcPortOption(addTabOption(page.command(name).description(description)));
   if (name === 'snapshot') {
     command.option('--include-base64', 'include imageBase64 in the result', false);
+    command.option('--annotate', 'include an annotated snapshot image with numbered refs', false);
+    command.option('--diff-with <path>', 'compare against a previous snapshot elements or refs JSON file');
     addStructuredHelp(command, {
-      examples: ['bak page snapshot --include-base64 --rpc-ws-port 17374']
+      notes: [
+        'Use --annotate when you want numbered @eN refs aligned with the returned snapshot refs.',
+        'Use --diff-with with a previous elements JSON file, page snapshot JSON, or debug dump JSON.'
+      ],
+      examples: [
+        'bak page snapshot --include-base64 --annotate --rpc-ws-port 17374',
+        'bak page snapshot --diff-with .\\snapshots\\previous_elements.json --rpc-ws-port 17374'
+      ]
     });
   } else {
     addStructuredHelp(command, {
@@ -1104,7 +1113,9 @@ for (const [name, method, description] of [
       method,
       {
         ...targetParams(options),
-        includeBase64: options.includeBase64 === true ? true : undefined
+        includeBase64: options.includeBase64 === true ? true : undefined,
+        annotate: options.annotate === true ? true : undefined,
+        diffWith: options.diffWith ? String(options.diffWith) : undefined
       },
       parseRpcPort(options)
     )
@@ -1275,18 +1286,32 @@ addStructuredHelp(debug, {
 addStructuredHelp(addRpcPortOption(addTabOption(debug.command('console').description('Read recent structured console entries').option('--limit <limit>', 'max number of entries', '50'))), {
   examples: ['bak debug console --limit 20 --rpc-ws-port 17374']
 }).action(async (options) => invoke('debug.getConsole', { ...targetParams(options), limit: parsePositiveInt(options.limit, 'limit') }, parseRpcPort(options)));
-addRpcPortOption(
-  addTabOption(
-    debug
-      .command('dump-state')
-      .description('Capture a structured debug bundle for the current browser context')
-      .option('--console-limit <limit>', 'console entry limit', '80')
-      .option('--network-limit <limit>', 'network entry limit', '80')
-      .option('--section <section...>', 'subset of sections: dom|visible-text|scripts|globals-preview|network-summary|storage|frames')
-      .option('--include-a11y', 'include accessibility nodes', false)
-      .option('--include-snapshot', 'attach a fresh viewport snapshot to the dump', false)
-      .option('--include-snapshot-base64', 'include snapshot imageBase64 when a snapshot is attached', false)
-  )
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      debug
+        .command('dump-state')
+        .description('Capture a structured debug bundle for the current browser context')
+        .option('--console-limit <limit>', 'console entry limit', '80')
+        .option('--network-limit <limit>', 'network entry limit', '80')
+        .option('--section <section...>', 'subset of sections: dom|visible-text|scripts|globals-preview|network-summary|storage|frames')
+        .option('--include-a11y', 'include accessibility nodes', false)
+        .option('--include-snapshot', 'attach a fresh viewport snapshot to the dump', false)
+        .option('--include-snapshot-base64', 'include snapshot imageBase64 when a snapshot is attached', false)
+        .option('--annotate-snapshot', 'annotate the attached snapshot image when --include-snapshot is used', false)
+        .option('--snapshot-diff-with <path>', 'compare the attached snapshot against a previous snapshot elements or refs JSON file')
+    )
+  ),
+  {
+    notes: [
+      'Snapshot annotation and diff are only applied when --include-snapshot is enabled.',
+      'Use dump-state when you want the same @eN snapshot refs plus DOM, console, and network context together.'
+    ],
+    examples: [
+      'bak debug dump-state --include-snapshot --annotate-snapshot --rpc-ws-port 17374',
+      'bak debug dump-state --include-snapshot --snapshot-diff-with .\\snapshots\\previous_dump.json --rpc-ws-port 17374'
+    ]
+  }
 ).action(async (options) =>
   invoke(
     'debug.dumpState',
@@ -1297,7 +1322,9 @@ addRpcPortOption(
       section: parseStringList(options.section),
       includeAccessibility: options.includeA11y === true,
       includeSnapshot: options.includeSnapshot === true,
-      includeSnapshotBase64: options.includeSnapshotBase64 === true
+      includeSnapshotBase64: options.includeSnapshotBase64 === true,
+      annotateSnapshot: options.annotateSnapshot === true,
+      snapshotDiffWith: options.snapshotDiffWith ? String(options.snapshotDiffWith) : undefined
     },
     parseRpcPort(options)
   )

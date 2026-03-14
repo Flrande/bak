@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { expect, test } from '@playwright/test';
 import { runCli, runCliFailure, readJsonFile } from '../helpers/cli';
@@ -95,9 +95,19 @@ test.describe('CLI agent workflows', () => {
         title: string;
         context: { framePath: string[]; shadowPath: string[] };
         accessibility?: Array<{ name: string }>;
-        snapshot?: { imagePath: string; elementsPath: string; elementCount: number };
+        snapshot?: {
+          imagePath: string;
+          elementsPath: string;
+          elementCount: number;
+          annotatedImagePath?: string;
+          refs?: Array<{ ref: string; eid: string; actionability: string; name: string; text: string }>;
+          actionSummary?: {
+            clickable: Array<{ ref: string; eid: string }>;
+            inputs: Array<{ ref: string; eid: string }>;
+          };
+        };
       }>(
-        ['debug', 'dump-state', '--tab-id', String(tabId), '--include-a11y', '--include-snapshot'],
+        ['debug', 'dump-state', '--tab-id', String(tabId), '--include-a11y', '--include-snapshot', '--annotate-snapshot'],
         harness.rpcPort,
         harness.dataDir
       );
@@ -109,6 +119,23 @@ test.describe('CLI agent workflows', () => {
       expect(dump.accessibility?.some((node) => node.name.includes('Frame Shadow Action'))).toBe(true);
       expect(existsSync(must(dump.snapshot, 'Expected dump snapshot').imagePath)).toBe(true);
       expect(existsSync(dump.snapshot!.elementsPath)).toBe(true);
+      expect(existsSync(must(dump.snapshot.annotatedImagePath, 'Expected annotated dump snapshot'))).toBe(true);
+      expect((dump.snapshot.refs ?? []).length).toBeGreaterThan(0);
+      expect((dump.snapshot.actionSummary?.clickable.length ?? 0) > 0 || (dump.snapshot.actionSummary?.inputs.length ?? 0) > 0).toBe(true);
+
+      const shadowInput = must(
+        dump.snapshot.refs?.find((ref) => ref.actionability === 'type'),
+        `Expected a typed ref in ${JSON.stringify(dump.snapshot.refs)}`
+      );
+      const shadowAction = must(
+        dump.snapshot.refs?.find(
+          (ref) => ref.actionability === 'click' && `${ref.name} ${ref.text}`.includes('Frame Shadow Action')
+        ),
+        `Expected a clickable shadow action ref in ${JSON.stringify(dump.snapshot.refs)}`
+      );
+      runHarnessCli(['element', 'type', '--tab-id', String(tabId), '--eid', shadowInput.eid, '--value', 'shadow ref', '--clear']);
+      runHarnessCli(['element', 'click', '--tab-id', String(tabId), '--eid', shadowAction.eid]);
+      await expect(page.frameLocator('#demo-frame').locator('#frame-result')).toContainText('frame-shadow:shadow ref');
 
       runHarnessCli(['context', 'reset', '--tab-id', String(tabId)]);
       const topLevelUrl = runHarnessCli<{ url: string }>(['page', 'url', '--tab-id', String(tabId)]);
@@ -218,20 +245,69 @@ test.describe('CLI agent workflows', () => {
       runHarnessCli(['file', 'upload', '--tab-id', String(tabId), '--css', '#file-input', '--files', filesJson]);
       await expect(page.locator('#upload-result')).toContainText('files:1');
 
+      const previousElementsPath = `${harness.dataDir}\\previous-upload-elements.json`;
+      writeFileSync(
+        previousElementsPath,
+        `${JSON.stringify(
+          [
+            {
+              eid: 'previous-upload',
+              tag: 'input',
+              role: 'textbox',
+              name: 'Previous Upload Input',
+              text: '',
+              bbox: { x: 80, y: 80, width: 120, height: 40 },
+              selectors: {
+                css: '#file-input',
+                xpath: null,
+                text: null,
+                aria: 'textbox "Previous Upload Input"'
+              },
+              risk: 'low'
+            }
+          ],
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
+      const previousSnapshotPath = `${harness.dataDir}\\previous-upload-snapshot.json`;
+      writeFileSync(
+        previousSnapshotPath,
+        `${JSON.stringify(
+          {
+            elementsPath: previousElementsPath
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
+
       const snapshot = runHarnessCli<{
         imagePath: string;
         elementsPath: string;
         imageBase64?: string;
+        annotatedImagePath?: string;
+        annotatedImageBase64?: string;
         elementCount: number;
-      }>(['page', 'snapshot', '--tab-id', String(tabId), '--include-base64']);
+        refs?: Array<{ ref: string; eid: string; actionability: string }>;
+        actionSummary?: { inputs: Array<{ ref: string; eid: string }>; recommendedNextActions: Array<{ ref: string }> };
+        diff?: { summary: { changed: number } };
+      }>(['page', 'snapshot', '--tab-id', String(tabId), '--include-base64', '--annotate', '--diff-with', previousSnapshotPath]);
       const a11y = runHarnessCli<{ nodes: Array<{ role: string }> }>(['page', 'a11y', '--tab-id', String(tabId)]);
       const elements = readJsonFile<Array<unknown>>(snapshot.elementsPath);
 
       expect(existsSync(snapshot.imagePath)).toBe(true);
       expect(existsSync(snapshot.elementsPath)).toBe(true);
+      expect(existsSync(must(snapshot.annotatedImagePath, 'Expected annotated snapshot path'))).toBe(true);
       expect(snapshot.imageBase64).toBeTruthy();
+      expect(snapshot.annotatedImageBase64).toBeTruthy();
       expect(snapshot.elementCount).toBeGreaterThan(0);
       expect(elements.length).toBe(snapshot.elementCount);
+      expect((snapshot.refs ?? []).length).toBeGreaterThan(0);
+      expect((snapshot.actionSummary?.inputs.length ?? 0) > 0 || (snapshot.actionSummary?.recommendedNextActions.length ?? 0) > 0).toBe(true);
+      expect(snapshot.diff?.summary.changed).toBeGreaterThanOrEqual(1);
       expect(a11y.nodes.some((node) => node.role === 'textbox')).toBe(true);
     } finally {
       await page.close();
