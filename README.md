@@ -36,3 +36,10 @@ If you are onboarding as a contributor:
 - `bak call` remains the fallback for protocol-only methods.
 
 Public terminology is `session` plus `tabs`. Older `workspace` wording is obsolete in the user-facing CLI.
+
+## Recent Operator Surfaces
+
+- Runtime recovery and visibility: `bak doctor --fix` repairs safe local runtime/config drift, and `bak session dashboard` gives one JSON view of runtime health plus per-session tab ownership and current frame or shadow depth.
+- Multimodal page verification: `bak page snapshot --annotate` and `bak debug dump-state --include-snapshot --annotate-snapshot` return numbered `@eN` refs plus `actionSummary`, and `--diff-with` adds structured before/after interaction diffs.
+- Policy workflow: `bak policy status`, `bak policy preview`, `bak policy audit`, and `bak policy recommend` expose the current safety posture, dry-run decisions, recent policy traces, and conservative rule suggestions without silently rewriting `.bak-policy.json`.
+- Dynamic data intelligence: `bak inspect page-data` now reports `dataSources`, `sourceMappings`, and `recommendedNextActions`, while `bak table list/schema/rows/export` surface `intelligence` or `extraction` metadata so agents can tell whether a virtualized table read is complete or partial.
