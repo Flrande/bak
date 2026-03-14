@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,6 +34,30 @@ function runCli(args: string[], env: NodeJS.ProcessEnv = {}): ReturnType<typeof 
     encoding: 'utf8',
     env: childEnv
   });
+}
+
+function writePolicyTraceEntries(
+  dataDir: string,
+  traceId: string,
+  entries: Array<{ ts: string; params: Record<string, unknown> }>
+): void {
+  const tracesDir = join(dataDir, 'traces');
+  mkdirSync(tracesDir, { recursive: true });
+  writeFileSync(
+    join(tracesDir, `${traceId}.jsonl`),
+    entries
+      .map((entry) =>
+        JSON.stringify({
+          traceId,
+          ts: entry.ts,
+          method: 'policy.decision',
+          params: entry.params
+        })
+      )
+      .join('\n')
+      .concat('\n'),
+    'utf8'
+  );
 }
 
 async function waitForServeReady(child: ChildProcessWithoutNullStreams, timeoutMs = 15_000): Promise<void> {
@@ -257,6 +281,202 @@ describe('cli runtime management', () => {
       expect(stop.status).toBe(0);
     } finally {
       runCli(['stop', '--data-dir', dataDir, '--port', '26973', '--rpc-ws-port', '26974'], env);
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, CLI_TEST_TIMEOUT_MS);
+
+  it('policy status and preview work offline from only the local data dir', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-cli-policy-offline-'));
+
+    try {
+      writeFileSync(
+        join(dataDir, '.bak-policy.json'),
+        `${JSON.stringify(
+          {
+            rules: [
+              {
+                id: 'allow-upload',
+                action: 'file.upload',
+                domain: 'example.com',
+                pathPrefix: '/upload',
+                tag: 'fileUpload',
+                decision: 'allow',
+                reason: 'trusted upload path'
+              }
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
+
+      const status = runCli(['policy', 'status', '--data-dir', dataDir]);
+      expect(status.status).toBe(0);
+      expect(JSON.parse(status.stdout)).toMatchObject({
+        policyPath: join(dataDir, '.bak-policy.json'),
+        exists: true,
+        ruleCount: 1,
+        defaults: {
+          fileUpload: 'deny',
+          payment: 'requireConfirm',
+          destructive: 'requireConfirm',
+          submit: 'requireConfirm',
+          highRisk: 'requireConfirm',
+          otherwise: 'allow'
+        }
+      });
+
+      const preview = runCli([
+        'policy',
+        'preview',
+        '--action',
+        'file.upload',
+        '--domain',
+        'example.com',
+        '--path',
+        '/upload',
+        '--css',
+        'input[type="file"]',
+        '--data-dir',
+        dataDir
+      ]);
+      expect(preview.status).toBe(0);
+      expect(JSON.parse(preview.stdout)).toMatchObject({
+        resolvedContext: {
+          action: 'file.upload',
+          domain: 'example.com',
+          path: '/upload',
+          contextSource: 'explicit'
+        },
+        decision: {
+          decision: 'allow',
+          source: 'rule',
+          ruleId: 'allow-upload'
+        }
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, CLI_TEST_TIMEOUT_MS);
+
+  it('policy audit and recommend read local trace files without rewriting the policy file', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'bak-cli-policy-audit-'));
+
+    try {
+      const policyPath = join(dataDir, '.bak-policy.json');
+      writeFileSync(
+        policyPath,
+        `${JSON.stringify(
+          {
+            rules: [
+              {
+                id: 'keep-existing-policy',
+                action: 'element.click',
+                decision: 'deny',
+                domain: 'example.com',
+                pathPrefix: '/danger',
+                reason: 'existing local policy'
+              }
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
+      const originalPolicy = readFileSync(policyPath, 'utf8');
+
+      writePolicyTraceEntries(dataDir, 'trace-policy-a', [
+        {
+          ts: '2026-03-14T12:00:00.000Z',
+          params: {
+            action: 'element.click',
+            decision: 'requireConfirm',
+            reason: 'high-risk action requires explicit user confirmation',
+            source: 'default',
+            ruleId: null,
+            domain: 'example.com',
+            path: '/danger',
+            tags: ['submit', 'highRisk'],
+            matchedRuleCount: 0,
+            defaultDecision: 'requireConfirm'
+          }
+        }
+      ]);
+      writePolicyTraceEntries(dataDir, 'trace-policy-b', [
+        {
+          ts: '2026-03-14T12:05:00.000Z',
+          params: {
+            action: 'element.click',
+            decision: 'requireConfirm',
+            reason: 'high-risk action requires explicit user confirmation',
+            source: 'default',
+            ruleId: null,
+            domain: 'example.com',
+            path: '/danger',
+            tags: ['submit'],
+            matchedRuleCount: 0,
+            defaultDecision: 'requireConfirm'
+          }
+        }
+      ]);
+
+      const audit = runCli(['policy', 'audit', '--trace-id', 'trace-policy-a', '--data-dir', dataDir]);
+      expect(audit.status).toBe(0);
+      expect(JSON.parse(audit.stdout)).toMatchObject({
+        summary: {
+          total: 1,
+          byDecision: {
+            requireConfirm: 1
+          }
+        },
+        entries: [
+          {
+            traceId: 'trace-policy-a',
+            action: 'element.click',
+            decision: 'requireConfirm',
+            source: 'default',
+            domain: 'example.com',
+            path: '/danger'
+          }
+        ]
+      });
+
+      const recommend = runCli([
+        'policy',
+        'recommend',
+        '--decision',
+        'requireConfirm',
+        '--min-occurrences',
+        '2',
+        '--data-dir',
+        dataDir
+      ]);
+      expect(recommend.status).toBe(0);
+      expect(JSON.parse(recommend.stdout)).toMatchObject({
+        suggestions: [
+          {
+            rule: {
+              action: 'element.click',
+              decision: 'requireConfirm',
+              domain: 'example.com',
+              pathPrefix: '/danger',
+              tag: 'submit'
+            },
+            basis: {
+              occurrenceCount: 2,
+              action: 'element.click',
+              decision: 'requireConfirm',
+              domain: 'example.com',
+              path: '/danger',
+              tag: 'submit'
+            }
+          }
+        ]
+      });
+      expect(readFileSync(policyPath, 'utf8')).toBe(originalPolicy);
+    } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
   }, CLI_TEST_TIMEOUT_MS);

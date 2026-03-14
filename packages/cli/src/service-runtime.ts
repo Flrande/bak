@@ -169,6 +169,10 @@ interface ResolveSessionTargetOptions {
   autoEnsure?: boolean;
 }
 
+function shouldSkipInternalTrace(args: Record<string, unknown>): boolean {
+  return args.__internalNoTrace === true;
+}
+
 function asRecord(input: unknown): Record<string, unknown> {
   return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
 }
@@ -937,6 +941,20 @@ export class BakService {
     }
   }
 
+  private async peekSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['sessionBindingListTabs']>> | null> {
+    if (!session.bindingInitialized) {
+      return null;
+    }
+    try {
+      return await this.driver.sessionBindingListTabs({ bindingId: session.bindingId });
+    } catch (error) {
+      if (this.isMissingBindingError(error, session.bindingId)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private async handleSessionBindingUpdated(event: SessionBindingUpdatedBridgeEvent | undefined): Promise<void> {
     if (!event || typeof event.bindingId !== 'string' || !this.sessions.has(event.bindingId)) {
       return;
@@ -1121,6 +1139,10 @@ export class BakService {
         });
       }
       case 'session.list':
+        if (shouldSkipInternalTrace(args)) {
+          const sessions = await Promise.all(this.sessions.list().map(async (session) => await this.buildSessionSummary(session)));
+          return { sessions } as MethodResult<TMethod>;
+        }
         return this.withTrace(this.runtimeTraceId, method, params, async () => {
           const sessions = await Promise.all(this.sessions.list().map(async (session) => await this.buildSessionSummary(session)));
           return { sessions } as MethodResult<TMethod>;
@@ -1247,7 +1269,15 @@ export class BakService {
         this.ensurePairing();
         this.ensureConnected();
         const sessionId = this.requireSessionId(args);
-        const session = this.touchSession(sessionId);
+        const internalNoTrace = shouldSkipInternalTrace(args);
+        const session = internalNoTrace ? this.getSession(sessionId) : this.touchSession(sessionId);
+        if (internalNoTrace) {
+          const listing = await this.peekSessionTabs(session);
+          return {
+            browser: listing?.browser ?? null,
+            tabs: listing?.tabs ?? []
+          } as MethodResult<TMethod>;
+        }
         return this.withTrace(session.traceId, method, params, async () => {
           const listing = await this.safeListSessionTabs(session);
           if (!listing) {
@@ -1266,7 +1296,22 @@ export class BakService {
         this.ensurePairing();
         this.ensureConnected();
         const sessionId = this.requireSessionId(args);
-        const session = this.touchSession(sessionId);
+        const internalNoTrace = shouldSkipInternalTrace(args);
+        const session = internalNoTrace ? this.getSession(sessionId) : this.touchSession(sessionId);
+        if (internalNoTrace) {
+          const listing = await this.peekSessionTabs(session);
+          if (!listing) {
+            return {
+              browser: null,
+              tab: null
+            } as MethodResult<TMethod>;
+          }
+          const activeTabId = listing.browser.activeTabId ?? session.activeTabId;
+          return {
+            browser: listing.browser,
+            tab: listing.tabs.find((tab) => tab.id === activeTabId) ?? listing.tabs.find((tab) => tab.active) ?? null
+          } as MethodResult<TMethod>;
+        }
         return this.withTrace(session.traceId, method, params, async () => {
           const listing = await this.safeListSessionTabs(session);
           if (!listing) {

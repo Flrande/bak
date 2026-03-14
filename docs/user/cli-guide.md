@@ -142,6 +142,20 @@ Use `bak page snapshot --annotate` when you want numbered `@eN` refs that line u
 
 Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
 
+## Understand Policy Decisions
+
+Use the `bak policy ...` workflow when you need to understand why a risky step was allowed, blocked, or flagged for confirmation without reading `.bak-policy.json` or raw trace JSONL by hand:
+
+```powershell
+bak policy status
+bak policy preview --action element.click --domain example.com --path /settings --css "#submit"
+bak policy preview --action element.click --client-name $clientName --css "#cancel-btn" --rpc-ws-port 17374
+bak policy audit --action element.click --limit 20
+bak policy recommend --decision requireConfirm --min-occurrences 2
+```
+
+Use `bak policy status` first to confirm the active policy file path, current rule count, and default safety behavior. Use `bak policy preview` for a dry-run decision before executing a risky click, type, fetch, or replay. Use `bak policy audit` to read recent `policy.decision` entries as structured JSON. Use `bak policy recommend` to generate conservative, trace-derived rule suggestions without modifying `.bak-policy.json`.
+
 ## Interact With Elements
 
 `bak` accepts either `--locator <json>` or individual locator fields such as `--css`, `--role`, `--name`, and `--text`.

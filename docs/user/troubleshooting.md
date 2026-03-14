@@ -23,6 +23,24 @@ Start with these fields instead of guessing from raw state:
 
 Use `bak session dashboard` when the runtime is up but you still need to understand which sessions are attached, detached, or pointing at the wrong active tab/context.
 
+## Policy Workflow
+
+If a browser action looks risky or gets blocked, use the policy workflow before editing `.bak-policy.json` by hand:
+
+```powershell
+bak policy status
+bak policy preview --action element.click --client-name <name> --css "#submit" --rpc-ws-port 17374
+bak policy audit --action element.click --limit 20
+bak policy recommend --decision requireConfirm --min-occurrences 2
+```
+
+Use these commands in order:
+
+1. `bak policy status` to confirm which local policy file is active and what the default safety posture is.
+2. `bak policy preview` to answer "would this action be allowed?" without executing the action or mutating the page.
+3. `bak policy audit` to read recent `policy.decision` events as structured JSON instead of raw trace lines.
+4. `bak policy recommend` to generate conservative, trace-derived suggestions for repeated default `deny` or `requireConfirm` outcomes. It does not rewrite `.bak-policy.json`.
+
 ## PAIRING_MISSING / PAIRING_EXPIRED / PAIRING_REVOKED
 
 Symptoms:

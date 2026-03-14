@@ -2,10 +2,23 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
+import type { Locator } from '@flrande/bak-protocol';
 import { callRpc } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
 import { runGc } from './gc.js';
+import {
+  evaluatePolicyPreview,
+  loadPolicyStatus,
+  readPolicyAudit,
+  recommendPolicyRules
+} from './policy-tools.js';
+import {
+  type PolicyAction,
+  type PolicyDecisionType,
+  isPolicyAction,
+  isPolicyDecisionType
+} from './policy.js';
 import { loadSessionDashboard } from './session-dashboard.js';
 import {
   dragDropLocatorsFromOptions,
@@ -28,7 +41,7 @@ import {
   writeRuntimeState
 } from './runtime-manager.js';
 import { startBakDaemon } from './server.js';
-import { readEnvInt } from './utils.js';
+import { getDomain, getPathname, readEnvInt } from './utils.js';
 
 const DEFAULT_PAIR_TTL_DAYS = readEnvInt('BAK_PAIR_TTL_DAYS', 30);
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +114,30 @@ function parseClientName(value: unknown): string | undefined {
   }
   const clientName = String(value).trim();
   return clientName.length > 0 ? clientName : undefined;
+}
+
+function parsePolicyActionValue(value: unknown): PolicyAction {
+  if (!isPolicyAction(value)) {
+    throw new Error(`action must be one of: ${['element.click', 'element.type', 'element.doubleClick', 'element.rightClick', 'element.dragDrop', 'element.select', 'element.check', 'element.uncheck', 'file.upload', 'page.fetch', 'network.replay'].join(', ')}`);
+  }
+  return value;
+}
+
+function parseOptionalPolicyActionValue(value: unknown): PolicyAction | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  return parsePolicyActionValue(value);
+}
+
+function parsePolicyDecisionValue(value: unknown): PolicyDecisionType | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (!isPolicyDecisionType(value)) {
+    throw new Error('decision must be one of: allow, deny, requireConfirm');
+  }
+  return value;
 }
 
 function parseScope(value: unknown): 'current' | 'main' | 'all-frames' | undefined {
@@ -358,8 +395,18 @@ async function resolveAutoSessionParams(
   };
 }
 
-async function resolveExistingSessionByClientName(clientName: string, rpcWsPort: number): Promise<{ sessionId: string }> {
-  const listed = (await callRpc('session.list', {}, rpcWsPort)) as {
+async function resolveExistingSessionByClientName(
+  clientName: string,
+  rpcWsPort: number,
+  options: {
+    noTrace?: boolean;
+  } = {}
+): Promise<{ sessionId: string }> {
+  const listed = (await callRpc(
+    'session.list',
+    options.noTrace ? { __internalNoTrace: true } : {},
+    rpcWsPort
+  )) as {
     sessions?: Array<{ sessionId?: string; clientName?: string }>;
   };
   const matches = (listed.sessions ?? []).filter((session) => session.clientName === clientName);
@@ -371,6 +418,82 @@ async function resolveExistingSessionByClientName(clientName: string, rpcWsPort:
   }
   return {
     sessionId: matches[0].sessionId
+  };
+}
+
+async function resolvePolicyPreviewLocation(
+  options: Record<string, unknown> & RuntimeOptionBag
+): Promise<{ domain: string; path: string; contextSource: 'explicit' | 'session' }> {
+  const explicitDomain =
+    typeof options.domain === 'string' && options.domain.trim().length > 0 ? options.domain.trim() : undefined;
+  const explicitPath =
+    typeof options.path === 'string' && options.path.trim().length > 0 ? options.path.trim() : undefined;
+
+  if ((explicitDomain && !explicitPath) || (!explicitDomain && explicitPath)) {
+    throw new Error('domain and path must be provided together');
+  }
+
+  if (explicitDomain && explicitPath) {
+    return {
+      domain: explicitDomain,
+      path: explicitPath,
+      contextSource: 'explicit'
+    };
+  }
+
+  const rpcWsPort = parseRpcPort(options);
+  const sessionId = resolveCommandSessionId(options.sessionId);
+  const clientName = resolveCommandClientName(options.clientName);
+  const resolvedSessionId =
+    sessionId
+    ?? (clientName ? (await resolveExistingSessionByClientName(clientName, rpcWsPort, { noTrace: true })).sessionId : undefined);
+
+  if (!resolvedSessionId) {
+    throw new Error('policy preview requires either --domain and --path, or an existing --session-id/--client-name');
+  }
+
+  let listing: {
+    browser: { activeTabId?: number | null } | null;
+    tabs: Array<{ id: number; url: string; active?: boolean }>;
+  };
+  try {
+    listing = (await callRpc(
+      'session.listTabs',
+      {
+        sessionId: resolvedSessionId,
+        __internalNoTrace: true
+      },
+      rpcWsPort
+    )) as {
+      browser: { activeTabId?: number | null } | null;
+      tabs: Array<{ id: number; url: string; active?: boolean }>;
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `policy preview could not read the current session tab. Start or reconnect the runtime, or pass --domain and --path directly. ${message}`
+    );
+  }
+
+  const requestedTabId = parseTabId(options.tabId);
+  const tabs = Array.isArray(listing.tabs) ? listing.tabs : [];
+  const selectedTab =
+    (typeof requestedTabId === 'number' ? tabs.find((tab) => tab.id === requestedTabId) : undefined)
+    ?? tabs.find((tab) => tab.id === listing.browser?.activeTabId)
+    ?? tabs.find((tab) => tab.active === true)
+    ?? tabs[0];
+
+  if (typeof requestedTabId === 'number' && !selectedTab) {
+    throw new Error(`tab ${requestedTabId} does not belong to session ${resolvedSessionId}`);
+  }
+  if (!selectedTab || typeof selectedTab.url !== 'string' || selectedTab.url.trim().length === 0) {
+    throw new Error('policy preview could not find a session-owned tab URL. Pass --domain and --path directly.');
+  }
+
+  return {
+    domain: getDomain(selectedTab.url),
+    path: getPathname(selectedTab.url),
+    contextSource: 'session'
   };
 }
 
@@ -1842,6 +1965,131 @@ addStructuredHelp(file, {
 addStructuredHelp(addRpcPortOption(addTabOption(addLocatorOptions(file.command('upload').description('Upload files to an input element').option('--file-path <path...>', 'file path(s)').option('--files <json>', 'file JSON payload')))), {
   examples: ['bak file upload --css "#file-input" --file-path .\\report.pdf --rpc-ws-port 17374']
 }).action(async (options) => invoke('file.upload', { ...targetParams(options), locator: locatorFromOptions(options, parseJson), files: uploadFilesFromOptions(options) }, parseRpcPort(options)));
+
+const policy = program
+  .command('policy')
+  .summary('Inspect, preview, audit, and recommend local policy behavior')
+  .description('Inspect the local policy file, dry-run policy decisions, audit recent policy traces, and generate conservative rule suggestions');
+addStructuredHelp(policy, {
+  notes: [
+    'Policy commands are CLI-first and JSON-first. They do not modify .bak-policy.json in this phase.',
+    'policy preview uses explicit --domain and --path when provided; otherwise it reads the current session tab URL without executing a page action.'
+  ],
+  examples: [
+    'bak policy status',
+    'bak policy preview --action element.click --domain example.com --path /settings --css "#submit"',
+    'bak policy audit --limit 20',
+    'bak policy recommend --min-occurrences 2'
+  ]
+});
+addStructuredHelp(
+  policy
+    .command('status')
+    .description('Show the current local policy file path, rule count, and default policy behavior')
+    .option('--data-dir <path>', 'override the data directory'),
+  {
+    examples: [
+      'bak policy status',
+      'bak policy status --data-dir (Join-Path $env:LOCALAPPDATA \'bak\')'
+    ]
+  }
+).action((options) => {
+  printResult(loadPolicyStatus(resolveRuntimeFromOptions(options).dataDir));
+});
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      addLocatorOptions(
+        policy
+          .command('preview')
+          .description('Dry-run one policy decision without executing the underlying browser action')
+          .requiredOption('--action <action>', 'policy action to evaluate')
+          .option('--domain <domain>', 'explicit domain for offline preview')
+          .option('--path <path>', 'explicit path for offline preview')
+          .option('--data-dir <path>', 'override the data directory')
+      )
+    )
+  ),
+  {
+    notes: [
+      'Use --domain and --path for a fully offline preview. Omit them only when you already have a live session tab to inspect.',
+      'preview evaluates the locator you pass in directly and does not look up eid metadata from the page.'
+    ],
+    examples: [
+      'bak policy preview --action element.click --domain example.com --path /settings --css "#submit"',
+      'bak policy preview --action element.click --client-name agent-a --css "#cancel-btn" --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) => {
+  const action = parsePolicyActionValue(options.action);
+  const locator = locatorFromOptions(options, parseJson) as Locator;
+  const location = await resolvePolicyPreviewLocation(options as Record<string, unknown> & RuntimeOptionBag);
+  printResult(
+    evaluatePolicyPreview(resolveRuntimeFromOptions(options).dataDir, {
+      action,
+      domain: location.domain,
+      path: location.path,
+      locator,
+      contextSource: location.contextSource
+    })
+  );
+});
+addStructuredHelp(
+  policy
+    .command('audit')
+    .description('Read recent policy decisions from local trace files as structured audit entries')
+    .option('--trace-id <traceId>', 'read decisions from a single trace')
+    .option('--action <action>', 'filter by policy action')
+    .option('--decision <decision>', 'filter by allow|deny|requireConfirm')
+    .option('--limit <limit>', 'max number of entries to return', '50')
+    .option('--data-dir <path>', 'override the data directory'),
+  {
+    examples: [
+      'bak policy audit --limit 20',
+      'bak policy audit --trace-id trace_123 --action element.click'
+    ]
+  }
+).action((options) => {
+  printResult(
+    readPolicyAudit(resolveRuntimeFromOptions(options).dataDir, {
+      traceId: options.traceId ? String(options.traceId) : undefined,
+      action: parseOptionalPolicyActionValue(options.action),
+      decision: parsePolicyDecisionValue(options.decision),
+      limit: parsePositiveInt(options.limit, 'limit')
+    })
+  );
+});
+addStructuredHelp(
+  policy
+    .command('recommend')
+    .description('Generate conservative rule suggestions from repeated default deny and requireConfirm decisions')
+    .option('--trace-id <traceId>', 'read decisions from a single trace')
+    .option('--action <action>', 'filter by policy action')
+    .option('--decision <decision>', 'filter by allow|deny|requireConfirm')
+    .option('--limit <limit>', 'max number of trace decisions to inspect')
+    .option('--min-occurrences <count>', 'minimum repeated occurrences needed before suggesting a rule', '2')
+    .option('--data-dir <path>', 'override the data directory'),
+  {
+    notes: [
+      'recommend only emits suggestions in this phase. It does not modify .bak-policy.json.',
+      'Only repeated default deny and requireConfirm decisions generate suggestions by default.'
+    ],
+    examples: [
+      'bak policy recommend',
+      'bak policy recommend --action element.click --decision deny --min-occurrences 2'
+    ]
+  }
+).action((options) => {
+  printResult(
+    recommendPolicyRules(resolveRuntimeFromOptions(options).dataDir, {
+      traceId: options.traceId ? String(options.traceId) : undefined,
+      action: parseOptionalPolicyActionValue(options.action),
+      decision: parsePolicyDecisionValue(options.decision),
+      limit: parseOptionalPositiveInt(options.limit, 'limit'),
+      minOccurrences: parsePositiveInt(options.minOccurrences, 'min-occurrences')
+    })
+  );
+});
 
 addStructuredHelp(
   program

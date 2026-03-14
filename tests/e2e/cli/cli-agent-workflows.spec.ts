@@ -314,6 +314,173 @@ test.describe('CLI agent workflows', () => {
     }
   });
 
+  test('previews policy decisions without tracing and audits plus recommends real policy outcomes', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page, tabId } = await harness.openPage('/form.html');
+    try {
+      const sessionMeta = readJsonFile<{ clientName: string }>(`${harness.dataDir}\\e2e-session.json`);
+      const denyAuditBefore = runHarnessCli<{ summary: { total: number } }>([
+        'policy',
+        'audit',
+        '--action',
+        'element.click',
+        '--decision',
+        'deny',
+        '--limit',
+        '50'
+      ]);
+
+      const preview = runHarnessCli<{
+        resolvedContext: { contextSource: string; domain: string; path: string };
+        decision: { decision: string; source: string; ruleId?: string };
+        audit: { matchedRules: Array<{ id?: string }> };
+      }>([
+        'policy',
+        'preview',
+        '--action',
+        'element.click',
+        '--client-name',
+        sessionMeta.clientName,
+        '--tab-id',
+        String(tabId),
+        '--css',
+        '#cancel-btn'
+      ]);
+
+      expect(preview.resolvedContext).toMatchObject({
+        contextSource: 'session',
+        domain: '127.0.0.1',
+        path: '/form.html'
+      });
+      expect(preview.decision).toMatchObject({
+        decision: 'deny',
+        source: 'rule',
+        ruleId: 'deny-cancel-on-form'
+      });
+      expect(preview.audit.matchedRules.some((rule) => rule.id === 'deny-cancel-on-form')).toBe(true);
+
+      const denyAuditAfterPreview = runHarnessCli<{ summary: { total: number } }>([
+        'policy',
+        'audit',
+        '--action',
+        'element.click',
+        '--decision',
+        'deny',
+        '--limit',
+        '50'
+      ]);
+      expect(denyAuditAfterPreview.summary.total).toBe(denyAuditBefore.summary.total);
+
+      const denied = runHarnessCliFailure(['element', 'click', '--tab-id', String(tabId), '--css', '#cancel-btn']);
+      expect(denied).toMatch(/blocked by policy/i);
+
+      const denyAuditAfterClick = runHarnessCli<{
+        summary: { total: number };
+        entries: Array<{ ruleId: string | null; path: string; traceId: string }>;
+      }>([
+        'policy',
+        'audit',
+        '--action',
+        'element.click',
+        '--decision',
+        'deny',
+        '--limit',
+        '50'
+      ]);
+      expect(denyAuditAfterClick.summary.total).toBeGreaterThan(denyAuditAfterPreview.summary.total);
+      expect(
+        denyAuditAfterClick.entries.some((entry) => entry.ruleId === 'deny-cancel-on-form' && entry.path === '/form.html')
+      ).toBe(true);
+
+      const requireConfirmAuditBefore = runHarnessCli<{ summary: { total: number } }>([
+        'policy',
+        'audit',
+        '--action',
+        'page.fetch',
+        '--decision',
+        'requireConfirm',
+        '--limit',
+        '50'
+      ]);
+      const requestUrl = new URL('/api/slow?status=200', page.url()).toString();
+      const confirmOne = runHarnessCliFailure([
+        'page',
+        'fetch',
+        '--tab-id',
+        String(tabId),
+        '--url',
+        requestUrl,
+        '--method',
+        'POST',
+        '--body',
+        '{}',
+        '--content-type',
+        'application/json'
+      ]);
+      const confirmTwo = runHarnessCliFailure([
+        'page',
+        'fetch',
+        '--tab-id',
+        String(tabId),
+        '--url',
+        requestUrl,
+        '--method',
+        'POST',
+        '--body',
+        '{}',
+        '--content-type',
+        'application/json'
+      ]);
+      expect(confirmOne).toMatch(/requires explicit confirmation/i);
+      expect(confirmTwo).toMatch(/requires explicit confirmation/i);
+
+      const requireConfirmAuditAfter = runHarnessCli<{ summary: { total: number } }>([
+        'policy',
+        'audit',
+        '--action',
+        'page.fetch',
+        '--decision',
+        'requireConfirm',
+        '--limit',
+        '50'
+      ]);
+      expect(requireConfirmAuditAfter.summary.total).toBeGreaterThanOrEqual(requireConfirmAuditBefore.summary.total + 2);
+
+      const recommend = runHarnessCli<{
+        suggestions: Array<{
+          rule: { action: string; decision: string; pathPrefix?: string; tag?: string };
+          basis: { occurrenceCount: number; path: string; tag: string | null };
+        }>;
+      }>([
+        'policy',
+        'recommend',
+        '--action',
+        'page.fetch',
+        '--decision',
+        'requireConfirm',
+        '--min-occurrences',
+        '2'
+      ]);
+      expect(
+        recommend.suggestions.some(
+          (suggestion) =>
+            suggestion.rule.action === 'page.fetch'
+            && suggestion.rule.decision === 'requireConfirm'
+            && suggestion.rule.pathPrefix === '/api/slow'
+            && suggestion.rule.tag === 'submit'
+            && suggestion.basis.occurrenceCount >= 2
+            && suggestion.basis.path === '/api/slow'
+            && suggestion.basis.tag === 'submit'
+        )
+      ).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
   test('surfaces CLI failure paths for invalid locators and request timeouts', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');

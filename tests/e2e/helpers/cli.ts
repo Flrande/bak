@@ -7,6 +7,7 @@ import { cliDistPath, ensureE2ERuntimeFresh } from './runtime';
 const SESSION_METADATA_PATH = 'e2e-session.json';
 const DIRECT_SESSION_SCOPED_COMMANDS = new Set(['page', 'element', 'keyboard', 'mouse', 'file', 'context', 'network', 'debug', 'table', 'inspect', 'capture']);
 const SESSION_SUBCOMMANDS_REQUIRING_ID = new Set(['info', 'close', 'ensure', 'open-tab', 'list-tabs', 'get-active-tab', 'set-active-tab', 'focus', 'reset']);
+const POLICY_SUBCOMMANDS_WITHOUT_RPC = new Set(['status', 'audit', 'recommend']);
 
 export function cliBinPath(): string {
   const root = resolve(__dirname, '../..', '..');
@@ -37,8 +38,19 @@ function maybeAppendSessionId(args: string[], sessionId?: string): string[] {
   return [...args, '--session-id', sessionId];
 }
 
+function maybeAppendRpcPort(args: string[], rpcPort: number): string[] {
+  if (args[0] === 'policy' && POLICY_SUBCOMMANDS_WITHOUT_RPC.has(args[1] ?? '')) {
+    return args;
+  }
+  return [...args, '--rpc-ws-port', String(rpcPort)];
+}
+
 export function runCli<T = unknown>(args: string[], rpcPort: number, dataDir: string, sessionId?: string): T {
-  const output = execFileSync('node', [cliBinPath(), ...maybeAppendSessionId(args, sessionId ?? readHarnessSessionId(dataDir)), '--rpc-ws-port', String(rpcPort)], {
+  const cliArgs = maybeAppendRpcPort(
+    maybeAppendSessionId(args, sessionId ?? readHarnessSessionId(dataDir)),
+    rpcPort
+  );
+  const output = execFileSync('node', [cliBinPath(), ...cliArgs], {
     cwd: process.cwd(),
     env: {
       ...process.env,

@@ -15,7 +15,7 @@ export class TraceStore {
   private readonly traceDir: string;
 
   constructor(dataDir = resolveDataDir()) {
-    this.traceDir = ensureDir(join(dataDir, 'traces'));
+    this.traceDir = join(dataDir, 'traces');
   }
 
   newTraceId(): string {
@@ -23,6 +23,7 @@ export class TraceStore {
   }
 
   append(traceId: string, payload: Omit<TraceEntry, 'traceId' | 'ts'>): void {
+    ensureDir(this.traceDir);
     const line = JSON.stringify({
       traceId,
       ts: nowIso(),

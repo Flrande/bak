@@ -62,6 +62,21 @@ describe('cli help output', { timeout: 30_000 }, () => {
     expect(help).toContain('bak doctor --fix');
   });
 
+  it('documents policy workflow commands and preview targeting flags', () => {
+    const help = runHelp(['policy', '--help']);
+    const previewHelp = runHelp(['policy', 'preview', '--help']);
+
+    expect(help).toContain('status');
+    expect(help).toContain('preview');
+    expect(help).toContain('audit');
+    expect(help).toContain('recommend');
+    expect(help).toContain('bak policy preview --action element.click --domain example.com --path /settings --css "#submit"');
+    expect(previewHelp).toContain('--action <action>');
+    expect(previewHelp).toContain('--domain <domain>');
+    expect(previewHelp).toContain('--path <path>');
+    expect(previewHelp).toContain('--client-name <name>');
+  });
+
   it('documents page help and protocol-only navigation fallback', () => {
     const help = runHelp(['page', '--help']);
 

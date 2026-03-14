@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Locator } from '@flrande/bak-protocol';
 
-const POLICY_ACTION_VALUES = [
+export const POLICY_ACTION_VALUES = [
   'element.click',
   'element.type',
   'element.doubleClick',
@@ -17,8 +17,22 @@ const POLICY_ACTION_VALUES = [
 ] as const;
 
 export type PolicyAction = (typeof POLICY_ACTION_VALUES)[number];
-export type PolicyDecisionType = 'allow' | 'deny' | 'requireConfirm';
-export type PolicyTag = 'fileUpload' | 'payment' | 'destructive' | 'submit' | 'highRisk';
+export const POLICY_DECISION_VALUES = ['allow', 'deny', 'requireConfirm'] as const;
+
+export type PolicyDecisionType = (typeof POLICY_DECISION_VALUES)[number];
+
+export const POLICY_TAG_VALUES = ['fileUpload', 'payment', 'destructive', 'submit', 'highRisk'] as const;
+
+export type PolicyTag = (typeof POLICY_TAG_VALUES)[number];
+
+export const POLICY_DEFAULT_DECISIONS = {
+  fileUpload: 'deny',
+  payment: 'requireConfirm',
+  destructive: 'requireConfirm',
+  submit: 'requireConfirm',
+  highRisk: 'requireConfirm',
+  otherwise: 'allow'
+} as const satisfies Record<PolicyTag | 'otherwise', PolicyDecisionType>;
 
 export interface PolicyRule {
   id?: string;
@@ -70,7 +84,7 @@ export interface PolicyEvaluation {
   };
 }
 
-const DEFAULT_POLICY_FILE = '.bak-policy.json';
+export const DEFAULT_POLICY_FILE = '.bak-policy.json';
 const HIGH_RISK_PATTERN = /(delete|remove|send|submit|upload|payment|pay|付款|支付|删除|提交|发送|上传)/i;
 const FILE_UPLOAD_PATTERN = /(upload|file|附件|上传)/i;
 const PAYMENT_PATTERN = /(payment|pay|付款|支付)/i;
@@ -136,6 +150,18 @@ export function detectPolicyTags(locator: Locator): PolicyTag[] {
   }
 
   return [...tags.values()];
+}
+
+export function isPolicyAction(value: unknown): value is PolicyAction {
+  return typeof value === 'string' && (POLICY_ACTION_VALUES as readonly string[]).includes(value);
+}
+
+export function isPolicyDecisionType(value: unknown): value is PolicyDecisionType {
+  return typeof value === 'string' && (POLICY_DECISION_VALUES as readonly string[]).includes(value);
+}
+
+export function isPolicyTag(value: unknown): value is PolicyTag {
+  return typeof value === 'string' && (POLICY_TAG_VALUES as readonly string[]).includes(value);
 }
 
 function ruleMatches(rule: PolicyRule, context: EvaluatedPolicyContext): boolean {
@@ -205,23 +231,19 @@ function loadRules(policyPath: string): PolicyRule[] {
     .map((rule) => ({
       id: typeof rule.id === 'string' ? rule.id : undefined,
       action:
-        (typeof rule.action === 'string' && (POLICY_ACTION_VALUES as readonly string[]).includes(rule.action)) ||
+        isPolicyAction(rule.action) ||
         rule.action === '*'
           ? rule.action
           : '*',
       decision:
-        rule.decision === 'allow' || rule.decision === 'deny' || rule.decision === 'requireConfirm'
+        isPolicyDecisionType(rule.decision)
           ? rule.decision
           : 'deny',
       domain: typeof rule.domain === 'string' ? rule.domain : undefined,
       pathPrefix: typeof rule.pathPrefix === 'string' ? rule.pathPrefix : undefined,
       locatorPattern: typeof rule.locatorPattern === 'string' ? rule.locatorPattern : undefined,
       tag:
-        rule.tag === 'fileUpload' ||
-        rule.tag === 'payment' ||
-        rule.tag === 'destructive' ||
-        rule.tag === 'submit' ||
-        rule.tag === 'highRisk'
+        isPolicyTag(rule.tag)
           ? rule.tag
           : undefined,
       reason: typeof rule.reason === 'string' ? rule.reason : undefined
