@@ -174,7 +174,7 @@ bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 ```
 
-`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the legacy discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
+`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the existing discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
 
 Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 
