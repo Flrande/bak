@@ -1,8 +1,9 @@
 import { createServer } from 'node:net';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROTOCOL_VERSION } from '@flrande/bak-protocol';
+import { readCliVersion } from './cli-version.js';
 import { callRpc } from './rpc/client.js';
 import { PairingStore } from './pairing-store.js';
 import {
@@ -12,6 +13,7 @@ import {
   readRuntimeConfig,
   readRuntimeState,
   resolveRuntimePorts,
+  shouldRefreshManagedRuntime,
   writeRuntimeConfig,
   type RuntimeState
 } from './runtime-manager.js';
@@ -43,7 +45,8 @@ export type DoctorDiagnosisCode =
   | 'PORT_CONFLICT'
   | 'EXTENSION_NOT_CONNECTED'
   | 'EXTENSION_HEARTBEAT_STALE'
-  | 'EXTENSION_VERSION_DRIFT';
+  | 'EXTENSION_VERSION_DRIFT'
+  | 'RUNTIME_VERSION_DRIFT';
 
 export type DoctorFixCode = 'WRITE_RUNTIME_CONFIG' | 'CLEAR_STALE_RUNTIME_STATE' | 'START_MANAGED_RUNTIME';
 export type DoctorNextActionKind = 'command' | 'manual' | 'path';
@@ -93,6 +96,7 @@ export interface DoctorResult {
     rpcConnectionHealth: DoctorCheck;
     protocolCompatibility: DoctorCheck;
     versionCompatibility: DoctorCheck;
+    runtimeVersionCompatibility: DoctorCheck;
   };
 }
 
@@ -118,6 +122,7 @@ interface DoctorAnalysisInput {
   extensionPort: PortProbeResult;
   rpcPort: PortProbeResult;
   versionCompatibility: DoctorCheck;
+  runtimeVersionCompatibility: DoctorCheck;
 }
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -251,16 +256,6 @@ function readPairingStatus(store: PairingStore): ReturnType<PairingStore['status
     return store.status();
   } catch {
     return null;
-  }
-}
-
-function readCliVersion(): string {
-  try {
-    const packagePath = resolve(CURRENT_DIR, '../package.json');
-    const parsed = JSON.parse(readFileSync(packagePath, 'utf8')) as { version?: string };
-    return parsed.version ?? 'unknown';
-  } catch {
-    return 'unknown';
   }
 }
 
@@ -424,6 +419,40 @@ export function assessVersionCompatibility(info: Record<string, unknown>, cliVer
   };
 }
 
+export function assessRuntimeVersionCompatibility(info: Record<string, unknown>, cliVersion: string): DoctorCheck {
+  const runtimeVersion = typeof info.runtimeVersion === 'string' ? info.runtimeVersion : null;
+
+  if (!runtimeVersion) {
+    return {
+      ok: false,
+      message: 'runtime version missing from runtime.info',
+      details: {
+        cliVersion
+      }
+    };
+  }
+
+  if (runtimeVersion === cliVersion) {
+    return {
+      ok: true,
+      message: 'cli and runtime versions are aligned',
+      details: {
+        cliVersion,
+        runtimeVersion
+      }
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'cli/runtime version drift detected',
+    details: {
+      cliVersion,
+      runtimeVersion
+    }
+  };
+}
+
 export function assessProtocolCompatibility(info: Record<string, unknown>): DoctorCheck {
   const protocolVersion = typeof info.protocolVersion === 'string' ? info.protocolVersion : null;
   const compatibleProtocolVersions = Array.isArray(info.compatibleProtocolVersions)
@@ -513,15 +542,40 @@ function checkVersionCompatibilityFromProbe(
   return assessVersionCompatibility(probe.info, cliVersion);
 }
 
-function shouldAttemptManagedRuntimeStart(
+function checkRuntimeVersionCompatibilityFromProbe(
+  probe: RuntimeInfoProbe,
+  cliVersion: string,
+  mode: 'preflight' | 'runtime'
+): DoctorCheck {
+  if (!probe.ok || !probe.info) {
+    return {
+      ok: false,
+      message: 'runtime version compatibility unknown (runtime.info unavailable)',
+      severity: mode === 'preflight' ? 'warn' : undefined,
+      details: {
+        cliVersion,
+        mode,
+        detail: probe.detail ?? 'unknown'
+      }
+    };
+  }
+  return assessRuntimeVersionCompatibility(probe.info, cliVersion);
+}
+
+function shouldAttemptManagedRuntimeEnsure(
   autoStart: boolean,
   runtimeProbe: RuntimeInfoProbe,
+  runtimeVersionCompatibility: DoctorCheck,
+  cliVersion: string,
   runtimeState: RuntimeState | null,
   rpcPort: PortProbeResult,
   extensionPort: PortProbeResult
 ): boolean {
-  if (!autoStart || (runtimeProbe.ok && runtimeProbe.info)) {
+  if (!autoStart) {
     return false;
+  }
+  if (runtimeProbe.ok && runtimeProbe.info) {
+    return !runtimeVersionCompatibility.ok && shouldRefreshManagedRuntime(runtimeProbe.info, cliVersion);
   }
   if (runtimeState && isProcessRunning(runtimeState.pid)) {
     return false;
@@ -726,6 +780,21 @@ export function buildDoctorDiagnosis(input: DoctorAnalysisInput): DoctorDiagnosi
         )
       );
     }
+
+    if (!input.runtimeVersionCompatibility.ok) {
+      const runtimeVersion = typeof runtimeInfo.runtimeVersion === 'string' ? runtimeInfo.runtimeVersion : null;
+      diagnoses.push(
+        createDiagnosis(
+          'RUNTIME_VERSION_DRIFT',
+          'error',
+          'CLI and runtime versions are out of sync.',
+          runtimeVersion
+            ? `The CLI on disk is ${input.cliVersion}, while the running bak runtime reports ${runtimeVersion}.`
+            : 'The running bak runtime did not report its own version, so this CLI cannot confirm it matches the installed code.',
+          false
+        )
+      );
+    }
   }
 
   return diagnoses.filter(
@@ -847,6 +916,15 @@ export function buildDoctorNextActions(
           note: 'Reload Browser Agent Kit from chrome://extensions or edge://extensions, then rerun bak doctor.'
         });
         break;
+      case 'RUNTIME_VERSION_DRIFT':
+        setAction({
+          code: item.code,
+          title: 'Restart the bak runtime',
+          kind: 'command',
+          command: buildCommand('stop', runtimeArgs),
+          note: `If no active sessions need to be preserved, stop the current runtime and then rerun ${buildCommand('doctor', runtimeArgs)} so the installed CLI can start a fresh daemon.`
+        });
+        break;
       default:
         break;
     }
@@ -870,6 +948,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const initialRuntimeState = readRuntimeState(dataDir);
   const initialConfig = readRuntimeConfig(dataDir);
   const initialRuntimeInfo = await probeRpcRuntimeInfo(options.rpcWsPort);
+  const initialRuntimeVersionCompatibility = checkRuntimeVersionCompatibilityFromProbe(initialRuntimeInfo, cliVersion, 'preflight');
   const [initialExtensionPort, initialRpcPort] = await Promise.all([
     probePortState(options.port),
     probePortState(options.rpcWsPort)
@@ -890,9 +969,11 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   }
 
   if (
-    shouldAttemptManagedRuntimeStart(
+    shouldAttemptManagedRuntimeEnsure(
       autoStart,
       initialRuntimeInfo,
+      initialRuntimeVersionCompatibility,
+      cliVersion,
       readRuntimeState(dataDir),
       initialRpcPort,
       initialExtensionPort
@@ -945,7 +1026,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
             }
           },
     protocolCompatibility: checkProtocolCompatibilityFromProbe(runtimeInfo, portMode),
-    versionCompatibility: checkVersionCompatibilityFromProbe(runtimeInfo, cliVersion, portMode)
+    versionCompatibility: checkVersionCompatibilityFromProbe(runtimeInfo, cliVersion, portMode),
+    runtimeVersionCompatibility: checkRuntimeVersionCompatibilityFromProbe(runtimeInfo, cliVersion, portMode)
   };
 
   const summary = {
@@ -974,7 +1056,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     runtimeStateRunning,
     extensionPort,
     rpcPort,
-    versionCompatibility: checks.versionCompatibility
+    versionCompatibility: checks.versionCompatibility,
+    runtimeVersionCompatibility: checks.runtimeVersionCompatibility
   });
 
   return {

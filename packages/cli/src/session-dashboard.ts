@@ -14,6 +14,7 @@ export interface SessionDashboardRuntime {
   extensionConnected: boolean;
   connectionState: RuntimeInfoResult['connectionState'];
   connectionReason: string | null;
+  runtimeVersion: string | null;
   extensionVersion: string | null;
   heartbeatStale: boolean;
   heartbeatAgeMs: number | null;
@@ -53,6 +54,7 @@ export function trimRuntimeInfo(info: RuntimeInfoResult): SessionDashboardRuntim
     extensionConnected: info.extensionConnected,
     connectionState: info.connectionState,
     connectionReason: info.connectionReason,
+    runtimeVersion: info.runtimeVersion ?? null,
     extensionVersion: info.extensionVersion,
     heartbeatStale: info.heartbeatStale,
     heartbeatAgeMs: info.heartbeatAgeMs,

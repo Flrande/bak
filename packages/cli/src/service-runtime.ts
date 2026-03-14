@@ -19,6 +19,7 @@ import {
 import type { BrowserDriver } from './drivers/browser-driver.js';
 import type { BridgeEventEnvelope, SessionBindingUpdatedBridgeEvent } from './drivers/extension-bridge.js';
 import { BridgeError } from './drivers/extension-bridge.js';
+import { readCliVersion } from './cli-version.js';
 import { evaluateConnectionHealth } from './connection-health.js';
 import { PolicyEngine, type PolicyAction, type PolicyEvaluation } from './policy.js';
 import { redactElements, redactText, redactUnknown } from './privacy.js';
@@ -424,6 +425,7 @@ export class BakService {
       connectionReason: connection.connectionReason,
       protocolVersion: PROTOCOL_VERSION,
       compatibleProtocolVersions: [...COMPATIBLE_PROTOCOL_VERSIONS],
+      runtimeVersion: readCliVersion(),
       extensionVersion: connection.raw.extensionVersion,
       heartbeatStale: connection.heartbeatStale,
       heartbeatAgeMs: connection.heartbeatAgeMs,

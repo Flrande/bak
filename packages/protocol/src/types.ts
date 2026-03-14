@@ -569,6 +569,7 @@ export interface RuntimeInfoResult {
   connectionReason: string | null;
   protocolVersion: typeof PROTOCOL_VERSION;
   compatibleProtocolVersions: CompatibleProtocolVersion[];
+  runtimeVersion: string;
   extensionVersion: string | null;
   heartbeatStale: boolean;
   heartbeatAgeMs: number | null;

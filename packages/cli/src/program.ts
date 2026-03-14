@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import type { Locator } from '@flrande/bak-protocol';
+import { readCliVersion } from './cli-version.js';
 import { callRpc } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
@@ -202,19 +203,6 @@ function resolveExtensionDistPath(): string | null {
     }
   }
   return null;
-}
-
-function readCliVersion(): string {
-  try {
-    const packageJsonUrl = new URL('../package.json', import.meta.url);
-    const packageJson = JSON.parse(readFileSync(packageJsonUrl, 'utf8')) as { version?: unknown };
-    if (typeof packageJson.version === 'string' && packageJson.version.trim().length > 0) {
-      return packageJson.version;
-    }
-  } catch {
-    // ignore and fall back
-  }
-  return '0.0.0';
 }
 
 async function invoke(method: string, params: Record<string, unknown>, runtimeOptions: number | RuntimeOptionBag): Promise<void> {

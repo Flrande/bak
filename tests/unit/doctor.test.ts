@@ -4,6 +4,7 @@ import {
   assessPortAvailability,
   assessProtocolCompatibility,
   assessRuntimeInfoHealth,
+  assessRuntimeVersionCompatibility,
   assessVersionCompatibility,
   buildDoctorDiagnosis,
   buildDoctorNextActions
@@ -94,6 +95,37 @@ describe('doctor runtime.info health assessment', () => {
     expect(check.ok).toBe(false);
     expect(check.message).toContain('unable to compare');
     expect(check.severity).toBe('warn');
+  });
+
+  it('detects aligned cli/runtime versions', () => {
+    const check = assessRuntimeVersionCompatibility(
+      {
+        runtimeVersion: '0.6.1'
+      },
+      '0.6.1'
+    );
+
+    expect(check.ok).toBe(true);
+    expect(check.message).toContain('aligned');
+  });
+
+  it('fails when runtime version is missing', () => {
+    const check = assessRuntimeVersionCompatibility({}, '0.6.1');
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('missing');
+  });
+
+  it('flags cli/runtime version drift', () => {
+    const check = assessRuntimeVersionCompatibility(
+      {
+        runtimeVersion: '0.4.9'
+      },
+      '0.6.1'
+    );
+
+    expect(check.ok).toBe(false);
+    expect(check.message).toContain('drift');
   });
 
   it('detects aligned protocol versions', () => {
@@ -189,6 +221,10 @@ describe('doctor diagnosis classification', () => {
       versionCompatibility: {
         ok: true,
         message: 'cli and extension versions are aligned'
+      },
+      runtimeVersionCompatibility: {
+        ok: true,
+        message: 'cli and runtime versions are aligned'
       }
     };
   }
@@ -250,6 +286,7 @@ describe('doctor diagnosis classification', () => {
         connectionState: 'disconnected',
         connectionReason: 'token-rejected',
         heartbeatStale: false,
+        runtimeVersion: '0.6.10',
         extensionVersion: '0.6.10',
         bridgeLastError: 'token-mismatch'
       },
@@ -257,6 +294,10 @@ describe('doctor diagnosis classification', () => {
         ok: false,
         message: 'cli/extension version drift detected (same major)',
         severity: 'warn'
+      },
+      runtimeVersionCompatibility: {
+        ok: false,
+        message: 'cli/runtime version drift detected'
       }
     });
 
@@ -269,6 +310,10 @@ describe('doctor diagnosis classification', () => {
         expect.objectContaining({
           code: 'EXTENSION_VERSION_DRIFT',
           severity: 'warn'
+        }),
+        expect.objectContaining({
+          code: 'RUNTIME_VERSION_DRIFT',
+          severity: 'error'
         })
       ])
     );

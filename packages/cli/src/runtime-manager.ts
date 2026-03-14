@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSON_RPC_VERSION, type JsonRpcResponse } from '@flrande/bak-protocol';
 import WebSocket from 'ws';
+import { readCliVersion } from './cli-version.js';
 import { parseOptionalPositiveInt } from './cli-args.js';
 import { resolveDataDir, sleep } from './utils.js';
 
@@ -398,6 +399,35 @@ async function waitForRuntimeStopped(rpcWsPort: number, timeoutMs = 10_000): Pro
   throw new Error(`Timed out waiting for bak runtime on rpc port ${rpcWsPort} to stop`);
 }
 
+function runtimeVersionFromInfo(info: Record<string, unknown>): string | null {
+  return typeof info.runtimeVersion === 'string' && info.runtimeVersion.trim().length > 0 ? info.runtimeVersion : null;
+}
+
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function buildRuntimeCommand(command: 'stop', resolution: RuntimePortResolution): string {
+  const parts = ['bak', command, '--port', `${resolution.port}`, '--rpc-ws-port', `${resolution.rpcWsPort}`];
+  if (resolution.dataDir !== resolveDataDir()) {
+    parts.push('--data-dir', quotePowerShell(resolution.dataDir));
+  }
+  return parts.join(' ');
+}
+
+export function shouldRefreshManagedRuntime(info: Record<string, unknown>, cliVersion: string): boolean {
+  if (info.managedRuntime !== true) {
+    return false;
+  }
+
+  const activeSessionCount = typeof info.activeSessionCount === 'number' ? info.activeSessionCount : null;
+  if (activeSessionCount !== 0) {
+    return false;
+  }
+
+  return runtimeVersionFromInfo(info) !== cliVersion;
+}
+
 function lockIsStale(lockPath: string): boolean {
   try {
     return Date.now() - statSync(lockPath).mtimeMs > LOCK_TIMEOUT_MS;
@@ -468,16 +498,28 @@ function resolveServeEntrypoint(): { command: string; args: string[]; cwd: strin
 
 export async function ensureRuntime(resolution: RuntimePortResolution): Promise<Record<string, unknown>> {
   ensureRuntimeDataDir(resolution.dataDir);
+  const cliVersion = readCliVersion();
   const existing = await probeRuntimeInfo(resolution.rpcWsPort);
-  if (existing) {
+  if (existing && !shouldRefreshManagedRuntime(existing, cliVersion)) {
     return existing;
   }
 
   const releaseLock = await acquireRuntimeStartLock(resolution.dataDir, resolution.rpcWsPort);
   try {
     const readyAfterWait = await probeRuntimeInfo(resolution.rpcWsPort);
-    if (readyAfterWait) {
+    if (readyAfterWait && !shouldRefreshManagedRuntime(readyAfterWait, cliVersion)) {
       return readyAfterWait;
+    }
+    if (readyAfterWait) {
+      try {
+        await stopRuntime(resolution);
+      } catch (error) {
+        throw new Error(
+          `bak runtime on rpc port ${resolution.rpcWsPort} is not running the current CLI version ${cliVersion}. ` +
+            `Stop it with \`${buildRuntimeCommand('stop', resolution)}\` and retry. ` +
+            `Detail: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     const currentState = readRuntimeState(resolution.dataDir);

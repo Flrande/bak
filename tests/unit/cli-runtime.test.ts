@@ -180,6 +180,13 @@ describe('cli runtime management', () => {
       const doctor = runCli(['doctor', '--data-dir', dataDir, '--port', '26773', '--rpc-ws-port', '26774'], env);
       expect(doctor.status).toBe(0);
       expect(existsSync(dataDir)).toBe(true);
+      expect(JSON.parse(doctor.stdout)).toMatchObject({
+        checks: {
+          runtimeVersionCompatibility: {
+            ok: true
+          }
+        }
+      });
 
       const status = runCli(['status', '--data-dir', dataDir, '--port', '26773', '--rpc-ws-port', '26774'], env);
       expect(status.status).toBe(0);

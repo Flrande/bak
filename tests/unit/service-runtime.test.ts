@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BakErrorCode } from '@flrande/bak-protocol';
 import type { PairingStore } from '../../packages/cli/src/pairing-store.js';
+import { readCliVersion } from '../../packages/cli/src/cli-version.js';
 import { BakService } from '../../packages/cli/src/service-runtime.js';
 import type { TraceStore } from '../../packages/cli/src/trace-store.js';
 import type {
@@ -390,6 +391,15 @@ async function waitForAsyncTurn(): Promise<void> {
 }
 
 describe('service runtime session bindings', () => {
+  it('includes the runtime version in runtime.info', async () => {
+    const driver = new FakeDriver();
+    const service = createService(driver);
+
+    await expect(service.invoke('runtime.info', {})).resolves.toMatchObject({
+      runtimeVersion: readCliVersion()
+    });
+  });
+
   it('resolves a client name to a unique live session and reuses it on later calls', async () => {
     const driver = new FakeDriver();
     const service = createService(driver);

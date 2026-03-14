@@ -8,6 +8,7 @@ import {
   readRuntimeState,
   resolveRuntimePorts,
   runtimeStatus,
+  shouldRefreshManagedRuntime,
   stopRuntime,
   writeRuntimeConfig,
   writeRuntimeState
@@ -175,5 +176,44 @@ describe('runtime manager', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it('refreshes a managed runtime with no active sessions when the runtime version mismatches', () => {
+    expect(
+      shouldRefreshManagedRuntime(
+        {
+          managedRuntime: true,
+          activeSessionCount: 0,
+          runtimeVersion: '0.6.10'
+        },
+        '0.6.11'
+      )
+    ).toBe(true);
+  });
+
+  it('keeps a managed runtime running when active sessions are present', () => {
+    expect(
+      shouldRefreshManagedRuntime(
+        {
+          managedRuntime: true,
+          activeSessionCount: 2,
+          runtimeVersion: '0.6.10'
+        },
+        '0.6.11'
+      )
+    ).toBe(false);
+  });
+
+  it('keeps an aligned managed runtime running', () => {
+    expect(
+      shouldRefreshManagedRuntime(
+        {
+          managedRuntime: true,
+          activeSessionCount: 0,
+          runtimeVersion: '0.6.11'
+        },
+        '0.6.11'
+      )
+    ).toBe(false);
   });
 });
