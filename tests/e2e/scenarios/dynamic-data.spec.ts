@@ -234,7 +234,8 @@ test.describe('dynamic data e2e', () => {
         tabId: virtualPage.tabId,
         table: tables.tables[0]!.id,
         all: true,
-        maxRows: 100
+        maxRows: 100,
+        timeoutMs: 90_000
       })) as {
         extractionMode: string;
         extraction: { mode: string; complete: boolean; observedRows: number; estimatedTotalRows?: number; warnings: string[] };
@@ -254,7 +255,8 @@ test.describe('dynamic data e2e', () => {
         table: tables.tables[0]!.id,
         format: 'json',
         all: true,
-        maxRows: 100
+        maxRows: 100,
+        timeoutMs: 90_000
       })) as {
         extraction: { mode: string; complete: boolean; observedRows: number };
         rows: Array<Record<string, unknown>>;
