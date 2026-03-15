@@ -128,16 +128,20 @@ function isTextualContentType(contentType: string | undefined): boolean {
 }
 
 function sanitizeEntry(entry: CapturedNetworkEntry): NetworkEntry {
-  const {
-    rawRequestHeaders: _rawRequestHeaders,
-    rawRequestBody: _rawRequestBody,
-    rawRequestBodyTruncated: _rawRequestBodyTruncated,
-    ...publicEntry
-  } = entry;
+  const publicEntry = { ...entry } as Record<string, unknown>;
+  delete publicEntry.rawRequestHeaders;
+  delete publicEntry.rawRequestBody;
+  delete publicEntry.rawRequestBodyTruncated;
   return {
-    ...publicEntry,
-    requestHeaders: publicEntry.requestHeaders ? { ...publicEntry.requestHeaders } : undefined,
-    responseHeaders: publicEntry.responseHeaders ? { ...publicEntry.responseHeaders } : undefined
+    ...(publicEntry as NetworkEntry),
+    requestHeaders:
+      typeof publicEntry.requestHeaders === 'object' && publicEntry.requestHeaders !== null
+        ? { ...(publicEntry.requestHeaders as Record<string, string>) }
+        : undefined,
+    responseHeaders:
+      typeof publicEntry.responseHeaders === 'object' && publicEntry.responseHeaders !== null
+        ? { ...(publicEntry.responseHeaders as Record<string, string>) }
+        : undefined
   };
 }
 
