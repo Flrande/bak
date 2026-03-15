@@ -1,4 +1,4 @@
-import type { NetworkEntry } from '@flrande/bak-protocol';
+import type { NetworkEntry, NetworkSearchResult } from '@flrande/bak-protocol';
 import { redactHeaderMap, redactTransportText } from './privacy.js';
 import { EXTENSION_VERSION } from './version.js';
 
@@ -16,10 +16,16 @@ interface DebuggerTarget {
 interface TabCaptureState {
   attached: boolean;
   attachError: string | null;
-  entries: NetworkEntry[];
-  entriesById: Map<string, NetworkEntry>;
+  entries: CapturedNetworkEntry[];
+  entriesById: Map<string, CapturedNetworkEntry>;
   requestIdToEntryId: Map<string, string>;
   lastTouchedAt: number;
+}
+
+interface CapturedNetworkEntry extends NetworkEntry {
+  rawRequestHeaders?: Record<string, string>;
+  rawRequestBody?: string;
+  rawRequestBodyTruncated?: boolean;
 }
 
 const captures = new Map<number, TabCaptureState>();
@@ -121,7 +127,21 @@ function isTextualContentType(contentType: string | undefined): boolean {
   );
 }
 
-function pushEntry(state: TabCaptureState, entry: NetworkEntry, requestId: string): void {
+function sanitizeEntry(entry: CapturedNetworkEntry): NetworkEntry {
+  const {
+    rawRequestHeaders: _rawRequestHeaders,
+    rawRequestBody: _rawRequestBody,
+    rawRequestBodyTruncated: _rawRequestBodyTruncated,
+    ...publicEntry
+  } = entry;
+  return {
+    ...publicEntry,
+    requestHeaders: publicEntry.requestHeaders ? { ...publicEntry.requestHeaders } : undefined,
+    responseHeaders: publicEntry.responseHeaders ? { ...publicEntry.responseHeaders } : undefined
+  };
+}
+
+function pushEntry(state: TabCaptureState, entry: CapturedNetworkEntry, requestId: string): void {
   state.entries.push(entry);
   state.entriesById.set(entry.id, entry);
   state.requestIdToEntryId.set(requestId, entry.id);
@@ -135,7 +155,7 @@ function pushEntry(state: TabCaptureState, entry: NetworkEntry, requestId: strin
   }
 }
 
-function entryForRequest(tabId: number, requestId: string): NetworkEntry | null {
+function entryForRequest(tabId: number, requestId: string): CapturedNetworkEntry | null {
   const state = captures.get(tabId);
   if (!state) {
     return null;
@@ -206,9 +226,10 @@ function upsertRequest(tabId: number, params: Record<string, unknown>): void {
     return;
   }
   const request = typeof params.request === 'object' && params.request !== null ? (params.request as Record<string, unknown>) : {};
-  const headers = redactHeaderMap(normalizeHeaders(request.headers));
+  const rawHeaders = normalizeHeaders(request.headers);
+  const headers = redactHeaderMap(rawHeaders);
   const truncatedRequest = truncateText(typeof request.postData === 'string' ? request.postData : undefined, DEFAULT_BODY_BYTES);
-  const entry: NetworkEntry = {
+  const entry: CapturedNetworkEntry = {
     id: `net_${tabId}_${requestId}`,
     url: typeof request.url === 'string' ? request.url : '',
     method: typeof request.method === 'string' ? request.method : 'GET',
@@ -230,6 +251,9 @@ function upsertRequest(tabId: number, params: Record<string, unknown>): void {
     requestHeaders: headers,
     requestBodyPreview: truncatedRequest.text ? redactTransportText(truncatedRequest.text) : undefined,
     requestBodyTruncated: truncatedRequest.truncated,
+    rawRequestHeaders: rawHeaders,
+    rawRequestBody: typeof request.postData === 'string' ? request.postData : undefined,
+    rawRequestBodyTruncated: false,
     initiatorUrl:
       typeof params.initiator === 'object' &&
       params.initiator !== null &&
@@ -378,13 +402,43 @@ export function listNetworkEntries(
     .filter((entry) => entryMatchesFilters(entry, filters))
     .slice(-limit)
     .reverse()
-    .map((entry) => ({ ...entry }));
+    .map((entry) => sanitizeEntry(entry));
 }
 
 export function getNetworkEntry(tabId: number, id: string): NetworkEntry | null {
   const state = getState(tabId);
   const entry = state.entriesById.get(id);
-  return entry ? { ...entry } : null;
+  return entry ? sanitizeEntry(entry) : null;
+}
+
+export function getReplayableNetworkRequest(
+  tabId: number,
+  id: string
+): {
+  entry: NetworkEntry;
+  headers?: Record<string, string>;
+  body?: string;
+  contentType?: string;
+  degradedReason?: string;
+} | null {
+  const state = getState(tabId);
+  const entry = state.entriesById.get(id);
+  if (!entry) {
+    return null;
+  }
+  const publicEntry = sanitizeEntry(entry);
+  if (entry.rawRequestBodyTruncated === true) {
+    return {
+      entry: publicEntry,
+      degradedReason: 'live replay unavailable because the captured request body was truncated in memory'
+    };
+  }
+  return {
+    entry: publicEntry,
+    headers: entry.rawRequestHeaders ? { ...entry.rawRequestHeaders } : undefined,
+    body: entry.rawRequestBody,
+    contentType: headerValue(entry.rawRequestHeaders, 'content-type')
+  };
 }
 
 export async function waitForNetworkEntry(
@@ -405,7 +459,7 @@ export async function waitForNetworkEntry(
     const nextState = getState(tabId);
     const matched = nextState.entries.find((entry) => !seenIds.has(entry.id) && entryMatchesFilters(entry, filters));
     if (matched) {
-      return { ...matched };
+      return sanitizeEntry(matched);
     }
     await new Promise((resolve) => setTimeout(resolve, 75));
   }
@@ -415,9 +469,10 @@ export async function waitForNetworkEntry(
   };
 }
 
-export function searchNetworkEntries(tabId: number, pattern: string, limit = 50): NetworkEntry[] {
+export function searchNetworkEntries(tabId: number, pattern: string, limit = 50): NetworkSearchResult {
+  const state = getState(tabId);
   const normalized = pattern.toLowerCase();
-  return listNetworkEntries(tabId, { limit: Math.max(limit, 1) }).filter((entry) => {
+  const matchedEntries = state.entries.filter((entry) => {
     const headerText = JSON.stringify({
       requestHeaders: entry.requestHeaders,
       responseHeaders: entry.responseHeaders
@@ -429,6 +484,25 @@ export function searchNetworkEntries(tabId: number, pattern: string, limit = 50)
       headerText.includes(normalized)
     );
   });
+  const scannedEntries = state.entries.filter((entry) => entryMatchesFilters(entry, {}));
+  const toCoverage = (
+    entries: CapturedNetworkEntry[],
+    key: 'requestBodyPreview' | 'responseBodyPreview',
+    truncatedKey: 'requestBodyTruncated' | 'responseBodyTruncated'
+  ) => ({
+    full: entries.filter((entry) => typeof entry[key] === 'string' && entry[truncatedKey] !== true).length,
+    partial: entries.filter((entry) => typeof entry[key] === 'string' && entry[truncatedKey] === true).length,
+    none: entries.filter((entry) => typeof entry[key] !== 'string').length
+  });
+  return {
+    entries: matchedEntries.slice(-Math.max(limit, 1)).reverse().map((entry) => sanitizeEntry(entry)),
+    scanned: scannedEntries.length,
+    matched: matchedEntries.length,
+    bodyCoverage: {
+      request: toCoverage(scannedEntries, 'requestBodyPreview', 'requestBodyTruncated'),
+      response: toCoverage(scannedEntries, 'responseBodyPreview', 'responseBodyTruncated')
+    }
+  };
 }
 
 export function latestNetworkTimestamp(tabId: number): number | null {

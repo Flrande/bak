@@ -22,7 +22,13 @@ export interface BrowserTab {
 }
 
 export interface SnapshotResult {
-  imageBase64: string;
+  captureStatus: 'complete' | 'degraded' | 'skipped';
+  captureError?: {
+    code?: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+  imageBase64?: string;
   elements: ElementMapItem[];
   tabId: number;
   url: string;
@@ -93,7 +99,7 @@ export interface BrowserDriver {
   pageForward(tabId?: number): Promise<{ ok: true }>;
   pageReload(tabId?: number): Promise<{ ok: true }>;
   pageWait(mode: 'selector' | 'text' | 'url', value: string, timeoutMs?: number, tabId?: number): Promise<{ ok: true }>;
-  pageSnapshot(tabId?: number, includeBase64?: boolean): Promise<SnapshotResult>;
+  pageSnapshot(tabId?: number, options?: { includeBase64?: boolean; capture?: boolean }): Promise<SnapshotResult>;
   elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
   elementType(locator: Locator, text: string, clear?: boolean, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }>;
   elementScroll(locator: Locator | undefined, dx: number, dy: number, tabId?: number): Promise<{ ok: true }>;

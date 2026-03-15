@@ -1936,7 +1936,7 @@ function describeTables(): TableHandle[] {
   for (const [index, table] of htmlTables.entries()) {
     const handle: TableHandle = {
       id: buildTableId(table.closest('.dataTables_wrapper') ? 'dataTables' : 'html', index),
-      name: (table.getAttribute('aria-label') || table.getAttribute('data-testid') || table.id || `table-${index + 1}`).trim(),
+      label: (table.getAttribute('aria-label') || table.getAttribute('data-testid') || table.id || `table-${index + 1}`).trim(),
       kind: table.closest('.dataTables_wrapper') ? 'dataTables' : 'html',
       selector: table.id ? `#${table.id}` : undefined,
       rowCount: table.querySelectorAll('tbody tr').length || table.querySelectorAll('tr').length,
@@ -1949,7 +1949,7 @@ function describeTables(): TableHandle[] {
     const kind: TableHandle['kind'] = grid.className.includes('ag-') ? 'ag-grid' : 'aria-grid';
     const handle: TableHandle = {
       id: buildTableId(kind, index),
-      name: (grid.getAttribute('aria-label') || grid.getAttribute('data-testid') || grid.id || `grid-${index + 1}`).trim(),
+      label: (grid.getAttribute('aria-label') || grid.getAttribute('data-testid') || grid.id || `grid-${index + 1}`).trim(),
       kind,
       selector: grid.id ? `#${grid.id}` : undefined,
       rowCount: gridRowNodes(grid).length,
@@ -1962,7 +1962,13 @@ function describeTables(): TableHandle[] {
 
 function resolveTable(handleId: string): { table: TableHandle; element: Element | null } | null {
   const tables = describeTables();
-  const handle = tables.find((candidate) => candidate.id === handleId);
+  const normalizedHandleId = handleId.trim().toLowerCase();
+  const handle = tables.find((candidate) => {
+    if (candidate.id === handleId) {
+      return true;
+    }
+    return typeof candidate.label === 'string' && candidate.label.trim().toLowerCase() === normalizedHandleId;
+  });
   if (!handle) {
     return null;
   }

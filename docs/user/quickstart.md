@@ -142,7 +142,7 @@ $sessionId = $session.sessionId
 bak session open-tab --client-name $clientName --url "https://example.com" --active --rpc-ws-port 17374
 bak session dashboard --rpc-ws-port 17374
 bak page title --client-name $clientName --rpc-ws-port 17374
-bak page snapshot --client-name $clientName --include-base64 --annotate --rpc-ws-port 17374
+bak page verify --client-name $clientName --capture --annotate --rpc-ws-port 17374
 bak session close-tab --client-name $clientName --rpc-ws-port 17374
 ```
 
@@ -150,7 +150,7 @@ Use `bak session ...` for agent-owned tabs. The normal agent workflow is to pass
 
 `bak tabs list`, `bak tabs get`, and `bak tabs active` remain browser-wide diagnostics. Reach for `bak tabs new`, `bak tabs focus`, and `bak tabs close` only when you need recovery-oriented compatibility commands that still stay inside the resolved session instead of acting on arbitrary browser tabs.
 
-For page understanding, `bak page snapshot --annotate` adds a numbered visual overlay plus `refs[]`/`actionSummary` in JSON. When you need to compare page states, add `--diff-with <older-elements-or-snapshot.json>` to get structured `addedRefs`, `removedRefs`, and `changedRefs` output.
+For page understanding, start with `bak page verify`. It returns page state plus refs, freshness, and network heartbeat data, and `--capture --annotate` adds a screenshot overlay when you want it. If screenshot capture fails, `page verify` degrades instead of breaking the whole verification step. Keep `bak page snapshot --annotate` for lower-level image capture, base64 export, or diff-heavy workflows. When you need to compare page states, add `--diff-with <older-elements-or-snapshot.json>` to `page snapshot` to get structured `addedRefs`, `removedRefs`, and `changedRefs` output.
 
 `bak session open-tab` keeps the current default session tab unchanged unless you pass `--active` or later call `bak session set-active-tab`. `bak session close-tab` closes a tab in the current session; closing the last session tab auto-closes that session, and when all sessions are gone the managed background runtime auto-stops. `bak call` remains the escape hatch for protocol-only methods, and any future first-class helpers follow the existing noun-based surface instead of a `workspace` namespace.
 
@@ -161,20 +161,23 @@ If you are done with install and only need day-to-day commands, continue with [c
 When important data is not visible in the DOM, use the runtime, network, table, and freshness helpers in a fixed escalation order:
 
 ```powershell
+bak page verify --client-name $clientName --rpc-ws-port 17374
 bak inspect page-data --client-name $clientName --rpc-ws-port 17374
 bak page extract --client-name $clientName --path "table_data" --resolver auto --rpc-ws-port 17374
 bak page eval --client-name $clientName --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
-bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
+bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --rpc-ws-port 17374
+bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --rpc-ws-port 17374
 bak table list --client-name $clientName --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
-bak table export --client-name $clientName --table table-1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
+bak table rows --client-name $clientName --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table export --client-name $clientName --table html:1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
+bak page text --client-name $clientName --max-chunks 8 --chunk-size 4000 --rpc-ws-port 17374
 bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 ```
 
-`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the existing discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers.
+`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the existing discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers. Use `--auth auto` on `page fetch` or `network replay` for same-origin protected endpoints so bak can synthesize common CSRF or XSRF headers from the live page context.
 
 Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 

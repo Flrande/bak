@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="xsrf-token" content="barchart-test-token" />
     <title>BAK Test - Network</title>
     <style>
       body {
@@ -52,6 +53,7 @@
       <div id="network-log">idle</div>
     </div>
     <script>
+      document.cookie = 'XSRF-TOKEN=barchart-test-token; path=/; SameSite=Lax';
       const darkpool_json_data = {
         updatedAt: '2026-03-05',
         flows: [{ symbol: 'QQQ', side: 'buy', premium: 125000 }]

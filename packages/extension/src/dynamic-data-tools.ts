@@ -530,9 +530,9 @@ function scoreSourceMapping(table: TableAnalysis, source: DynamicSourceAnalysis,
   }
 
   const explicitReferenceHit =
-    table.table.name.toLowerCase().includes(source.source.label.toLowerCase()) ||
+    table.table.label.toLowerCase().includes(source.source.label.toLowerCase()) ||
     (table.table.selector ?? '').toLowerCase().includes(source.source.label.toLowerCase()) ||
-    source.source.label.toLowerCase().includes(table.table.name.toLowerCase());
+    source.source.label.toLowerCase().includes(table.table.label.toLowerCase());
   if (explicitReferenceHit) {
     basis.push({
       type: 'explicitReference',

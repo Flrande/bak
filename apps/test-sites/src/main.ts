@@ -372,6 +372,7 @@ function initNetworkPage(): void {
   const okButton = document.getElementById('fetch-ok') as HTMLButtonElement;
   const failButton = document.getElementById('fetch-fail') as HTMLButtonElement;
   const log = document.getElementById('network-log') as HTMLDivElement;
+  document.cookie = 'XSRF-TOKEN=barchart-test-token; path=/; SameSite=Lax';
   window.darkpool_json_data = {
     updatedAt: '2026-03-05',
     flows: [{ symbol: 'QQQ', side: 'buy', premium: 125000 }]

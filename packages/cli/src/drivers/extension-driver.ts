@@ -123,8 +123,12 @@ export class ExtensionDriver implements BrowserDriver {
     return this.bridge.request('page.wait', params, resolveBridgeTimeoutMs(params, timeoutMs));
   }
 
-  pageSnapshot(tabId?: number, includeBase64 = true): Promise<SnapshotResult> {
-    return this.bridge.request('page.snapshot', { tabId, includeBase64 });
+  pageSnapshot(tabId?: number, options: { includeBase64?: boolean; capture?: boolean } = {}): Promise<SnapshotResult> {
+    return this.bridge.request('page.snapshot', {
+      tabId,
+      includeBase64: options.includeBase64 !== false,
+      capture: options.capture !== false
+    });
   }
 
   elementClick(locator: Locator, tabId?: number, requiresConfirm?: boolean): Promise<{ ok: true }> {

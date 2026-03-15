@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createHarness, type E2EHarness } from '../helpers/harness';
+import { createHarness, TEST_SITE_ORIGIN, type E2EHarness } from '../helpers/harness';
 
 let harness: E2EHarness | undefined;
 
@@ -24,7 +24,7 @@ test.describe('scenario-level e2e', () => {
       await harness.rpcCall('page.wait', { tabId, mode: 'text', value: 'Alpha', timeoutMs: 5000 });
       await expect(page).toHaveURL(/table\.html/);
 
-      await harness.rpcCall('page.goto', { tabId, url: 'http://127.0.0.1:4173/spa.html' });
+      await harness.rpcCall('page.goto', { tabId, url: `${TEST_SITE_ORIGIN}/spa.html` });
       await harness.rpcCall('page.wait', { tabId, mode: 'selector', value: '#tab-automation', timeoutMs: 5000 });
       await harness.rpcCall('element.click', { tabId, locator: { css: '#tab-automation' } });
       await harness.rpcCall('page.wait', { tabId, mode: 'text', value: 'Automation Console', timeoutMs: 5000 });
@@ -33,7 +33,7 @@ test.describe('scenario-level e2e', () => {
       await harness.rpcCall('page.wait', { tabId, mode: 'selector', value: '#task-list li[data-task-id=\"1\"]', timeoutMs: 5000 });
       await expect(page.locator('#task-list li').first()).toContainText('scenario task');
 
-      await harness.rpcCall('page.goto', { tabId, url: 'http://127.0.0.1:4173/upload.html' });
+      await harness.rpcCall('page.goto', { tabId, url: `${TEST_SITE_ORIGIN}/upload.html` });
       await harness.rpcCall('page.wait', { tabId, mode: 'selector', value: '#file-input', timeoutMs: 5000 });
       const upload = Buffer.from('scenario-upload', 'utf8').toString('base64');
       await harness.rpcCall('file.upload', {
@@ -61,7 +61,7 @@ test.describe('scenario-level e2e', () => {
       await harness.rpcCall('context.exitFrame', { tabId: iframe.tabId });
       await expect(iframe.page.locator('#host-status')).toContainText('host:');
 
-      await harness.rpcCall('page.goto', { tabId: iframe.tabId, url: 'http://127.0.0.1:4173/shadow.html' });
+      await harness.rpcCall('page.goto', { tabId: iframe.tabId, url: `${TEST_SITE_ORIGIN}/shadow.html` });
       await harness.rpcCall('page.wait', { tabId: iframe.tabId, mode: 'selector', value: '#shadow-host', timeoutMs: 5000 });
       await harness.rpcCall('context.enterShadow', { tabId: iframe.tabId, hostSelectors: ['#shadow-host'] });
       await harness.rpcCall('element.type', {

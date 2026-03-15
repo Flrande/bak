@@ -28,6 +28,7 @@ bak session open-tab --session-id $sessionId --url "https://docs.example.com" --
 bak session set-active-tab --session-id $sessionId --tab-id 123 --rpc-ws-port 17374
 bak page goto "https://example.com" --session-id $sessionId --rpc-ws-port 17374
 bak page wait --session-id $sessionId --mode text --value "Example Domain" --rpc-ws-port 17374
+bak page verify --session-id $sessionId --capture --annotate --rpc-ws-port 17374
 bak page snapshot --session-id $sessionId --include-base64 --rpc-ws-port 17374
 bak page title --session-id $sessionId --rpc-ws-port 17374
 bak page url --session-id $sessionId --rpc-ws-port 17374
@@ -35,21 +36,24 @@ bak page url --session-id $sessionId --rpc-ws-port 17374
 
 `bak session open-tab` without `--active` is the background-tab form. It keeps the current session tab unchanged until you switch with `bak session set-active-tab ...` or pass `--tab-id` on later commands.
 
+Use `bak page verify` as the default confirmation step. It returns page state plus refs, freshness, and network heartbeat data, and `--capture` adds a screenshot layer when helpful. If screenshot capture fails, the verify flow degrades instead of aborting. Keep `bak page snapshot` for lower-level image capture or base64 export.
+
 ## Discovery, Runtime Data, And Network
 
 ```powershell
 bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
+bak page text --session-id $sessionId --max-chunks 8 --chunk-size 4000 --rpc-ws-port 17374
 bak page extract --session-id $sessionId --path "table_data" --resolver auto --rpc-ws-port 17374
 bak page extract --session-id $sessionId --path "market_data.QQQ" --resolver lexical --scope main --rpc-ws-port 17374
 bak page eval --session-id $sessionId --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network list --session-id $sessionId --limit 20 --rpc-ws-port 17374
 bak network search --session-id $sessionId --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --session-id $sessionId --include request response --body-bytes 4096 --rpc-ws-port 17374
-bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
-bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
+bak page fetch --session-id $sessionId --url "https://example.com/api/data" --mode json --auth auto --out .\api-data.json --rpc-ws-port 17374
+bak network replay --session-id $sessionId --request-id req_123 --mode json --with-schema auto --auth auto --out .\replay.json --rpc-ws-port 17374
 ```
 
-Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
+Use `--auth auto` when the target endpoint is same-origin and protected by CSRF or XSRF checks. Mutating `bak page fetch` calls and replays of mutating requests still require explicit `--requires-confirm`.
 
 ## Element, Context, And Debug
 
@@ -65,8 +69,8 @@ bak debug dump-state --session-id $sessionId --section dom visible-text network-
 
 ```powershell
 bak table list --session-id $sessionId --rpc-ws-port 17374
-bak table schema --session-id $sessionId --table table-1 --rpc-ws-port 17374
-bak table rows --session-id $sessionId --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table schema --session-id $sessionId --table html:1 --rpc-ws-port 17374
+bak table rows --session-id $sessionId --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
 bak page freshness --session-id $sessionId --patterns "20\d{2}-\d{2}-\d{2}" "Today" "yesterday" --rpc-ws-port 17374
 bak inspect page-data --session-id $sessionId --rpc-ws-port 17374
 bak inspect live-updates --session-id $sessionId --rpc-ws-port 17374

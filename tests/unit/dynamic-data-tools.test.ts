@@ -32,7 +32,7 @@ describe('dynamic data tools', () => {
   it('builds high-confidence source mappings from columns and sample values', () => {
     const table: TableHandle = {
       id: 'aria-grid:1',
-      name: 'Virtual positions',
+      label: 'Virtual positions',
       kind: 'aria-grid',
       intelligence: buildTableIntelligence({
         kind: 'aria-grid',
@@ -123,7 +123,7 @@ describe('dynamic data tools', () => {
       {
         table: {
           id: 'html:1',
-          name: 'Flow table',
+          label: 'Flow table',
           kind: 'html'
         },
         schema: {
@@ -181,7 +181,7 @@ describe('dynamic data tools', () => {
       {
         table: {
           id: 'html:1',
-          name: 'Orders',
+          label: 'Orders',
           kind: 'html'
         },
         schema: {

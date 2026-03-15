@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { createHarness, type E2EHarness } from '../helpers/harness';
+import { createHarness, TEST_SITE_ORIGIN, type E2EHarness } from '../helpers/harness';
 
 let harness: E2EHarness | undefined;
 
@@ -69,6 +69,7 @@ test.describe('dynamic data e2e', () => {
       const tables = (await harness.rpcCall('table.list', { tabId: tablePage.tabId })) as {
         tables: Array<{
           id: string;
+          label?: string;
           kind: string;
           rowCount: number;
           intelligence?: { preferredExtractionMode: string; completeness: string };
@@ -105,6 +106,16 @@ test.describe('dynamic data e2e', () => {
       expect(rows.extraction.observedRows).toBe(3);
       expect(rows.rows).toHaveLength(3);
       expect(rows.rows[1]?.Name).toBe('Beta');
+
+      const rowsByLabel = (await harness.rpcCall('table.rows', {
+        tabId: tablePage.tabId,
+        table: tables.tables[0]!.label ?? tables.tables[0]!.id,
+        all: true,
+        maxRows: 100
+      })) as {
+        rows: Array<Record<string, unknown>>;
+      };
+      expect(rowsByLabel.rows[0]?.Name).toBe('Alpha');
 
       const exported = (await harness.rpcCall('table.export', {
         tabId: tablePage.tabId,
@@ -365,7 +376,7 @@ test.describe('dynamic data e2e', () => {
     try {
       const runtimeFetch = (await harness.rpcCall('page.fetch', {
         tabId,
-        url: 'http://127.0.0.1:4173/api/runtime-data?symbol=QQQ',
+        url: `${TEST_SITE_ORIGIN}/api/runtime-data?symbol=QQQ`,
         mode: 'json'
       })) as unknown;
       const runtimePayload = singlePageValue<{
@@ -377,6 +388,106 @@ test.describe('dynamic data e2e', () => {
       expect(runtimePayload.ok).toBe(true);
       expect(runtimePayload.json?.symbol).toBe('QQQ');
 
+      const protectedSeed = singlePageValue<{
+        status: number;
+        ok: boolean;
+        json?: { ok: boolean; symbol: string; headerToken: string | null };
+        authApplied?: string[];
+      }>(
+        await harness.rpcCall('page.fetch', {
+          tabId,
+          url: `${TEST_SITE_ORIGIN}/api/protected-core?symbol=SPY`,
+          mode: 'json',
+          auth: 'off'
+        })
+      );
+      expect(protectedSeed.status).toBe(419);
+      expect(protectedSeed.ok).toBe(false);
+      expect(protectedSeed.json?.ok).toBe(false);
+      expect(protectedSeed.authApplied).toBeUndefined();
+
+      const protectedAuto = singlePageValue<{
+        status: number;
+        ok: boolean;
+        json?: { ok: boolean; symbol: string; headerToken: string | null };
+        authApplied?: string[];
+        authSources?: string[];
+      }>(
+        await harness.rpcCall('page.fetch', {
+          tabId,
+          url: `${TEST_SITE_ORIGIN}/api/protected-core?symbol=QQQ`,
+          mode: 'json',
+          auth: 'auto'
+        })
+      );
+      expect(protectedAuto.status).toBe(200);
+      expect(protectedAuto.ok).toBe(true);
+      expect(protectedAuto.json?.ok).toBe(true);
+      expect(protectedAuto.json?.symbol).toBe('QQQ');
+      expect(protectedAuto.authApplied).toContain('X-XSRF-TOKEN');
+      expect(protectedAuto.authSources).toContain('cookie:XSRF-TOKEN');
+
+      const protectedSearch = (await harness.rpcCall('network.search', {
+        tabId,
+        pattern: 'protected-core?symbol=SPY',
+        limit: 10
+      })) as {
+        entries: Array<{ id: string; url: string }>;
+        scanned: number;
+        matched: number;
+        bodyCoverage: {
+          request: { full: number; partial: number; none: number };
+          response: { full: number; partial: number; none: number };
+        };
+      };
+      expect(protectedSearch.scanned).toBeGreaterThan(0);
+      expect(protectedSearch.matched).toBeGreaterThanOrEqual(protectedSearch.entries.length);
+      expect(protectedSearch.entries.some((entry) => entry.url.includes('symbol=SPY'))).toBe(true);
+      expect(
+        protectedSearch.bodyCoverage.request.full +
+          protectedSearch.bodyCoverage.request.partial +
+          protectedSearch.bodyCoverage.request.none
+      ).toBe(protectedSearch.scanned);
+      expect(
+        protectedSearch.bodyCoverage.response.full +
+          protectedSearch.bodyCoverage.response.partial +
+          protectedSearch.bodyCoverage.response.none
+      ).toBe(protectedSearch.scanned);
+
+      const protectedReplayOff = (await harness.rpcCall('network.replay', {
+        tabId,
+        id: protectedSearch.entries[0]!.id,
+        mode: 'json',
+        auth: 'off'
+      })) as {
+        status: number;
+        ok: boolean;
+        json?: { ok: boolean };
+        authApplied?: string[];
+      };
+      expect(protectedReplayOff.status).toBe(419);
+      expect(protectedReplayOff.ok).toBe(false);
+      expect(protectedReplayOff.json?.ok).toBe(false);
+      expect(protectedReplayOff.authApplied).toBeUndefined();
+
+      const protectedReplayAuto = (await harness.rpcCall('network.replay', {
+        tabId,
+        id: protectedSearch.entries[0]!.id,
+        mode: 'json',
+        auth: 'auto'
+      })) as {
+        status: number;
+        ok: boolean;
+        json?: { ok: boolean; headerToken: string | null };
+        authApplied?: string[];
+        authSources?: string[];
+      };
+      expect(protectedReplayAuto.status).toBe(200);
+      expect(protectedReplayAuto.ok).toBe(true);
+      expect(protectedReplayAuto.json?.ok).toBe(true);
+      expect(protectedReplayAuto.authApplied).toContain('X-XSRF-TOKEN');
+      expect(protectedReplayAuto.authSources).toContain('cookie:XSRF-TOKEN');
+
       const initialWaitPromise = harness.rpcCall('network.waitFor', {
         tabId,
         urlIncludes: '/api/echo',
@@ -386,7 +497,7 @@ test.describe('dynamic data e2e', () => {
 
       const echoFetch = (await harness.rpcCall('page.fetch', {
         tabId,
-        url: 'http://127.0.0.1:4173/api/echo',
+        url: `${TEST_SITE_ORIGIN}/api/echo`,
         method: 'POST',
         body: '{"hello":"world"}',
         contentType: 'application/json',
@@ -424,7 +535,7 @@ test.describe('dynamic data e2e', () => {
 
       const secondEchoFetch = (await harness.rpcCall('page.fetch', {
         tabId,
-        url: 'http://127.0.0.1:4173/api/echo',
+        url: `${TEST_SITE_ORIGIN}/api/echo`,
         method: 'POST',
         body: '{"hello":"again"}',
         contentType: 'application/json',
@@ -498,8 +609,24 @@ test.describe('dynamic data e2e', () => {
         limit: 10
       })) as {
         entries: Array<{ id: string }>;
+        scanned: number;
+        matched: number;
+        bodyCoverage: {
+          request: { full: number; partial: number; none: number };
+          response: { full: number; partial: number; none: number };
+        };
       };
       expect(search.entries.some((entry) => entry.id === freshWaited.entry.id)).toBe(true);
+      expect(search.scanned).toBeGreaterThan(0);
+      expect(search.matched).toBeGreaterThanOrEqual(search.entries.length);
+      expect(search.bodyCoverage.request.full).toBeGreaterThan(0);
+      expect(search.bodyCoverage.response.full).toBeGreaterThan(0);
+      expect(search.bodyCoverage.request.full + search.bodyCoverage.request.partial + search.bodyCoverage.request.none).toBe(
+        search.scanned
+      );
+      expect(
+        search.bodyCoverage.response.full + search.bodyCoverage.response.partial + search.bodyCoverage.response.none
+      ).toBe(search.scanned);
 
       const replayed = (await harness.rpcCall('network.replay', {
         tabId,
@@ -514,8 +641,97 @@ test.describe('dynamic data e2e', () => {
       expect(replayed.status).toBe(200);
       expect(replayed.json?.body).toContain('again');
 
+      const largeJson = singlePageValue<{
+        status: number;
+        ok: boolean;
+        truncated: boolean;
+        degradedReason?: string;
+        json?: unknown;
+        schema?: { columns: Array<{ label: string }> };
+        mappedRows?: Array<Record<string, unknown>>;
+      }>(
+        await harness.rpcCall('page.fetch', {
+          tabId,
+          url: `${TEST_SITE_ORIGIN}/api/large-json`,
+          mode: 'json',
+          maxBytes: 512
+        })
+      );
+      expect(largeJson.status).toBe(200);
+      expect(largeJson.ok).toBe(true);
+      expect(largeJson.truncated).toBe(true);
+      expect(largeJson.degradedReason).toContain('summarized');
+      expect(largeJson.json).toBeUndefined();
+      expect(largeJson.schema?.columns.map((column) => column.label)).toEqual(
+        expect.arrayContaining(['id', 'symbol', 'side', 'premium'])
+      );
+      expect(largeJson.mappedRows?.length).toBeGreaterThan(0);
+
+      const fullLargeJson = singlePageValue<{
+        status: number;
+        ok: boolean;
+        truncated: boolean;
+        degradedReason?: string;
+        json?: { rows: Array<Record<string, unknown>> };
+      }>(
+        await harness.rpcCall('page.fetch', {
+          tabId,
+          url: `${TEST_SITE_ORIGIN}/api/large-json`,
+          mode: 'json',
+          maxBytes: 512,
+          fullResponse: true
+        })
+      );
+      expect(fullLargeJson.status).toBe(200);
+      expect(fullLargeJson.ok).toBe(true);
+      expect(fullLargeJson.truncated).toBe(false);
+      expect(fullLargeJson.degradedReason).toBeUndefined();
+      expect(fullLargeJson.json?.rows.length).toBeGreaterThan(200);
+
       await page.click('#fetch-ok');
       await expect(page.locator('#network-log')).toContainText('fetch:200:ok');
+
+      const verify = (await harness.rpcCall('page.verify', {
+        tabId,
+        patterns: ['Today', 'yesterday']
+      })) as {
+        title: string;
+        url: string;
+        context: Record<string, unknown>;
+        elementCount: number;
+        refs: Array<{ ref: string }>;
+        actionSummary: { clickable: Array<{ ref: string }> };
+        freshness: {
+          assessment: string;
+          primaryTimestamp: number | null;
+          primaryCategory: string | null;
+          primarySource: string | null;
+          suppressedEvidenceCount: number;
+        };
+        networkHeartbeat: {
+          latestNetworkTimestamp: number | null;
+          networkCount: number;
+          recentRequestIds: string[];
+          networkCadence?: { classification: string };
+        };
+        captureStatus: string;
+        captureError?: unknown;
+      };
+      expect(verify.captureStatus).toBe('skipped');
+      expect(verify.captureError).toBeUndefined();
+      expect(verify.title).toContain('Network');
+      expect(verify.url).toContain('/network.html');
+      expect(verify.context).toBeTruthy();
+      expect(verify.elementCount).toBeGreaterThan(0);
+      expect(verify.refs.length).toBeGreaterThan(0);
+      expect(verify.actionSummary.clickable.length).toBeGreaterThan(0);
+      expect(verify.freshness.primaryCategory).toBe('data');
+      expect(verify.freshness.primaryTimestamp).not.toBeNull();
+      expect(verify.freshness.suppressedEvidenceCount).toBeGreaterThan(0);
+      expect(verify.networkHeartbeat.latestNetworkTimestamp).not.toBeNull();
+      expect(verify.networkHeartbeat.networkCount).toBeGreaterThan(0);
+      expect(verify.networkHeartbeat.recentRequestIds.length).toBeGreaterThan(0);
+      expect(verify.networkHeartbeat.networkCadence?.classification).not.toBe('none');
 
       const freshness = (await harness.rpcCall('page.freshness', {
         tabId
@@ -525,12 +741,22 @@ test.describe('dynamic data e2e', () => {
         latestPageDataTimestamp: number | null;
         latestNetworkDataTimestamp: number | null;
         latestNetworkTimestamp: number | null;
+        primaryTimestamp: number | null;
+        primaryCategory: string | null;
+        primarySource: string | null;
+        confidence: string | null;
+        suppressedEvidenceCount: number;
       };
       expect(freshness.assessment).toBe('lagged');
       expect(freshness.latestInlineDataTimestamp).not.toBeNull();
       expect(freshness.latestPageDataTimestamp).not.toBeNull();
       expect(freshness.latestNetworkDataTimestamp).not.toBeNull();
       expect(freshness.latestNetworkTimestamp).not.toBeNull();
+      expect(freshness.primaryTimestamp).toBe(freshness.latestNetworkDataTimestamp);
+      expect(freshness.primaryCategory).toBe('data');
+      expect(freshness.primarySource).toBe('network');
+      expect(freshness.confidence).not.toBeNull();
+      expect(freshness.suppressedEvidenceCount).toBeGreaterThan(0);
       expect(freshness.latestInlineDataTimestamp!).toBeLessThan(Date.now() + 36 * 60 * 60 * 1000);
 
       const relativeFreshness = (await harness.rpcCall('page.freshness', {

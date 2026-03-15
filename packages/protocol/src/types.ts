@@ -206,7 +206,13 @@ export type SnapshotDiff = z.infer<typeof SnapshotDiffSchema>;
 
 export interface PersistedPageSnapshot {
   traceId: string;
-  imagePath: string;
+  captureStatus: 'complete' | 'degraded' | 'skipped';
+  captureError?: {
+    code?: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+  imagePath?: string;
   elementsPath: string;
   imageBase64?: string;
   elementCount: number;
@@ -215,6 +221,7 @@ export interface PersistedPageSnapshot {
   annotatedImageBase64?: string;
   actionSummary?: SnapshotActionSummary;
   diff?: SnapshotDiff;
+  contextRecovered?: boolean;
 }
 
 export const ConsoleEntrySchema = z.object({
@@ -335,11 +342,14 @@ export interface PageFetchResponse {
   schema?: TableSchema;
   mappedRows?: Array<Record<string, unknown>>;
   mappingSource?: string;
+  authApplied?: string[];
+  authSources?: string[];
+  degradedReason?: string;
 }
 
 export interface TableHandle {
   id: string;
-  name: string;
+  label: string;
   kind: 'html' | 'dataTables' | 'ag-grid' | 'tanstack' | 'handsontable' | 'aria-grid' | 'visible-only';
   selector?: string;
   rowCount?: number;
@@ -487,6 +497,11 @@ export interface PageFreshnessResult {
   latestPageDataTimestamp: number | null;
   latestNetworkDataTimestamp: number | null;
   domVisibleTimestamp: number | null;
+  primaryTimestamp: number | null;
+  primaryCategory: FreshnessTimestampCategory | null;
+  primarySource: FreshnessEvidenceItem['source'] | null;
+  confidence: 'high' | 'medium' | 'low';
+  suppressedEvidenceCount: number;
   assessment: 'fresh' | 'lagged' | 'stale' | 'unknown';
   evidence: {
     visibleTimestamps: string[];
@@ -500,6 +515,33 @@ export interface PageFreshnessResult {
 
 export interface InspectFreshnessResult extends PageFreshnessResult {
   lagMs: number | null;
+}
+
+export interface PageVerifyNetworkHeartbeat {
+  latestNetworkTimestamp: number | null;
+  networkCount: number;
+  networkCadence: InspectNetworkCadenceSummary;
+  recentRequestIds: string[];
+}
+
+export interface PageVerifyResult {
+  title: string;
+  url: string;
+  context: SessionContextSnapshot;
+  elementCount: number;
+  refs: SnapshotRef[];
+  actionSummary: SnapshotActionSummary;
+  freshness: PageFreshnessResult;
+  networkHeartbeat: PageVerifyNetworkHeartbeat;
+  captureStatus: 'complete' | 'degraded' | 'skipped';
+  captureError?: {
+    code?: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+  imageBase64?: string;
+  annotatedImageBase64?: string;
+  contextRecovered?: boolean;
 }
 
 export type DebugDumpSection =
@@ -595,6 +637,22 @@ export interface SessionContextSnapshot {
   tabId: number | null;
   framePath: string[];
   shadowPath: string[];
+}
+
+export interface NetworkBodyCoverageCounts {
+  full: number;
+  partial: number;
+  none: number;
+}
+
+export interface NetworkSearchResult {
+  entries: NetworkEntry[];
+  scanned: number;
+  matched: number;
+  bodyCoverage: {
+    request: NetworkBodyCoverageCounts;
+    response: NetworkBodyCoverageCounts;
+  };
 }
 
 export interface SessionDescriptor {
@@ -726,8 +784,26 @@ export interface MethodMap {
   'page.forward': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
   'page.reload': { params: { sessionId: string; tabId?: number }; result: { ok: true } };
   'page.snapshot': {
-    params: { sessionId: string; tabId?: number; includeBase64?: boolean; annotate?: boolean; diffWith?: string };
+    params: {
+      sessionId: string;
+      tabId?: number;
+      includeBase64?: boolean;
+      annotate?: boolean;
+      diffWith?: string;
+      capture?: boolean;
+    };
     result: PersistedPageSnapshot;
+  };
+  'page.verify': {
+    params: {
+      sessionId: string;
+      tabId?: number;
+      capture?: boolean;
+      includeBase64?: boolean;
+      annotate?: boolean;
+      patterns?: string[];
+    };
+    result: PageVerifyResult;
   };
   'page.wait': {
     params: {
@@ -773,6 +849,7 @@ export interface MethodMap {
       timeoutMs?: number;
       scope?: PageExecutionScope;
       maxBytes?: number;
+      auth?: 'auto' | 'manual' | 'off';
       requiresConfirm?: boolean;
     };
     result: PageValueResult<PageFetchResponse>;
@@ -909,7 +986,7 @@ export interface MethodMap {
   };
   'network.search': {
     params: { sessionId: string; tabId?: number; pattern: string; limit?: number };
-    result: { entries: NetworkEntry[] };
+    result: NetworkSearchResult;
   };
   'network.replay': {
     params: {
@@ -920,6 +997,7 @@ export interface MethodMap {
       timeoutMs?: number;
       maxBytes?: number;
       withSchema?: 'auto';
+      auth?: 'auto' | 'manual' | 'off';
       requiresConfirm?: boolean;
     };
     result: PageFetchResponse;

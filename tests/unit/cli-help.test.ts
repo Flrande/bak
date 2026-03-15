@@ -81,7 +81,7 @@ describe('cli help output', { timeout: 30_000 }, () => {
     const help = runHelp(['page', '--help']);
 
     expect(help).toContain('Use bak call for protocol-only navigation helpers');
-    expect(help).toContain('bak page snapshot --include-base64 --annotate --rpc-ws-port 17374');
+    expect(help).toContain('bak page verify --capture --annotate --rpc-ws-port 17374');
   });
 
   it('documents snapshot annotation and diff flags on page and debug commands', () => {
@@ -92,6 +92,40 @@ describe('cli help output', { timeout: 30_000 }, () => {
     expect(pageSnapshotHelp).toContain('--diff-with <path>');
     expect(debugDumpHelp).toContain('--annotate-snapshot');
     expect(debugDumpHelp).toContain('--snapshot-diff-with <path>');
+  });
+
+  it('documents page verify as the resilient preflight command', () => {
+    const verifyHelp = runHelp(['page', 'verify', '--help']);
+
+    expect(verifyHelp).toContain('--capture');
+    expect(verifyHelp).toContain('--annotate');
+    expect(verifyHelp).toContain('title, URL, context, freshness, refs');
+  });
+
+  it('documents page text chunk sizing controls', () => {
+    const textHelp = runHelp(['page', 'text', '--help']);
+
+    expect(textHelp).toContain('--max-chunks <count>');
+    expect(textHelp).toContain('--chunk-size <chars>');
+  });
+
+  it('documents fetch and replay auth controls', () => {
+    const fetchHelp = runHelp(['page', 'fetch', '--help']);
+    const replayHelp = runHelp(['network', 'replay', '--help']);
+
+    expect(fetchHelp).toContain('--auth <mode>');
+    expect(fetchHelp).toContain('--out <path>');
+    expect(replayHelp).toContain('--auth <mode>');
+    expect(replayHelp).toContain('--out <path>');
+  });
+
+  it('documents table commands with concrete table ids instead of placeholder names', () => {
+    const tableHelp = runHelp(['table', '--help']);
+    const rowsHelp = runHelp(['table', 'rows', '--help']);
+
+    expect(tableHelp).toContain('html:1');
+    expect(tableHelp).not.toContain('table-1');
+    expect(rowsHelp).toContain('html:1');
   });
 
   it('documents tabs new as a recovery-only session-aware compatibility command', () => {

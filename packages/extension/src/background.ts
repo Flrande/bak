@@ -27,6 +27,7 @@ import {
   ensureNetworkDebugger,
   exportHar,
   getNetworkEntry,
+  getReplayableNetworkRequest,
   latestNetworkTimestamp,
   listNetworkEntries,
   recentNetworkSampleIds,
@@ -36,7 +37,6 @@ import {
 import { isSupportedAutomationUrl } from './url-policy.js';
 import { computeReconnectDelayMs } from './reconnect.js';
 import { resolveSessionBindingStateMap, STORAGE_KEY_SESSION_BINDINGS } from './session-binding-storage.js';
-import { containsRedactionMarker } from './privacy.js';
 import {
   type SessionBindingBrowser,
   type SessionBindingColor,
@@ -838,7 +838,15 @@ async function withTab(target: { tabId?: number; bindingId?: string } = {}, opti
   return validate(tab);
 }
 
-async function captureAlignedTabScreenshot(tab: chrome.tabs.Tab): Promise<string> {
+async function captureAlignedTabScreenshot(tab: chrome.tabs.Tab): Promise<{
+  captureStatus: 'complete' | 'degraded' | 'skipped';
+  imageData?: string;
+  captureError?: {
+    code?: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+}> {
   if (typeof tab.id !== 'number' || typeof tab.windowId !== 'number') {
     throw toError('E_NOT_FOUND', 'Tab screenshot requires tab id and window id');
   }
@@ -853,7 +861,18 @@ async function captureAlignedTabScreenshot(tab: chrome.tabs.Tab): Promise<string
   }
 
   try {
-    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    return {
+      captureStatus: 'complete',
+      imageData: await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' })
+    };
+  } catch (error) {
+    return {
+      captureStatus: 'degraded',
+      captureError: {
+        code: 'E_CAPTURE_FAILED',
+        message: error instanceof Error ? error.message : String(error)
+      }
+    };
   } finally {
     if (shouldSwitch && typeof activeTab?.id === 'number') {
       try {
@@ -1026,7 +1045,9 @@ async function executePageWorld<T>(
         contentType: typeof params.contentType === 'string' ? params.contentType : undefined,
         mode: params.mode === 'json' ? 'json' : 'raw',
         maxBytes: typeof params.maxBytes === 'number' ? params.maxBytes : undefined,
-        timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined
+        timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined,
+        fullResponse: params.fullResponse === true,
+        auth: params.auth === 'manual' || params.auth === 'off' ? params.auth : 'auto'
       }
     ],
     func: async (payload) => {
@@ -1162,6 +1183,77 @@ async function executePageWorld<T>(
         return { resolver: 'lexical', value: readLexical() };
       };
 
+      const findHeaderName = (headers: Record<string, string>, name: string): string | undefined =>
+        Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+
+      const findCookieValue = (cookieString: string, name: string): string | undefined => {
+        const targetName = `${name}=`;
+        for (const segment of cookieString.split(';')) {
+          const trimmed = segment.trim();
+          if (trimmed.toLowerCase().startsWith(targetName.toLowerCase())) {
+            return trimmed.slice(targetName.length);
+          }
+        }
+        return undefined;
+      };
+
+      const buildJsonSummary = (
+        value: unknown
+      ): { schema?: { columns: Array<{ key: string; label: string }> }; mappedRows?: Array<Record<string, unknown>> } => {
+        const rowsCandidate = (() => {
+          if (Array.isArray(value)) {
+            return value;
+          }
+          if (typeof value !== 'object' || value === null) {
+            return null;
+          }
+          const record = value as Record<string, unknown>;
+          for (const key of ['data', 'rows', 'results', 'items']) {
+            if (Array.isArray(record[key])) {
+              return record[key] as unknown[];
+            }
+          }
+          return null;
+        })();
+        if (Array.isArray(rowsCandidate) && rowsCandidate.length > 0) {
+          const objectRows = rowsCandidate
+            .filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null && !Array.isArray(row))
+            .slice(0, 25);
+          if (objectRows.length > 0) {
+            const columns = [...new Set(objectRows.flatMap((row) => Object.keys(row)))].slice(0, 20);
+            return {
+              schema: {
+                columns: columns.map((label, index) => ({
+                  key: `col_${index + 1}`,
+                  label
+                }))
+              },
+              mappedRows: objectRows.map((row) => {
+                const mapped: Record<string, unknown> = {};
+                for (const column of columns) {
+                  mapped[column] = row[column];
+                }
+                return mapped;
+              })
+            };
+          }
+        }
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          const columns = Object.keys(value as Record<string, unknown>).slice(0, 20);
+          if (columns.length > 0) {
+            return {
+              schema: {
+                columns: columns.map((label, index) => ({
+                  key: `col_${index + 1}`,
+                  label
+                }))
+              }
+            };
+          }
+        }
+        return {};
+      };
+
       try {
         const targetWindow = payload.scope === 'main' ? window : payload.scope === 'current' ? resolveFrameWindow(payload.framePath ?? []) : window;
         if (payload.action === 'eval') {
@@ -1182,8 +1274,47 @@ async function executePageWorld<T>(
         }
         if (payload.action === 'fetch') {
           const headers = { ...(payload.headers ?? {}) } as Record<string, string>;
-          if (payload.contentType && !headers['Content-Type']) {
+          if (payload.contentType && !findHeaderName(headers, 'Content-Type')) {
             headers['Content-Type'] = payload.contentType;
+          }
+          const fullResponse = payload.fullResponse === true;
+          const authApplied: string[] = [];
+          const authSources = new Set<string>();
+          const requestUrl = new URL(payload.url, targetWindow.location.href);
+          const sameOrigin = requestUrl.origin === targetWindow.location.origin;
+          const authMode = payload.auth === 'manual' || payload.auth === 'off' ? payload.auth : 'auto';
+          const maybeApplyHeader = (name: string, value: string | undefined, source: string): void => {
+            if (!value || findHeaderName(headers, name)) {
+              return;
+            }
+            headers[name] = value;
+            authApplied.push(name);
+            authSources.add(source);
+          };
+          if (sameOrigin && authMode === 'auto') {
+            const xsrfCookie = findCookieValue(targetWindow.document.cookie ?? '', 'XSRF-TOKEN');
+            if (xsrfCookie) {
+              maybeApplyHeader('X-XSRF-TOKEN', decodeURIComponent(xsrfCookie), 'cookie:XSRF-TOKEN');
+            }
+            const metaTokens = [
+              {
+                selector: 'meta[name="xsrf-token"], meta[name="x-xsrf-token"]',
+                header: 'X-XSRF-TOKEN',
+                source: 'meta:xsrf-token'
+              },
+              {
+                selector: 'meta[name="csrf-token"], meta[name="csrf_token"], meta[name="_csrf"]',
+                header: 'X-CSRF-TOKEN',
+                source: 'meta:csrf-token'
+              }
+            ];
+            for (const token of metaTokens) {
+              const meta = targetWindow.document.querySelector<HTMLMetaElement>(token.selector);
+              const content = meta?.content?.trim();
+              if (content) {
+                maybeApplyHeader(token.header, content, token.source);
+              }
+            }
           }
           const controller = typeof AbortController === 'function' ? new AbortController() : null;
           const timeoutId =
@@ -1214,37 +1345,50 @@ async function executePageWorld<T>(
             value: (() => {
               const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
               const decoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
-              const previewLimit = typeof payload.maxBytes === 'number' && payload.maxBytes > 0 ? payload.maxBytes : 8192;
+              const previewLimit = !fullResponse && typeof payload.maxBytes === 'number' && payload.maxBytes > 0 ? payload.maxBytes : 8192;
               const encodedBody = encoder ? encoder.encode(bodyText) : null;
               const bodyBytes = encodedBody ? encodedBody.byteLength : bodyText.length;
-              const truncated = bodyBytes > previewLimit;
-              if (payload.mode === 'json' && truncated) {
-                throw {
-                  code: 'E_BODY_TOO_LARGE',
-                  message: 'JSON response exceeds max-bytes',
-                  details: {
-                    bytes: bodyBytes,
-                    maxBytes: previewLimit
-                  }
-                };
-              }
+              const truncated = !fullResponse && bodyBytes > previewLimit;
               const previewText =
-                encodedBody && decoder
+                fullResponse
+                  ? bodyText
+                  : encodedBody && decoder
                   ? decoder.decode(encodedBody.subarray(0, Math.min(encodedBody.byteLength, previewLimit)))
                   : truncated
                     ? bodyText.slice(0, previewLimit)
                     : bodyText;
-              return {
+              const result: Record<string, unknown> = {
                 url: response.url,
                 status: response.status,
                 ok: response.ok,
                 headers: headerMap,
                 contentType: response.headers.get('content-type') ?? undefined,
-                bodyText: payload.mode === 'json' ? undefined : previewText,
-                json: payload.mode === 'json' && bodyText ? JSON.parse(bodyText) : undefined,
                 bytes: bodyBytes,
-                truncated
+                truncated,
+                authApplied: authApplied.length > 0 ? authApplied : undefined,
+                authSources: authSources.size > 0 ? [...authSources] : undefined
               };
+              if (payload.mode === 'json') {
+                const parsedJson = bodyText ? JSON.parse(bodyText) : undefined;
+                const summary = buildJsonSummary(parsedJson);
+                if (fullResponse || !truncated) {
+                  result.json = parsedJson;
+                } else {
+                  result.degradedReason = 'response body exceeded max-bytes and was summarized';
+                }
+                if (summary.schema) {
+                  result.schema = summary.schema;
+                }
+                if (summary.mappedRows) {
+                  result.mappedRows = summary.mappedRows;
+                }
+              } else {
+                result.bodyText = previewText;
+                if (truncated) {
+                  result.degradedReason = 'response body exceeded max-bytes and was truncated';
+                }
+              }
+              return result;
             })()
           };
         }
@@ -1327,17 +1471,14 @@ function filterNetworkEntrySections(entry: NetworkEntry, include: unknown): Netw
   return clone;
 }
 
-function replayHeadersFromEntry(entry: NetworkEntry): Record<string, string> | undefined {
-  if (!entry.requestHeaders) {
+function replayHeadersFromRequestHeaders(requestHeaders: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!requestHeaders) {
     return undefined;
   }
   const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(entry.requestHeaders)) {
+  for (const [name, value] of Object.entries(requestHeaders)) {
     const normalizedName = name.toLowerCase();
     if (REPLAY_FORBIDDEN_HEADER_NAMES.has(normalizedName) || normalizedName.startsWith('sec-')) {
-      continue;
-    }
-    if (containsRedactionMarker(value)) {
       continue;
     }
     headers[name] = value;
@@ -1502,6 +1643,75 @@ function computeFreshnessAssessment(input: {
   return 'unknown';
 }
 
+function freshnessCategoryPriority(category: PageFreshnessResult['evidence']['classifiedTimestamps'][number]['category']): number {
+  switch (category) {
+    case 'data':
+      return 0;
+    case 'unknown':
+      return 1;
+    case 'event':
+      return 2;
+    case 'contract':
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function freshnessSourcePriority(source: PageFreshnessResult['evidence']['classifiedTimestamps'][number]['source']): number {
+  switch (source) {
+    case 'network':
+      return 0;
+    case 'page-data':
+      return 1;
+    case 'visible':
+      return 2;
+    case 'inline':
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function rankFreshnessEvidence(
+  candidates: PageFreshnessResult['evidence']['classifiedTimestamps'],
+  now = Date.now()
+): PageFreshnessResult['evidence']['classifiedTimestamps'] {
+  return candidates
+    .slice()
+    .sort((left, right) => {
+      const byCategory = freshnessCategoryPriority(left.category) - freshnessCategoryPriority(right.category);
+      if (byCategory !== 0) {
+        return byCategory;
+      }
+      const bySource = freshnessSourcePriority(left.source) - freshnessSourcePriority(right.source);
+      if (bySource !== 0) {
+        return bySource;
+      }
+      const leftTimestamp = parseTimestampCandidate(left.value, now) ?? Number.NEGATIVE_INFINITY;
+      const rightTimestamp = parseTimestampCandidate(right.value, now) ?? Number.NEGATIVE_INFINITY;
+      if (leftTimestamp !== rightTimestamp) {
+        return rightTimestamp - leftTimestamp;
+      }
+      return left.value.localeCompare(right.value);
+    });
+}
+
+function deriveFreshnessConfidence(
+  primary: PageFreshnessResult['evidence']['classifiedTimestamps'][number] | null
+): PageFreshnessResult['confidence'] {
+  if (!primary) {
+    return 'low';
+  }
+  if (primary.category === 'data' && (primary.source === 'network' || primary.source === 'page-data')) {
+    return 'high';
+  }
+  if (primary.category === 'data') {
+    return 'medium';
+  }
+  return 'low';
+}
+
 async function collectPageInspection(tabId: number, params: Record<string, unknown> = {}): Promise<PageInspectionState> {
   return (await forwardContentRpc(tabId, 'bak.internal.inspectState', params)) as PageInspectionState;
 }
@@ -1652,7 +1862,10 @@ async function buildFreshnessForTab(tabId: number, params: Record<string, unknow
   const domVisibleTimestamp = latestTimestampFromCandidates(visibleCandidates, now);
   const latestNetworkTs = latestNetworkTimestamp(tabId);
   const lastMutationAt = typeof inspection.lastMutationAt === 'number' ? inspection.lastMutationAt : null;
-  const allCandidates = [...visibleCandidates, ...inlineCandidates, ...pageDataCandidates, ...networkCandidates];
+  const allCandidates = rankFreshnessEvidence([...visibleCandidates, ...inlineCandidates, ...pageDataCandidates, ...networkCandidates], now);
+  const primaryEvidence =
+    allCandidates.find((candidate) => parseTimestampCandidate(candidate.value, now) !== null) ?? null;
+  const primaryTimestamp = primaryEvidence ? parseTimestampCandidate(primaryEvidence.value, now) : null;
   return {
     pageLoadedAt: typeof inspection.pageLoadedAt === 'number' ? inspection.pageLoadedAt : null,
     lastMutationAt,
@@ -1661,6 +1874,11 @@ async function buildFreshnessForTab(tabId: number, params: Record<string, unknow
     latestPageDataTimestamp,
     latestNetworkDataTimestamp,
     domVisibleTimestamp,
+    primaryTimestamp,
+    primaryCategory: primaryEvidence?.category ?? null,
+    primarySource: primaryEvidence?.source ?? null,
+    confidence: deriveFreshnessConfidence(primaryEvidence),
+    suppressedEvidenceCount: Math.max(0, allCandidates.length - (primaryEvidence ? 1 : 0)),
     assessment: computeFreshnessAssessment({
       latestInlineDataTimestamp,
       latestPageDataTimestamp,
@@ -2127,9 +2345,14 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           type: 'bak.collectElements',
           debugRichText: config.debugRichText
         });
-        const imageData = await captureAlignedTabScreenshot(tab);
+        const screenshot = params.capture === false ? { captureStatus: 'skipped' as const } : await captureAlignedTabScreenshot(tab);
         return {
-          imageBase64: includeBase64 ? imageData.replace(/^data:image\/png;base64,/, '') : '',
+          captureStatus: screenshot.captureStatus,
+          captureError: screenshot.captureError,
+          imageBase64:
+            includeBase64 && typeof screenshot.imageData === 'string'
+              ? screenshot.imageData.replace(/^data:image\/png;base64,/, '')
+              : undefined,
           elements: elements.elements,
           tabId: tab.id,
           url: tab.url ?? ''
@@ -2253,13 +2476,7 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
         const tab = await withTab(target);
         await ensureTabNetworkCapture(tab.id!);
-        return {
-          entries: searchNetworkEntries(
-            tab.id!,
-            String(params.pattern ?? ''),
-            typeof params.limit === 'number' ? params.limit : 50
-          )
-        };
+        return searchNetworkEntries(tab.id!, String(params.pattern ?? ''), typeof params.limit === 'number' ? params.limit : 50);
       });
     }
     case 'network.waitFor': {
@@ -2293,34 +2510,32 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
       return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
         const tab = await withTab(target);
         await ensureTabNetworkCapture(tab.id!);
-        const entry = getNetworkEntry(tab.id!, String(params.id ?? ''));
-        if (!entry) {
+        const replayable = getReplayableNetworkRequest(tab.id!, String(params.id ?? ''));
+        if (!replayable) {
           throw toError('E_NOT_FOUND', `network entry not found: ${String(params.id ?? '')}`);
         }
-        if (entry.requestBodyTruncated === true) {
-          throw toError('E_BODY_TOO_LARGE', 'captured request body was truncated and cannot be replayed safely', {
-            requestId: entry.id,
-            requestBytes: entry.requestBytes
-          });
-        }
-        if (containsRedactionMarker(entry.requestBodyPreview)) {
-          throw toError('E_EXECUTION', 'captured request body was redacted and cannot be replayed safely', {
-            requestId: entry.id
-          });
+        if (replayable.degradedReason) {
+          return {
+            url: replayable.entry.url,
+            status: 0,
+            ok: false,
+            headers: {},
+            bytes: replayable.entry.requestBytes,
+            truncated: true,
+            degradedReason: replayable.degradedReason
+          } satisfies PageFetchResponse;
         }
         const replayed = await executePageWorld<PageFetchResponse>(tab.id!, 'fetch', {
-          url: entry.url,
-          method: entry.method,
-          headers: replayHeadersFromEntry(entry),
-          body: entry.requestBodyPreview,
-          contentType: (() => {
-            const requestHeaders = entry.requestHeaders ?? {};
-            const contentTypeHeader = Object.keys(requestHeaders).find((name) => name.toLowerCase() === 'content-type');
-            return contentTypeHeader ? requestHeaders[contentTypeHeader] : undefined;
-          })(),
+          url: replayable.entry.url,
+          method: replayable.entry.method,
+          headers: replayHeadersFromRequestHeaders(replayable.headers),
+          body: replayable.body,
+          contentType: replayable.contentType,
           mode: params.mode,
           timeoutMs: params.timeoutMs,
           maxBytes: params.maxBytes,
+          fullResponse: params.fullResponse === true,
+          auth: params.auth,
           scope: 'current'
         });
         const frameResult = replayed.result ?? replayed.results?.find((candidate) => candidate.value || candidate.error);
@@ -2329,7 +2544,13 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         }
         const first = frameResult?.value;
         if (!first) {
-          throw toError('E_EXECUTION', 'network replay returned no response payload');
+          return {
+            url: replayable.entry.url,
+            status: 0,
+            ok: false,
+            headers: {},
+            degradedReason: 'network replay returned no response payload'
+          } satisfies PageFetchResponse;
         }
         return params.withSchema === 'auto' && params.mode === 'json'
           ? await enrichReplayWithSchema(tab.id!, String(params.id ?? ''), first)

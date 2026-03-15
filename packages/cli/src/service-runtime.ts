@@ -118,11 +118,52 @@ const STATIC_METHODS = new Set<MethodName>([
   'page.reload',
   'page.wait',
   'page.snapshot',
+  'page.verify',
   'element.click',
   'element.type',
   'element.scroll',
   'debug.getConsole'
 ]);
+
+const CONTEXT_RECOVERY_METHODS = new Set<MethodName>([
+  'context.get',
+  'page.wait',
+  'page.snapshot',
+  'page.verify',
+  'page.title',
+  'page.url',
+  'page.text',
+  'page.eval',
+  'page.extract',
+  'page.fetch',
+  'page.dom',
+  'page.accessibilityTree',
+  'page.viewport',
+  'page.metrics',
+  'page.freshness',
+  'network.list',
+  'network.get',
+  'network.search',
+  'network.replay',
+  'network.waitFor',
+  'table.list',
+  'table.schema',
+  'table.rows',
+  'table.export',
+  'inspect.pageData',
+  'inspect.liveUpdates',
+  'inspect.freshness',
+  'capture.snapshot',
+  'capture.har',
+  'debug.dumpState'
+]);
+
+const EMPTY_ACTION_SUMMARY: NonNullable<PersistedPageSnapshot['actionSummary']> = {
+  clickable: [],
+  inputs: [],
+  highRisk: [],
+  recommendedNextActions: []
+};
 
 const SUPPORTED_METHODS = new Set<MethodName>([
   ...STATIC_METHODS,
@@ -170,6 +211,11 @@ interface ResolveSessionTargetOptions {
   autoEnsure?: boolean;
 }
 
+interface ContextRestoreOutcome {
+  snapshot: SessionContextSnapshot;
+  recovered: boolean;
+}
+
 function shouldSkipInternalTrace(args: Record<string, unknown>): boolean {
   return args.__internalNoTrace === true;
 }
@@ -192,7 +238,7 @@ function redactTraceParams(method: string, params: unknown): unknown {
 
 function redactTraceResult(method: string, result: unknown): unknown {
   const redacted = redactUnknown(result);
-  if (method === 'page.snapshot') {
+  if (method === 'page.snapshot' || method === 'page.verify') {
     const payload = asRecord(redacted);
     const nextPayload = { ...payload };
     if (typeof payload.imageBase64 === 'string') {
@@ -781,24 +827,32 @@ export class BakService {
     tabId: number | undefined,
     options: {
       includeBase64: boolean;
+      capture?: boolean;
       annotate?: boolean;
       diffWith?: string;
     },
-    traceId: string
+    traceId: string,
+    contextRecovered = false
   ): Promise<PersistedPageSnapshot> {
-    const snapshot = await this.driver.pageSnapshot(tabId, true);
+    const snapshot = await this.driver.pageSnapshot(tabId, {
+      includeBase64: true,
+      capture: options.capture !== false
+    });
     const redactedElements = redactElements(snapshot.elements);
     const snapshotDir = ensureDir(join(this.dataDir, 'snapshots', traceId));
     const timestamp = Date.now();
-    const imagePath = join(snapshotDir, `${timestamp}_viewport.png`);
     const elementsPath = join(snapshotDir, `${timestamp}_elements.json`);
-    const viewport = parsePngDimensions(snapshot.imageBase64);
+    const viewport = typeof snapshot.imageBase64 === 'string' ? parsePngDimensions(snapshot.imageBase64) : null;
     const { refs, actionSummary } = buildSnapshotPresentation(redactedElements, { viewport });
-    writeFileSync(imagePath, Buffer.from(snapshot.imageBase64, 'base64'));
     writeFileSync(elementsPath, `${JSON.stringify(redactedElements, null, 2)}\n`, 'utf8');
+    let imagePath: string | undefined;
+    if (typeof snapshot.imageBase64 === 'string' && snapshot.imageBase64.length > 0) {
+      imagePath = join(snapshotDir, `${timestamp}_viewport.png`);
+      writeFileSync(imagePath, Buffer.from(snapshot.imageBase64, 'base64'));
+    }
     let annotatedImagePath: string | undefined;
     let annotatedImageBase64: string | undefined;
-    if (options.annotate === true) {
+    if (options.annotate === true && typeof snapshot.imageBase64 === 'string' && snapshot.imageBase64.length > 0) {
       const annotatedSvg = renderAnnotatedSnapshotSvg(snapshot.imageBase64, refs, viewport);
       annotatedImagePath = join(snapshotDir, `${timestamp}_annotated.svg`);
       writeFileSync(annotatedImagePath, annotatedSvg, 'utf8');
@@ -814,15 +868,18 @@ export class BakService {
 
     return {
       traceId,
+      captureStatus: snapshot.captureStatus,
+      captureError: snapshot.captureError,
       imagePath,
       elementsPath,
-      imageBase64: options.includeBase64 ? snapshot.imageBase64 : undefined,
+      imageBase64: options.includeBase64 && typeof snapshot.imageBase64 === 'string' ? snapshot.imageBase64 : undefined,
       elementCount: redactedElements.length,
       refs,
       annotatedImagePath,
       annotatedImageBase64,
       actionSummary,
-      diff
+      diff,
+      contextRecovered
     };
   }
 
@@ -868,14 +925,41 @@ export class BakService {
     return next;
   }
 
-  private async applyStoredContext(sessionId: string, tabId: number): Promise<SessionContextSnapshot> {
+  private async resetRecoveredContext(sessionId: string, tabId: number): Promise<SessionContextSnapshot> {
+    this.clearTabContext(sessionId, tabId);
+    try {
+      const result = await this.driver.rawRequest('context.reset', { tabId });
+      return this.updateContextFromResult(sessionId, tabId, 'context.reset', result);
+    } catch {
+      return this.clearTabContext(sessionId, tabId);
+    }
+  }
+
+  private async applyStoredContext(
+    sessionId: string,
+    tabId: number,
+    options: { recover?: boolean } = {}
+  ): Promise<ContextRestoreOutcome> {
     const snapshot = this.buildSessionContext(sessionId, tabId);
-    const result = await this.driver.rawRequest('context.set', {
-      tabId,
-      framePath: snapshot.framePath,
-      shadowPath: snapshot.shadowPath
-    });
-    return this.updateContextFromResult(sessionId, tabId, 'context.set', result);
+    try {
+      const result = await this.driver.rawRequest('context.set', {
+        tabId,
+        framePath: snapshot.framePath,
+        shadowPath: snapshot.shadowPath
+      });
+      return {
+        snapshot: this.updateContextFromResult(sessionId, tabId, 'context.set', result),
+        recovered: false
+      };
+    } catch (error) {
+      if (!options.recover || !this.isRecoverableContextRestoreError(error)) {
+        throw error;
+      }
+      return {
+        snapshot: await this.resetRecoveredContext(sessionId, tabId),
+        recovered: true
+      };
+    }
   }
 
   private async listSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['sessionBindingListTabs']>>> {
@@ -925,7 +1009,88 @@ export class BakService {
     if (!referencesContextPath) {
       return false;
     }
-    return error.code === 'E_NOT_FOUND' || error.code === 'E_NOT_READY' || error.code === 'E_PERMISSION';
+    return error.code === 'E_NOT_FOUND' || error.code === 'E_NOT_READY' || error.code === 'E_PERMISSION' || error.code === 'E_TIMEOUT';
+  }
+
+  private async prepareStoredContext(sessionId: string, tabId: number, methodName: MethodName): Promise<boolean> {
+    const outcome = await this.applyStoredContext(sessionId, tabId, {
+      recover: CONTEXT_RECOVERY_METHODS.has(methodName)
+    });
+    return outcome.recovered;
+  }
+
+  private withContextRecovery<TResult>(result: TResult, recovered: boolean): TResult {
+    if (!recovered || typeof result !== 'object' || result === null || Array.isArray(result)) {
+      return result;
+    }
+    return {
+      ...(result as Record<string, unknown>),
+      contextRecovered: true
+    } as TResult;
+  }
+
+  private async buildPageVerify(
+    sessionId: string,
+    tabId: number | undefined,
+    traceId: string,
+    params: Record<string, unknown>,
+    contextRecovered: boolean
+  ): Promise<MethodResult<'page.verify'>> {
+    const [titleResult, urlResult, freshnessResult, liveUpdatesRaw, snapshot] = await Promise.all([
+      this.driver.rawRequest<{ title?: string }>('page.title', { tabId }),
+      this.driver.rawRequest<{ url?: string }>('page.url', { tabId }),
+      this.driver.rawRequest<MethodResult<'page.freshness'>>('page.freshness', {
+        tabId,
+        patterns: Array.isArray(params.patterns) ? params.patterns : undefined
+      }),
+      this.driver.rawRequest('inspect.liveUpdates', { tabId }),
+      this.persistPageSnapshot(
+        tabId,
+        {
+          includeBase64: params.includeBase64 === true,
+          capture: params.capture === true,
+          annotate: params.annotate === true
+        },
+        traceId,
+        contextRecovered
+      )
+    ]);
+    const liveUpdates = asRecord(liveUpdatesRaw);
+    const recentRequestIds = Array.isArray(liveUpdates.recentNetwork)
+      ? liveUpdates.recentNetwork
+          .map((entry) => asRecord(entry).id)
+          .filter((id): id is string => typeof id === 'string')
+      : [];
+    return {
+      title: typeof titleResult.title === 'string' ? titleResult.title : '',
+      url: typeof urlResult.url === 'string' ? urlResult.url : '',
+      context: this.buildSessionContext(sessionId, tabId),
+      elementCount: snapshot.elementCount,
+      refs: snapshot.refs ?? [],
+      actionSummary: snapshot.actionSummary ?? EMPTY_ACTION_SUMMARY,
+      freshness: freshnessResult,
+      networkHeartbeat: {
+        latestNetworkTimestamp: freshnessResult.latestNetworkTimestamp ?? null,
+        networkCount: typeof liveUpdates.networkCount === 'number' ? liveUpdates.networkCount : 0,
+        networkCadence:
+          typeof liveUpdates.networkCadence === 'object' && liveUpdates.networkCadence !== null
+            ? (liveUpdates.networkCadence as MethodResult<'inspect.liveUpdates'>['networkCadence'])
+            : {
+                sampleCount: 0,
+                classification: 'none',
+                averageIntervalMs: null,
+                medianIntervalMs: null,
+                latestGapMs: null,
+                endpoints: []
+              },
+        recentRequestIds
+      },
+      captureStatus: snapshot.captureStatus,
+      captureError: snapshot.captureError,
+      imageBase64: snapshot.imageBase64,
+      annotatedImageBase64: snapshot.annotatedImageBase64,
+      contextRecovered
+    };
   }
 
   private async safeListSessionTabs(session: SessionState): Promise<Awaited<ReturnType<BrowserDriver['sessionBindingListTabs']>> | null> {
@@ -1347,8 +1512,7 @@ export class BakService {
             if (!this.isRecoverableContextRestoreError(error)) {
               throw error;
             }
-            // The binding changed successfully; clear the stale snapshot so later calls can rebuild it.
-            this.clearTabContext(sessionId, result.tab.id);
+            await this.resetRecoveredContext(sessionId, result.tab.id);
           }
           const browser = this.hydrateSessionBrowserState(sessionId, result.browser);
           return {
@@ -1469,15 +1633,17 @@ export class BakService {
         const session = this.getSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
           const target = await this.resolveSessionTarget(sessionId, args);
-          if (typeof target.tabId === 'number') {
-            await this.applyStoredContext(sessionId, target.tabId);
-          }
-          return (await this.driver.pageWait(
-            args.mode as 'selector' | 'text' | 'url',
-            String(args.value ?? ''),
-            typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
-            target.tabId
-          )) as MethodResult<TMethod>;
+          const contextRecovered =
+            typeof target.tabId === 'number' ? await this.prepareStoredContext(sessionId, target.tabId, 'page.wait') : false;
+          return this.withContextRecovery(
+            (await this.driver.pageWait(
+              args.mode as 'selector' | 'text' | 'url',
+              String(args.value ?? ''),
+              typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+              target.tabId
+            )) as MethodResult<TMethod>,
+            contextRecovered
+          );
         });
       }
       case 'page.snapshot': {
@@ -1487,18 +1653,31 @@ export class BakService {
         const session = this.getSession(sessionId);
         return this.withTrace(session.traceId, method, params, async () => {
           const target = await this.resolveSessionTarget(sessionId, args);
-          if (typeof target.tabId === 'number') {
-            await this.applyStoredContext(sessionId, target.tabId);
-          }
+          const contextRecovered =
+            typeof target.tabId === 'number' ? await this.prepareStoredContext(sessionId, target.tabId, 'page.snapshot') : false;
           return (await this.persistPageSnapshot(
             target.tabId,
             {
               includeBase64: args.includeBase64 === true,
+              capture: args.capture !== false,
               annotate: args.annotate === true,
               diffWith: typeof args.diffWith === 'string' ? args.diffWith : undefined
             },
-            session.traceId
+            session.traceId,
+            contextRecovered
           )) as MethodResult<TMethod>;
+        });
+      }
+      case 'page.verify': {
+        this.ensurePairing();
+        this.ensureConnected();
+        const sessionId = this.requireSessionId(args);
+        const session = this.getSession(sessionId);
+        return this.withTrace(session.traceId, method, params, async () => {
+          const target = await this.resolveSessionTarget(sessionId, args);
+          const contextRecovered =
+            typeof target.tabId === 'number' ? await this.prepareStoredContext(sessionId, target.tabId, 'page.verify') : false;
+          return await this.buildPageVerify(sessionId, target.tabId, session.traceId, args, contextRecovered);
         });
       }
       case 'element.click': {
@@ -1588,19 +1767,20 @@ export class BakService {
       const target = await this.resolveSessionTarget(sessionId, args, {
         allowMissing: methodName === 'context.get'
       });
+      let contextRecovered = false;
       if (
         typeof target.tabId === 'number' &&
         methodName !== 'context.set' &&
         methodName !== 'context.get' &&
         methodName !== 'context.reset'
       ) {
-        await this.applyStoredContext(sessionId, target.tabId);
+        contextRecovered = await this.prepareStoredContext(sessionId, target.tabId, methodName);
       }
       if (methodName === 'context.get') {
         if (typeof target.tabId === 'number') {
-          await this.applyStoredContext(sessionId, target.tabId);
+          contextRecovered = await this.prepareStoredContext(sessionId, target.tabId, methodName);
         }
-        return this.buildSessionContext(sessionId, target.tabId) as MethodResult<TMethod>;
+        return this.withContextRecovery(this.buildSessionContext(sessionId, target.tabId) as MethodResult<TMethod>, contextRecovered);
       }
 
       const forwardArgs: Record<string, unknown> = { ...args };
@@ -1679,18 +1859,20 @@ export class BakService {
         typeof target.tabId === 'number' &&
         args.includeSnapshot === true
       ) {
-        return {
+        return this.withContextRecovery({
           ...asRecord(result),
           snapshot: await this.persistPageSnapshot(
             target.tabId,
             {
               includeBase64: args.includeSnapshotBase64 === true,
+              capture: true,
               annotate: args.annotateSnapshot === true,
               diffWith: typeof args.snapshotDiffWith === 'string' ? args.snapshotDiffWith : undefined
             },
-            session.traceId
+            session.traceId,
+            contextRecovered
           )
-        } as MethodResult<TMethod>;
+        } as MethodResult<TMethod>, contextRecovered);
       }
       if (
         (methodName === 'context.set' ||
@@ -1709,7 +1891,7 @@ export class BakService {
           } as MethodResult<TMethod>;
         }
       }
-      return result as MethodResult<TMethod>;
+      return this.withContextRecovery(result as MethodResult<TMethod>, contextRecovered);
     });
   }
 }

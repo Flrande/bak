@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
-import type { Locator } from '@flrande/bak-protocol';
+import type { Locator, PageFetchResponse } from '@flrande/bak-protocol';
 import { readCliVersion } from './cli-version.js';
 import { callRpc } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
@@ -49,6 +49,10 @@ const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 
 function printResult(result: unknown): void {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseJson(value: string | undefined, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -150,6 +154,17 @@ function parseScope(value: unknown): 'current' | 'main' | 'all-frames' | undefin
     return scope;
   }
   throw new Error('scope must be one of: current, main, all-frames');
+}
+
+function parseAuthMode(value: unknown): 'auto' | 'manual' | 'off' | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const mode = String(value).trim();
+  if (mode === 'auto' || mode === 'manual' || mode === 'off') {
+    return mode;
+  }
+  throw new Error('auth must be one of: auto, manual, off');
 }
 
 function parseStringList(value: unknown): string[] | undefined {
@@ -254,6 +269,98 @@ function targetParams(options: { tabId?: unknown; sessionId?: unknown; clientNam
   };
 }
 
+function writeTextFile(path: string, value: string): { outPath: string; bytes: number } {
+  const outPath = resolve(path);
+  writeFileSync(outPath, value, 'utf8');
+  return {
+    outPath,
+    bytes: Buffer.byteLength(value, 'utf8')
+  };
+}
+
+export function extractFetchLikeResponse(result: unknown): {
+  response: PageFetchResponse;
+  scope?: string;
+  frameUrl?: string;
+  framePath?: string[];
+} | null {
+  if (
+    isRecord(result) &&
+    typeof result.url === 'string' &&
+    typeof result.status === 'number' &&
+    typeof result.ok === 'boolean' &&
+    isRecord(result.headers)
+  ) {
+    return {
+      response: result as unknown as PageFetchResponse
+    };
+  }
+  if (!isRecord(result)) {
+    return null;
+  }
+  const scope = typeof result.scope === 'string' ? result.scope : undefined;
+  const frame =
+    (isRecord(result.result) ? result.result : null) ??
+    (Array.isArray(result.results) ? result.results.find((entry) => isRecord(entry) && isRecord(entry.value)) : null);
+  if (!isRecord(frame) || !isRecord(frame.value)) {
+    return null;
+  }
+  if (
+    typeof frame.value.url !== 'string' ||
+    typeof frame.value.status !== 'number' ||
+    typeof frame.value.ok !== 'boolean' ||
+    !isRecord(frame.value.headers)
+  ) {
+    return null;
+  }
+  return {
+    response: frame.value as unknown as PageFetchResponse,
+    scope,
+    frameUrl: typeof frame.url === 'string' ? frame.url : undefined,
+    framePath: Array.isArray(frame.framePath) ? frame.framePath.filter((entry): entry is string => typeof entry === 'string') : undefined
+  };
+}
+
+export function writeFetchLikeArtifact(
+  path: string,
+  result: unknown
+): {
+  outPath: string;
+  bytes: number;
+  format: 'json' | 'text';
+  response?: PageFetchResponse;
+  scope?: string;
+  frameUrl?: string;
+  framePath?: string[];
+} {
+  const extracted = extractFetchLikeResponse(result);
+  if (!extracted) {
+    return {
+      ...writeJsonFile(path, result),
+      format: 'json'
+    };
+  }
+  if (extracted.response.json !== undefined) {
+    return {
+      ...writeJsonFile(path, extracted.response.json),
+      format: 'json',
+      ...extracted
+    };
+  }
+  if (typeof extracted.response.bodyText === 'string') {
+    return {
+      ...writeTextFile(path, extracted.response.bodyText),
+      format: 'text',
+      ...extracted
+    };
+  }
+  return {
+    ...writeJsonFile(path, extracted.response),
+    format: 'json',
+    ...extracted
+  };
+}
+
 const AUTO_CREATE_SESSION_METHODS = new Set<string>([
   'page.goto',
   'page.back',
@@ -261,6 +368,7 @@ const AUTO_CREATE_SESSION_METHODS = new Set<string>([
   'page.reload',
   'page.wait',
   'page.snapshot',
+  'page.verify',
   'page.title',
   'page.url',
   'page.text',
@@ -1168,13 +1276,14 @@ addStructuredHelp(page, {
   notes: [
     'Page reads reflect the active frame or shadow context, not always the top-level tab document.',
     'Use page eval, extract, and fetch when important runtime data lives in script state instead of visible DOM.',
+    'Prefer page verify for a resilient state check before continuing; use page snapshot when you specifically need viewport imagery.',
     'Use bak call for protocol-only navigation helpers such as page.back, page.forward, page.reload, and page.scrollTo.'
   ],
   examples: [
     'bak page goto "https://example.com" --rpc-ws-port 17374',
     'bak page wait --mode text --value "Example Domain" --rpc-ws-port 17374',
     'bak page extract --path "market_data.QQQ" --rpc-ws-port 17374',
-    'bak page snapshot --include-base64 --annotate --rpc-ws-port 17374'
+    'bak page verify --capture --annotate --rpc-ws-port 17374'
   ]
 });
 addStructuredHelp(addRpcPortOption(addTabOption(page.command('goto <url>').description('Navigate the target tab to a URL'))), {
@@ -1214,6 +1323,15 @@ for (const [name, method, description] of [
         'bak page snapshot --diff-with .\\snapshots\\previous_elements.json --rpc-ws-port 17374'
       ]
     });
+  } else if (name === 'text') {
+    command.option('--max-chunks <count>', 'max number of visible text chunks to return');
+    command.option('--chunk-size <chars>', 'target chunk size in characters');
+    addStructuredHelp(command, {
+      examples: [
+        'bak page text --rpc-ws-port 17374',
+        'bak page text --max-chunks 12 --chunk-size 1200 --rpc-ws-port 17374'
+      ]
+    });
   } else {
     addStructuredHelp(command, {
       examples: [`bak page ${name} --rpc-ws-port 17374`]
@@ -1226,12 +1344,49 @@ for (const [name, method, description] of [
         ...targetParams(options),
         includeBase64: options.includeBase64 === true ? true : undefined,
         annotate: options.annotate === true ? true : undefined,
-        diffWith: options.diffWith ? String(options.diffWith) : undefined
+        diffWith: options.diffWith ? String(options.diffWith) : undefined,
+        maxChunks: parseOptionalPositiveInt(options.maxChunks, 'max-chunks'),
+        chunkSize: parseOptionalPositiveInt(options.chunkSize, 'chunk-size')
       },
       parseRpcPort(options)
     )
   );
 }
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('verify')
+        .description('Verify page state with title, URL, context, freshness, refs, and optional screenshot capture')
+        .option('--capture', 'capture a viewport image in addition to structural verification', false)
+        .option('--include-base64', 'include imageBase64 when --capture is enabled', false)
+        .option('--annotate', 'include annotatedImageBase64 with numbered refs when --capture is enabled', false)
+        .option('--patterns <pattern...>', 'additional timestamp regex patterns to scan')
+    )
+  ),
+  {
+    notes: [
+      'page verify is the preferred preflight command when you want to confirm state without blocking on screenshot readback.',
+      'Use --capture only when you need the image payload; refs, action summary, freshness, and network heartbeat are returned either way.'
+    ],
+    examples: [
+      'bak page verify --rpc-ws-port 17374',
+      'bak page verify --capture --annotate --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'page.verify',
+    {
+      ...targetParams(options),
+      capture: options.capture === true,
+      includeBase64: options.includeBase64 === true,
+      annotate: options.annotate === true,
+      patterns: parseStringList(options.patterns)
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(addRpcPortOption(addTabOption(page.command('viewport').description('Resize or inspect the page viewport').option('--width <width>', 'width').option('--height <height>', 'height'))), {
   examples: [
     'bak page viewport --rpc-ws-port 17374',
@@ -1322,6 +1477,8 @@ addStructuredHelp(
         .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
         .option('--scope <scope>', 'current|main|all-frames')
         .option('--max-bytes <bytes>', 'max response body bytes to retain')
+        .option('--auth <mode>', 'auto|manual|off', 'auto')
+        .option('--out <path>', 'write the fetch payload to a file')
         .option('--requires-confirm', 'confirm that this request is safe to send from the page context', false)
     )
   ),
@@ -1332,11 +1489,11 @@ addStructuredHelp(
     ],
     examples: [
       'bak page fetch --url "https://example.com/api/data" --method POST --body "{}" --content-type "application/json" --rpc-ws-port 17374',
-      'bak page fetch --url "https://example.com/feed" --mode json --header "Accept: application/json" --rpc-ws-port 17374'
+      'bak page fetch --url "https://example.com/feed" --mode json --auth auto --header "Accept: application/json" --rpc-ws-port 17374'
     ]
   }
-).action(async (options) =>
-  invoke(
+).action(async (options) => {
+  const result = await callWithRuntime(
     'page.fetch',
     {
       ...targetParams(options),
@@ -1349,11 +1506,31 @@ addStructuredHelp(
       timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
       scope: parseScope(options.scope),
       maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes'),
+      fullResponse: options.out ? true : undefined,
+      auth: parseAuthMode(options.auth),
       requiresConfirm: options.requiresConfirm === true
     },
     parseRpcPort(options)
-  )
-);
+  );
+  if (options.out) {
+    const artifact = writeFetchLikeArtifact(String(options.out), result);
+    printResult({
+      ok: true,
+      format: artifact.format,
+      outPath: artifact.outPath,
+      bytes: artifact.bytes,
+      status: artifact.response?.status,
+      contentType: artifact.response?.contentType,
+      truncated: artifact.response?.truncated,
+      degradedReason: artifact.response?.degradedReason,
+      scope: artifact.scope,
+      frameUrl: artifact.frameUrl,
+      framePath: artifact.framePath
+    });
+    return;
+  }
+  printResult(result);
+});
 addStructuredHelp(
   addRpcPortOption(
     addTabOption(
@@ -1526,17 +1703,19 @@ addStructuredHelp(
         .option('--with-schema <mode>', 'auto')
         .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
         .option('--max-bytes <bytes>', 'max response body bytes to retain')
+        .option('--auth <mode>', 'auto|manual|off', 'auto')
+        .option('--out <path>', 'write the replay payload to a file')
         .option('--requires-confirm', 'confirm that replaying the captured request is safe', false)
     )
   ),
   {
     examples: [
       'bak network replay --request-id req_123 --rpc-ws-port 17374',
-      'bak network replay --request-id req_123 --mode json --with-schema auto --max-bytes 8192 --rpc-ws-port 17374'
+      'bak network replay --request-id req_123 --mode json --with-schema auto --auth auto --max-bytes 8192 --rpc-ws-port 17374'
     ]
   }
-).action(async (options) =>
-  invoke(
+).action(async (options) => {
+  const result = await callWithRuntime(
     'network.replay',
     {
       ...targetParams(options),
@@ -1545,11 +1724,28 @@ addStructuredHelp(
       withSchema: options.withSchema ? String(options.withSchema) : undefined,
       timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
       maxBytes: parseOptionalPositiveInt(options.maxBytes, 'max-bytes'),
+      fullResponse: options.out ? true : undefined,
+      auth: parseAuthMode(options.auth),
       requiresConfirm: options.requiresConfirm === true
     },
     parseRpcPort(options)
-  )
-);
+  );
+  if (options.out) {
+    const artifact = writeFetchLikeArtifact(String(options.out), result);
+    printResult({
+      ok: true,
+      format: artifact.format,
+      outPath: artifact.outPath,
+      bytes: artifact.bytes,
+      status: artifact.response?.status,
+      contentType: artifact.response?.contentType,
+      truncated: artifact.response?.truncated,
+      degradedReason: artifact.response?.degradedReason
+    });
+    return;
+  }
+  printResult(result);
+});
 
 const table = program
   .command('table')
@@ -1562,8 +1758,8 @@ addStructuredHelp(table, {
   ],
   examples: [
     'bak table list --rpc-ws-port 17374',
-    'bak table rows --table table-1 --all --rpc-ws-port 17374',
-    'bak table export --table table-1 --out .\\table.json --rpc-ws-port 17374'
+    'bak table rows --table html:1 --all --rpc-ws-port 17374',
+    'bak table export --table html:1 --out .\\table.json --rpc-ws-port 17374'
   ]
 });
 addStructuredHelp(addRpcPortOption(addTabOption(table.command('list').description('List candidate tables or grid-like regions on the page'))), {
@@ -1572,7 +1768,7 @@ addStructuredHelp(addRpcPortOption(addTabOption(table.command('list').descriptio
 addStructuredHelp(
   addRpcPortOption(addTabOption(table.command('schema').description('Read the detected schema for a table or grid').requiredOption('--table <table>', 'table id from table list'))),
   {
-    examples: ['bak table schema --table table-1 --rpc-ws-port 17374']
+    examples: ['bak table schema --table html:1 --rpc-ws-port 17374']
   }
 ).action(async (options) =>
   invoke(
@@ -1598,8 +1794,8 @@ addStructuredHelp(
   ),
   {
     examples: [
-      'bak table rows --table table-1 --limit 50 --rpc-ws-port 17374',
-      'bak table rows --table table-1 --all --max-rows 10000 --rpc-ws-port 17374'
+      'bak table rows --table html:1 --limit 50 --rpc-ws-port 17374',
+      'bak table rows --table html:1 --all --max-rows 10000 --rpc-ws-port 17374'
     ]
   }
 ).action(async (options) =>
@@ -1630,9 +1826,9 @@ addStructuredHelp(
   ),
   {
     examples: [
-      'bak table export --table table-1 --format json --rpc-ws-port 17374',
-      'bak table export --table table-1 --all --max-rows 10000 --rpc-ws-port 17374',
-      'bak table export --table table-1 --out .\\table.json --rpc-ws-port 17374'
+      'bak table export --table html:1 --format json --rpc-ws-port 17374',
+      'bak table export --table html:1 --all --max-rows 10000 --rpc-ws-port 17374',
+      'bak table export --table html:1 --out .\\table.json --rpc-ws-port 17374'
     ]
   }
 ).action(async (options) => {

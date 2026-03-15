@@ -15,6 +15,26 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
+function readCookies(request: IncomingMessage): Record<string, string> {
+  const cookieHeader = Array.isArray(request.headers.cookie) ? request.headers.cookie.join(';') : request.headers.cookie ?? '';
+  return cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((accumulator, part) => {
+      const separator = part.indexOf('=');
+      if (separator <= 0) {
+        return accumulator;
+      }
+      const name = part.slice(0, separator).trim();
+      const value = part.slice(separator + 1).trim();
+      if (name) {
+        accumulator[name] = value;
+      }
+      return accumulator;
+    }, {});
+}
+
 async function handleApiRequest(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
   if (!request.url) {
     return false;
@@ -77,6 +97,25 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
     return true;
   }
 
+  if (url.pathname === '/api/protected-core') {
+    const cookies = readCookies(request);
+    const cookieToken = cookies['XSRF-TOKEN'] ? decodeURIComponent(cookies['XSRF-TOKEN']) : null;
+    const headerToken = request.headers['x-xsrf-token'];
+    const resolvedHeaderToken = Array.isArray(headerToken) ? headerToken[0] ?? null : headerToken ?? null;
+    const authorized = Boolean(cookieToken && resolvedHeaderToken && cookieToken === resolvedHeaderToken);
+    response.statusCode = authorized ? 200 : 419;
+    response.end(
+      JSON.stringify({
+        ok: authorized,
+        symbol: url.searchParams.get('symbol') ?? 'QQQ',
+        cookieToken,
+        headerToken: resolvedHeaderToken,
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return true;
+  }
+
   if (url.pathname === '/api/table-rows') {
     response.statusCode = 200;
     response.end(
@@ -85,6 +124,25 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
         [2, 'Beta', 'Delete'],
         [3, 'Gamma', 'Delete']
       ])
+    );
+    return true;
+  }
+
+  if (url.pathname === '/api/large-json') {
+    const rows = Array.from({ length: 240 }, (_, index) => ({
+      id: index + 1,
+      symbol: index % 2 === 0 ? 'QQQ' : 'SPY',
+      side: index % 3 === 0 ? 'Buy' : 'Sell',
+      premium: 1000 + index * 17,
+      updatedAt: `2026-03-${String((index % 9) + 1).padStart(2, '0')}`,
+      note: `Large payload row ${index + 1} for pagination and summary validation`
+    }));
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify({
+        rows,
+        generatedAt: new Date().toISOString()
+      })
     );
     return true;
   }

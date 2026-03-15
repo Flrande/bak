@@ -117,8 +117,9 @@ bak page url --client-name $clientName --rpc-ws-port 17374
 ## Read And Debug
 
 ```powershell
+bak page verify --client-name $clientName --capture --annotate --rpc-ws-port 17374
 bak page snapshot --client-name $clientName --include-base64 --annotate --rpc-ws-port 17374
-bak page text --client-name $clientName --rpc-ws-port 17374
+bak page text --client-name $clientName --max-chunks 8 --chunk-size 4000 --rpc-ws-port 17374
 bak page dom --client-name $clientName --rpc-ws-port 17374
 bak page a11y --client-name $clientName --rpc-ws-port 17374
 bak page metrics --client-name $clientName --rpc-ws-port 17374
@@ -126,7 +127,7 @@ bak page viewport --client-name $clientName --rpc-ws-port 17374
 bak inspect page-data --client-name $clientName --rpc-ws-port 17374
 bak page eval --client-name $clientName --expr "typeof table_data !== 'undefined' ? table_data.length : null" --rpc-ws-port 17374
 bak page extract --client-name $clientName --path "market_data.QQQ.quotes.changePercent" --resolver auto --rpc-ws-port 17374
-bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
+bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --rpc-ws-port 17374
 bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak debug console --client-name $clientName --limit 20 --rpc-ws-port 17374
 bak debug dump-state --client-name $clientName --section dom visible-text network-summary --include-snapshot --annotate-snapshot --rpc-ws-port 17374
@@ -134,11 +135,13 @@ bak network list --client-name $clientName --limit 20 --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
 bak network wait --client-name $clientName --url-includes "/api/save" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
-bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
+bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --rpc-ws-port 17374
 bak network clear --client-name $clientName --rpc-ws-port 17374
 ```
 
-Use `bak page snapshot --annotate` when you want numbered `@eN` refs that line up with the returned `refs[]` payload and the annotated image. Use `--diff-with` against an older elements JSON, page snapshot JSON, or debug dump JSON when you need a structured before/after interaction diff instead of a raw screenshot.
+Start with `bak page verify` when you need to confirm page state before continuing. It returns `title`, `url`, `context`, `refs`, `actionSummary`, freshness, and network heartbeat data, and `--capture` adds an optional screenshot layer. If screenshot capture fails, `page verify` degrades instead of aborting the whole confirmation flow. Keep `bak page snapshot --annotate` for lower-level image capture, base64 export, or diff-heavy workflows. Use `--diff-with` against an older elements JSON, page snapshot JSON, or debug dump JSON when you need a structured before/after interaction diff instead of a raw screenshot.
+
+Use `bak page text --max-chunks <count> --chunk-size <chars>` when a long page would otherwise overwhelm a single text read. Use `bak page fetch --auth auto` and `bak network replay --auth auto` for same-origin protected APIs so bak can auto-apply common CSRF or XSRF headers from the live page context. Add `--out <path>` on fetch or replay when you want the full payload on disk instead of a large inline body.
 
 Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
 
@@ -197,10 +200,10 @@ Use `bak table ...` when a page renders only part of a table or grid:
 
 ```powershell
 bak table list --client-name $clientName --rpc-ws-port 17374
-bak table schema --client-name $clientName --table table-1 --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --limit 100 --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
-bak table export --client-name $clientName --table table-1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
+bak table schema --client-name $clientName --table html:1 --rpc-ws-port 17374
+bak table rows --client-name $clientName --table html:1 --limit 100 --rpc-ws-port 17374
+bak table rows --client-name $clientName --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table export --client-name $clientName --table html:1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
 ```
 
 Use `bak inspect ...` first when you do not yet know whether the page data lives in globals, tables, inline JSON, or recent requests. `inspect page-data` now surfaces structured `dataSources`, `sourceMappings`, and `recommendedNextActions`, while `table list/schema/rows/export` annotate each table with `intelligence` or `extraction` metadata so you can tell whether the result is complete or only the visible slice. `inspect live-updates` reports network cadence even when the page is not using an obvious interval timer. `page freshness` and `inspect freshness` help separate data timestamps from stale inline or UI hints.
@@ -210,7 +213,7 @@ Use `bak inspect ...` for discovery and `bak capture ...` for offline artifacts:
 ```powershell
 bak inspect page-data --client-name $clientName --rpc-ws-port 17374
 bak table list --client-name $clientName --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table rows --client-name $clientName --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 bak inspect freshness --client-name $clientName --patterns "20\d{2}-\d{2}-\d{2}" --rpc-ws-port 17374
 bak capture snapshot --client-name $clientName --out .\session.json --rpc-ws-port 17374
@@ -249,6 +252,7 @@ $null = bak session resolve --client-name $clientName --rpc-ws-port 17374
 bak session ensure --client-name $clientName --rpc-ws-port 17374
 bak session open-tab --client-name $clientName --url "https://example.com" --active --rpc-ws-port 17374
 bak page wait --client-name $clientName --mode text --value "Example Domain" --rpc-ws-port 17374
+bak page verify --client-name $clientName --capture --annotate --rpc-ws-port 17374
 bak element click --client-name $clientName --css "a" --rpc-ws-port 17374
 bak debug dump-state --client-name $clientName --include-snapshot --rpc-ws-port 17374
 ```
@@ -258,16 +262,18 @@ bak debug dump-state --client-name $clientName --include-snapshot --rpc-ws-port 
 When the visible page is incomplete, use the workflow below:
 
 ```powershell
+bak page verify --client-name $clientName --rpc-ws-port 17374
 bak inspect page-data --client-name $clientName --rpc-ws-port 17374
 bak table list --client-name $clientName --rpc-ws-port 17374
 bak page extract --client-name $clientName --path "market_data.QQQ.quotes.changePercent" --resolver auto --rpc-ws-port 17374
 bak page eval --client-name $clientName --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
-bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --rpc-ws-port 17374
-bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --rpc-ws-port 17374
-bak table rows --client-name $clientName --table table-1 --all --max-rows 10000 --rpc-ws-port 17374
-bak table export --client-name $clientName --table table-1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
+bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --out .\api-data.json --rpc-ws-port 17374
+bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --out .\replay.json --rpc-ws-port 17374
+bak table rows --client-name $clientName --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
+bak table export --client-name $clientName --table html:1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374
+bak page text --client-name $clientName --max-chunks 8 --chunk-size 4000 --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 bak page freshness --client-name $clientName --patterns "20\d{2}-\d{2}-\d{2}" "Today" "yesterday" --rpc-ws-port 17374
 bak capture snapshot --client-name $clientName --out .\tradytics-session.json --rpc-ws-port 17374

@@ -24,6 +24,11 @@ const NAVIGATION_METHODS = new Set(['page.goto', 'page.back', 'page.forward', 'p
 const SESSION_METHODS_WITHOUT_SESSION = new Set(['session.create', 'session.list']);
 const DEFAULT_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_RPC_TIMEOUT_MS', 45_000);
 const NAVIGATION_RPC_TIMEOUT_MS = parseTimeoutEnv('BAK_E2E_NAV_RPC_TIMEOUT_MS', 60_000);
+const TEST_SITE_PORT = (() => {
+  const raw = Number(process.env.BAK_TEST_SITE_PORT ?? '4173');
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 4173;
+})();
+export const TEST_SITE_ORIGIN = process.env.BAK_TEST_SITE_ORIGIN ?? `http://127.0.0.1:${TEST_SITE_PORT}`;
 
 function parseTimeoutEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -403,7 +408,7 @@ export async function createHarness(): Promise<E2EHarness> {
     await resolveHarnessSession();
 
     const page = await context.newPage();
-    await gotoWithRetry(page, 'http://127.0.0.1:4173/form.html', '#name-input');
+    await gotoWithRetry(page, `${TEST_SITE_ORIGIN}/form.html`, '#name-input');
     await page.bringToFront();
 
     const rpcCall = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
@@ -474,7 +479,7 @@ export async function createHarness(): Promise<E2EHarness> {
       const target = await context.newPage();
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
-      const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
+      const url = `${TEST_SITE_ORIGIN}${path}${separator}${marker}`;
       await gotoWithRetry(target, url, 'body');
       await target.bringToFront();
       return { page: target };
@@ -512,7 +517,7 @@ export async function createHarness(): Promise<E2EHarness> {
     const openPage = async (path: string): Promise<{ page: Page; tabId: number }> => {
       const marker = `__e2e=${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const separator = path.includes('?') ? '&' : '?';
-      const url = `http://127.0.0.1:4173${path}${separator}${marker}`;
+      const url = `${TEST_SITE_ORIGIN}${path}${separator}${marker}`;
       const deadline = Date.now() + 45_000;
       let opened: { tab: { id: number; url: string } } | null = null;
       let lastError: unknown;

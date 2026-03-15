@@ -35,6 +35,7 @@ class FakeDriver extends StubDriver {
   };
   bindingExists = true;
   contextSetBehaviors: Array<'success' | 'stale-not-found' | 'timeout'> = [];
+  pageSnapshotBehavior: 'complete' | 'degraded' | 'skipped' = 'complete';
   browser: SessionBindingEnsureResult['browser'] = {
     windowId: 1,
     groupId: 2,
@@ -269,6 +270,56 @@ class FakeDriver extends StubDriver {
         truncated: false
       };
     }
+    if (method === 'page.freshness') {
+      return {
+        pageLoadedAt: 1,
+        lastMutationAt: 2,
+        latestNetworkTimestamp: 3,
+        latestInlineDataTimestamp: 4,
+        latestPageDataTimestamp: 5,
+        latestNetworkDataTimestamp: 6,
+        domVisibleTimestamp: 7,
+        primaryTimestamp: 6,
+        primaryCategory: 'data',
+        primarySource: 'network',
+        confidence: 'high',
+        suppressedEvidenceCount: 2,
+        assessment: 'fresh',
+        evidence: {
+          visibleTimestamps: ['2026-03-05'],
+          inlineTimestamps: ['2026-03-05'],
+          pageDataTimestamps: ['2026-03-05'],
+          networkDataTimestamps: ['2026-03-05'],
+          classifiedTimestamps: [
+            {
+              value: '2026-03-05',
+              source: 'network',
+              category: 'data'
+            }
+          ],
+          networkSampleIds: ['net_101']
+        }
+      };
+    }
+    if (method === 'inspect.liveUpdates') {
+      return {
+        lastMutationAt: 2,
+        timers: {
+          timeouts: 0,
+          intervals: 0
+        },
+        networkCount: 2,
+        networkCadence: {
+          sampleCount: 2,
+          classification: 'bursty',
+          averageIntervalMs: 250,
+          medianIntervalMs: 250,
+          latestGapMs: 120,
+          endpoints: ['https://api.example.test/orders']
+        },
+        recentNetwork: [{ id: 'net_101' }, { id: 'net_102' }]
+      };
+    }
     if (method === 'debug.dumpState') {
       return {
         url: 'https://example.test/frame',
@@ -309,10 +360,27 @@ class FakeDriver extends StubDriver {
     throw new Error(`Unexpected rawRequest: ${method}`);
   }
 
-  async pageSnapshot(tabId?: number): Promise<{ imageBase64: string; elements: Array<{ eid: string; tag: string; name: string; text: string; bbox: { x: number; y: number; width: number; height: number }; selectors: { css: string | null; text: string | null; aria: string | null }; risk: 'low' | 'high'; role: string | null }>; tabId: number; url: string }> {
+  async pageSnapshot(
+    tabId?: number
+  ): Promise<{
+    captureStatus: 'complete' | 'degraded' | 'skipped';
+    captureError?: { code?: string; message: string };
+    imageBase64?: string;
+    elements: Array<{ eid: string; tag: string; name: string; text: string; bbox: { x: number; y: number; width: number; height: number }; selectors: { css: string | null; text: string | null; aria: string | null }; risk: 'low' | 'high'; role: string | null }>;
+    tabId: number;
+    url: string;
+  }> {
     this.pageSnapshotCalls += 1;
     return {
-      imageBase64: Buffer.from('fake-image', 'utf8').toString('base64'),
+      captureStatus: this.pageSnapshotBehavior,
+      captureError:
+        this.pageSnapshotBehavior === 'degraded'
+          ? {
+              code: 'E_CAPTURE_FAILED',
+              message: 'image readback failed'
+            }
+          : undefined,
+      imageBase64: this.pageSnapshotBehavior === 'complete' ? Buffer.from('fake-image', 'utf8').toString('base64') : undefined,
       elements: [
         {
           eid: 'el-1',
@@ -572,7 +640,7 @@ describe('service runtime session bindings', () => {
     expect(opened.tab.id).not.toBe(101);
   });
 
-  it('surfaces transport failures while restoring context during session.setActiveTab', async () => {
+  it('recovers to the top-level context when a page read hits context.set timeout', async () => {
     const driver = new FakeDriver();
     const service = createService(driver);
 
@@ -586,14 +654,23 @@ describe('service runtime session bindings', () => {
       shadowPath: ['#shadow-b']
     });
 
-    await expect(
-      service.invoke('session.setActiveTab', {
-        sessionId: created.sessionId,
-        tabId: 202
-      })
-    ).rejects.toMatchObject({
-      bakCode: BakErrorCode.E_TIMEOUT
+    const title = await service.invokeDynamic('page.title', {
+      sessionId: created.sessionId,
+      tabId: 202
     });
+
+    expect(title).toMatchObject({
+      title: 'Example title',
+      contextRecovered: true
+    });
+    expect(driver.rawRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: 'context.reset',
+          params: { tabId: 202 }
+        })
+      ])
+    );
   });
 
   it('attaches a persisted snapshot when debug.dumpState requests one', async () => {
@@ -691,6 +768,25 @@ describe('service runtime session bindings', () => {
     expect(snapshot.diff?.comparedTo).toContain('previous-elements.json');
     expect(snapshot.diff?.summary.changed).toBe(1);
     expect(snapshot.diff?.changedRefs[0]?.changes).toEqual(expect.arrayContaining(['name', 'text', 'bbox']));
+  });
+
+  it('returns a degraded verify result when screenshot capture fails', async () => {
+    const driver = new FakeDriver();
+    driver.pageSnapshotBehavior = 'degraded';
+    const service = createService(driver);
+
+    const created = await service.invoke('session.create', { clientName: 'test-client' });
+    await service.invoke('session.ensure', { sessionId: created.sessionId });
+    const verify = await service.invoke('page.verify', {
+      sessionId: created.sessionId
+    });
+
+    expect(verify.captureStatus).toBe('degraded');
+    expect(verify.captureError?.message).toContain('image readback failed');
+    expect(verify.refs[0]?.ref).toBe('@e1');
+    expect(verify.actionSummary.clickable[0]?.eid).toBe('el-1');
+    expect(verify.freshness.primaryTimestamp).toBe(6);
+    expect(verify.networkHeartbeat.recentRequestIds).toEqual(['net_101', 'net_102']);
   });
 
   it('requires explicit confirmation for mutating page.fetch requests', async () => {
