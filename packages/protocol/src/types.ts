@@ -246,6 +246,8 @@ export interface NetworkEntry {
   requestBytes?: number;
   responseBytes?: number;
   tabId?: number;
+  hostname?: string;
+  pathname?: string;
   resourceType?: string;
   contentType?: string;
   initiatorUrl?: string;
@@ -259,6 +261,11 @@ export interface NetworkEntry {
   truncated?: boolean;
   failureReason?: string;
   source?: 'debugger' | 'content';
+  preview?: {
+    query?: string;
+    request?: string;
+    response?: string;
+  };
 }
 
 export interface PageTextChunk {
@@ -328,6 +335,28 @@ export interface PageValueResult<T = unknown> {
   results?: Array<PageFrameResult<T>>;
 }
 
+export interface FetchExecutionTiming {
+  startedAt: number;
+  requestSentAt?: number;
+  responseStartedAt?: number;
+  completedAt?: number;
+  timeoutAt?: number;
+}
+
+export interface FetchDiagnostics {
+  kind: 'success' | 'timeout' | 'network' | 'execution';
+  retryable: boolean;
+  where: 'dispatch' | 'ttfb' | 'body' | 'complete';
+  timing: FetchExecutionTiming;
+  requestSent: boolean;
+  responseStarted: boolean;
+  status?: number;
+  headersReceived?: Record<string, string>;
+  bodyBytesRead: number;
+  partialBodyPreview?: string;
+  hints: string[];
+}
+
 export interface PageFetchResponse {
   url: string;
   status: number;
@@ -345,6 +374,49 @@ export interface PageFetchResponse {
   authApplied?: string[];
   authSources?: string[];
   degradedReason?: string;
+  diagnostics?: FetchDiagnostics;
+}
+
+export interface NetworkCloneRequestSummary {
+  id: string;
+  url: string;
+  method: string;
+  kind: NetworkEntry['kind'];
+  contentType?: string;
+  sameOrigin: boolean;
+  bodyPresent: boolean;
+  bodyTruncated: boolean;
+}
+
+export interface NetworkCloneSupportFile {
+  kind: 'query-file' | 'body-file';
+  path: string;
+  bytes: number;
+}
+
+export interface NetworkCloneCommandTemplate {
+  tool: 'page.fetch' | 'network.replay';
+  argv: string[];
+  powershell: string;
+  supportFiles?: NetworkCloneSupportFile[];
+}
+
+export interface NetworkClonePageFetchTemplate {
+  url: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: string;
+  contentType?: string;
+  mode?: 'raw' | 'json';
+  auth: 'auto';
+}
+
+export interface NetworkCloneResult {
+  request: NetworkCloneRequestSummary;
+  cloneable: boolean;
+  preferredCommand: NetworkCloneCommandTemplate;
+  pageFetch?: NetworkClonePageFetchTemplate;
+  notes: string[];
 }
 
 export interface TableHandle {
@@ -448,6 +520,51 @@ export interface InspectPageDataRecommendation {
   note: string;
 }
 
+export interface InspectPageModeOption {
+  label: string;
+  value: string;
+  selected: boolean;
+}
+
+export interface InspectPageModeGroup {
+  controlType: 'select' | 'tabs' | 'radio' | 'buttons';
+  label?: string;
+  selectorHint?: string;
+  options: InspectPageModeOption[];
+}
+
+export interface InspectPageCurrentMode {
+  controlType: InspectPageModeGroup['controlType'];
+  label: string;
+  value: string;
+  groupLabel?: string;
+}
+
+export interface InspectPageDateControl {
+  controlType: 'input' | 'select' | 'dataset';
+  label?: string;
+  selectorHint?: string;
+  value?: string;
+  min?: string;
+  max?: string;
+  dataMaxDate?: string;
+  options?: string[];
+}
+
+export interface InspectPagePrimaryEndpoint {
+  requestId: string;
+  url: string;
+  method: string;
+  status: number;
+  kind: NetworkEntry['kind'];
+  resourceType?: string;
+  contentType?: string;
+  sameOrigin: boolean;
+  matchedTableId?: string;
+  matchedSourceId?: string;
+  reason: string;
+}
+
 export interface InspectPageDataResult {
   suspiciousGlobals: string[];
   tables: TableHandle[];
@@ -455,6 +572,12 @@ export interface InspectPageDataResult {
   inlineTimestamps: string[];
   pageDataCandidates: InspectPageDataCandidateProbe[];
   recentNetwork: NetworkEntry[];
+  modeGroups: InspectPageModeGroup[];
+  availableModes: string[];
+  currentMode: InspectPageCurrentMode | null;
+  dateControls: InspectPageDateControl[];
+  latestArchiveDate: string | null;
+  primaryEndpoint: InspectPagePrimaryEndpoint | null;
   recommendedNextSteps: string[];
   dataSources: InspectPageDataSource[];
   sourceMappings: InspectPageDataSourceMapping[];
@@ -977,6 +1100,11 @@ export interface MethodMap {
       urlIncludes?: string;
       status?: number;
       method?: string;
+      domain?: string;
+      resourceType?: string;
+      kind?: NetworkEntry['kind'];
+      sinceTs?: number;
+      tail?: boolean;
     };
     result: { entries: NetworkEntry[] };
   };
@@ -987,6 +1115,10 @@ export interface MethodMap {
   'network.search': {
     params: { sessionId: string; tabId?: number; pattern: string; limit?: number };
     result: NetworkSearchResult;
+  };
+  'network.clone': {
+    params: { sessionId: string; tabId?: number; id: string };
+    result: NetworkCloneResult;
   };
   'network.replay': {
     params: {

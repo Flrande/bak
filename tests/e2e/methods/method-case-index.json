@@ -169,6 +169,11 @@
     "failureCaseId": "M092-F",
     "suite": "network"
   },
+  "network.clone": {
+    "successCaseId": "M103-S",
+    "failureCaseId": "M103-F",
+    "suite": "network"
+  },
   "network.replay": {
     "successCaseId": "M093-S",
     "failureCaseId": "M093-F",

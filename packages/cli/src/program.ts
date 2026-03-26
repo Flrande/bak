@@ -1,13 +1,21 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
-import type { Locator, PageFetchResponse } from '@flrande/bak-protocol';
+import type { Locator, NetworkCloneResult, PageFetchResponse } from '@flrande/bak-protocol';
 import { readCliVersion } from './cli-version.js';
-import { callRpc } from './rpc/client.js';
+import { callRpc, RpcClientError } from './rpc/client.js';
 import { exportDiagnosticZip } from './diagnostic-export.js';
 import { runDoctor } from './doctor.js';
+import {
+  buildPaginatedUrl,
+  extractPaginatedItems,
+  mergeQueryFileIntoUrl,
+  resolveRequestBody,
+  writeCloneArtifacts
+} from './fetch-tools.js';
 import { runGc } from './gc.js';
+import { hasPageGotoReuseOptions, selectReusableTab } from './page-goto-tools.js';
 import {
   evaluatePolicyPreview,
   loadPolicyStatus,
@@ -361,6 +369,268 @@ export function writeFetchLikeArtifact(
   };
 }
 
+function extractPageFrameError(result: unknown): { code?: string; message: string; details?: Record<string, unknown> } | null {
+  if (!isRecord(result)) {
+    return null;
+  }
+  const frame =
+    (isRecord(result.result) ? result.result : null) ??
+    (Array.isArray(result.results) ? result.results.find((entry) => isRecord(entry) && isRecord(entry.error)) : null);
+  if (!isRecord(frame) || !isRecord(frame.error) || typeof frame.error.message !== 'string') {
+    return null;
+  }
+  return {
+    code: typeof frame.error.code === 'string' ? frame.error.code : undefined,
+    message: frame.error.message,
+    details: isRecord(frame.error.details) ? frame.error.details : undefined
+  };
+}
+
+function throwIfPageFrameError(result: unknown): void {
+  const frameError = extractPageFrameError(result);
+  if (!frameError) {
+    return;
+  }
+  throw new RpcClientError(`${frameError.code ?? 'E_EXECUTION'}: ${frameError.message}`, {
+    bakCode: frameError.code,
+    details: frameError.details
+  });
+}
+
+function resolveFetchRequestInput(options: {
+  url?: unknown;
+  body?: unknown;
+  queryFile?: unknown;
+  bodyFile?: unknown;
+}): { url: string; body?: string } {
+  const rawUrl = String(options.url ?? '');
+  const queryFile = typeof options.queryFile === 'string' ? String(options.queryFile) : undefined;
+  const bodyFile = typeof options.bodyFile === 'string' ? String(options.bodyFile) : undefined;
+  return {
+    url: mergeQueryFileIntoUrl(rawUrl, queryFile),
+    body: resolveRequestBody(typeof options.body === 'string' ? options.body : undefined, bodyFile)
+  };
+}
+
+async function runNetworkCloneCommand(id: string, options: Record<string, unknown> & RuntimeOptionBag): Promise<void> {
+  const result = (await callWithRuntime(
+    'network.clone',
+    {
+      ...targetParams({
+        tabId: options.tabId,
+        sessionId: options.sessionId,
+        clientName: options.clientName
+      }),
+      id: String(id)
+    },
+    parseRpcPort(options)
+  )) as NetworkCloneResult;
+  const withArtifacts = writeCloneArtifacts(result, typeof options.outDir === 'string' ? String(options.outDir) : undefined);
+  printResult(withArtifacts);
+}
+
+async function runPaginatedPageFetch(
+  options: Record<string, unknown> & RuntimeOptionBag & { url?: unknown; body?: unknown }
+): Promise<void> {
+  if (options.mode && String(options.mode) !== 'json') {
+    throw new Error('paginate requires --mode json');
+  }
+  if (options.out) {
+    throw new Error('paginate does not support --out; use --out-dir instead');
+  }
+  if (!options.outDir) {
+    throw new Error('paginate requires --out-dir');
+  }
+
+  const pageSize = parsePositiveInt(options.pageSize, 'page-size');
+  const startPage = options.startPage ? parsePositiveInt(options.startPage, 'start-page') : 1;
+  const maxPages = options.maxPages ? parsePositiveInt(options.maxPages, 'max-pages') : 100;
+  const pageParam = typeof options.pageParam === 'string' && options.pageParam.trim().length > 0 ? String(options.pageParam) : 'page';
+  const limitParam = typeof options.limitParam === 'string' && options.limitParam.trim().length > 0 ? String(options.limitParam) : 'limit';
+  const itemsPath = typeof options.itemsPath === 'string' && options.itemsPath.trim().length > 0 ? String(options.itemsPath) : undefined;
+  const outDir = resolve(String(options.outDir));
+  const outFilePattern =
+    typeof options.outFilePattern === 'string' && options.outFilePattern.trim().length > 0
+      ? String(options.outFilePattern)
+      : 'page-{page}.json';
+
+  mkdirSync(outDir, { recursive: true });
+  const requestInput = resolveFetchRequestInput(options);
+  let pagesFetched = 0;
+  let rowsFetched = 0;
+  let lastPageItemCount = 0;
+  let stoppedBecause: 'empty-page' | 'short-page' | 'max-pages' = 'max-pages';
+  let itemsSource: string | undefined;
+  const files: string[] = [];
+
+  for (let offset = 0; offset < maxPages; offset += 1) {
+    const pageNumber = startPage + offset;
+    const pageUrl = buildPaginatedUrl(requestInput.url, pageParam, limitParam, pageNumber, pageSize);
+    const result = await callWithRuntime(
+      'page.fetch',
+      {
+        ...targetParams({
+          tabId: options.tabId,
+          sessionId: options.sessionId,
+          clientName: options.clientName
+        }),
+        url: pageUrl,
+        method: options.method ? String(options.method) : undefined,
+        headers: parseHeaderEntries(options.header),
+        body: requestInput.body,
+        contentType: options.contentType ? String(options.contentType) : undefined,
+        mode: 'json',
+        timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
+        scope: parseScope(options.scope),
+        auth: parseAuthMode(options.auth),
+        requiresConfirm: options.requiresConfirm === true,
+        fullResponse: true
+      },
+      parseRpcPort(options)
+    );
+    throwIfPageFrameError(result);
+    const extracted = extractFetchLikeResponse(result);
+    if (!extracted || extracted.response.json === undefined) {
+      throw new Error('paginate requires each page.fetch response to include a JSON body');
+    }
+    const pageItems = extractPaginatedItems(extracted.response.json, itemsPath);
+    itemsSource = itemsSource ?? pageItems.source;
+    const pageOutPath = resolve(join(outDir, outFilePattern.replaceAll('{page}', String(pageNumber))));
+    writeFetchLikeArtifact(pageOutPath, result);
+    files.push(pageOutPath);
+    pagesFetched += 1;
+    lastPageItemCount = pageItems.items.length;
+    rowsFetched += pageItems.items.length;
+
+    if (pageItems.items.length === 0) {
+      stoppedBecause = 'empty-page';
+      break;
+    }
+    if (options.stopWhenShortPage === true && pageItems.items.length < pageSize) {
+      stoppedBecause = 'short-page';
+      break;
+    }
+  }
+
+  const summary = {
+    ok: true,
+    pagesFetched,
+    rowsFetched,
+    stoppedBecause,
+    files,
+    lastPageItemCount,
+    outDir,
+    summaryPath: resolve(join(outDir, 'summary.json')),
+    pageParam,
+    limitParam,
+    pageSize,
+    startPage,
+    itemsPath,
+    itemsSource
+  };
+  writeJsonFile(summary.summaryPath, summary);
+  printResult(summary);
+}
+
+async function runPageGotoCommand(url: string, options: Record<string, unknown> & RuntimeOptionBag): Promise<void> {
+  const reuseOptions = {
+    reuseDomain: options.reuseDomain === true,
+    reuseUrlContains: typeof options.reuseUrlContains === 'string' ? String(options.reuseUrlContains) : undefined
+  };
+  if (!hasPageGotoReuseOptions(reuseOptions)) {
+    await invoke(
+      'page.goto',
+      {
+        url,
+        ...targetParams({
+          tabId: options.tabId,
+          sessionId: options.sessionId,
+          clientName: options.clientName
+        })
+      },
+      parseRpcPort(options)
+    );
+    return;
+  }
+
+  if (parseTabId(options.tabId) !== undefined) {
+    throw new Error('reuse-domain and reuse-url-contains cannot be combined with --tab-id');
+  }
+
+  const resolution = resolveRuntimeFromOptions(options);
+  await ensureRuntime(resolution);
+  const resolved = await resolveAutoSessionParams(
+    'page.goto',
+    {
+      url,
+      ...targetParams({
+        tabId: options.tabId,
+        sessionId: options.sessionId,
+        clientName: options.clientName
+      })
+    },
+    resolution.rpcWsPort
+  );
+  const sessionId = parseSessionId(resolved.sessionId);
+  if (!sessionId) {
+    throw new Error('page goto reuse requires a resolved session');
+  }
+
+  const listed = (await callRpc('session.listTabs', { sessionId }, resolution.rpcWsPort)) as {
+    tabs?: Array<{ id: number; url: string; active?: boolean }>;
+  };
+  const match = selectReusableTab(url, Array.isArray(listed.tabs) ? listed.tabs : [], reuseOptions);
+  if (match) {
+    const result = (await callRpc(
+      'page.goto',
+      {
+        sessionId,
+        tabId: match.tab.id,
+        url
+      },
+      resolution.rpcWsPort
+    )) as { ok: true };
+    await callRpc(
+      'session.setActiveTab',
+      {
+        sessionId,
+        tabId: match.tab.id
+      },
+      resolution.rpcWsPort
+    );
+    printResult({
+      ...result,
+      sessionId,
+      tabId: match.tab.id,
+      reused: true,
+      created: false,
+      matchedBy: match.matchedBy
+    });
+    return;
+  }
+
+  const opened = (await callRpc(
+    'session.openTab',
+    {
+      sessionId,
+      url,
+      active: true
+    },
+    resolution.rpcWsPort
+  )) as {
+    tab: { id: number; url: string };
+  };
+  printResult({
+    ok: true,
+    sessionId,
+    tabId: opened.tab.id,
+    reused: false,
+    created: true,
+    matchedBy: null,
+    url: opened.tab.url
+  });
+}
+
 const AUTO_CREATE_SESSION_METHODS = new Set<string>([
   'page.goto',
   'page.back',
@@ -412,6 +682,7 @@ const AUTO_CREATE_SESSION_METHODS = new Set<string>([
   'network.list',
   'network.get',
   'network.search',
+  'network.clone',
   'network.replay',
   'network.waitFor',
   'network.clear',
@@ -1286,9 +1557,30 @@ addStructuredHelp(page, {
     'bak page verify --capture --annotate --rpc-ws-port 17374'
   ]
 });
-addStructuredHelp(addRpcPortOption(addTabOption(page.command('goto <url>').description('Navigate the target tab to a URL'))), {
-  examples: ['bak page goto "https://example.com" --rpc-ws-port 17374']
-}).action(async (url, options) => invoke('page.goto', { url: String(url), ...targetParams(options) }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      page
+        .command('goto <url>')
+        .description('Navigate the target tab to a URL, optionally reusing a matching session tab first')
+        .option('--reuse-domain', 'reuse an existing session tab on the same hostname before opening a new one', false)
+        .option('--reuse-url-contains <text>', 'reuse an existing session tab whose URL contains this text before opening a new one')
+    )
+  ),
+  {
+    notes: [
+      'When reuse flags are set, page goto prefers an existing matching session tab and otherwise opens a new active session tab.',
+      'Reuse matching is session-scoped and cannot be combined with an explicit --tab-id.'
+    ],
+    examples: [
+      'bak page goto "https://example.com" --rpc-ws-port 17374',
+      'bak page goto "https://www.barchart.com/options/unusual-activity/stocks" --reuse-domain --rpc-ws-port 17374',
+      'bak page goto "https://www.barchart.com/options/unusual-activity/stocks" --reuse-url-contains "barchart.com/options" --rpc-ws-port 17374'
+    ]
+  }
+).action(async (url, options) => {
+  await runPageGotoCommand(String(url), options);
+});
 addStructuredHelp(addRpcPortOption(addTabOption(page.command('wait').description('Wait for a selector, text, or URL match').requiredOption('--mode <mode>', 'selector|text|url').requiredOption('--value <value>', 'selector, text, or URL matcher').option('--timeout-ms <timeoutMs>', 'timeout in milliseconds'))), {
   notes: [
     'Use selector waits before element actions when the page is still rendering.',
@@ -1472,6 +1764,8 @@ addStructuredHelp(
         .option('--method <method>', 'HTTP method', 'GET')
         .option('--header <name:value...>', 'header entries in Name:Value form')
         .option('--body <body>', 'request body text')
+        .option('--query-file <path>', 'load query parameters from a querystring file or JSON object file')
+        .option('--body-file <path>', 'load the request body from a UTF-8 text file')
         .option('--content-type <contentType>', 'content type header value')
         .option('--mode <mode>', 'raw|json', 'raw')
         .option('--timeout-ms <timeoutMs>', 'timeout in milliseconds')
@@ -1479,28 +1773,45 @@ addStructuredHelp(
         .option('--max-bytes <bytes>', 'max response body bytes to retain')
         .option('--auth <mode>', 'auto|manual|off', 'auto')
         .option('--out <path>', 'write the fetch payload to a file')
+        .option('--paginate', 'fetch multiple JSON pages by rewriting page/limit query params', false)
+        .option('--page-param <name>', 'query parameter name for the page number', 'page')
+        .option('--limit-param <name>', 'query parameter name for the page size', 'limit')
+        .option('--start-page <page>', 'starting page number', '1')
+        .option('--page-size <pageSize>', 'page size used in paginated mode')
+        .option('--items-path <path>', 'path to the array of items in the JSON response')
+        .option('--max-pages <pages>', 'maximum pages to fetch in paginated mode', '100')
+        .option('--stop-when-short-page', 'stop paginated mode when a page returns fewer rows than page-size', false)
+        .option('--out-dir <path>', 'directory for paginated response files and summary.json')
+        .option('--out-file-pattern <pattern>', 'paginated page file pattern', 'page-{page}.json')
         .option('--requires-confirm', 'confirm that this request is safe to send from the page context', false)
     )
   ),
   {
     notes: [
       'page fetch executes inside the page context and can reuse login state, CSRF tokens, and same-origin headers.',
-      'Use network replay when you want to start from a previously captured request.'
+      'Use network replay when you want to start from a previously captured request.',
+      'Paginated mode is JSON-only, writes each page to --out-dir, and keeps stdout to a structured summary.'
     ],
     examples: [
       'bak page fetch --url "https://example.com/api/data" --method POST --body "{}" --content-type "application/json" --rpc-ws-port 17374',
-      'bak page fetch --url "https://example.com/feed" --mode json --auth auto --header "Accept: application/json" --rpc-ws-port 17374'
+      'bak page fetch --url "https://example.com/feed" --mode json --auth auto --header "Accept: application/json" --rpc-ws-port 17374',
+      'bak page fetch --url "https://example.com/api/rows" --query-file .\\query.txt --paginate --page-size 100 --out-dir .\\pages --mode json --rpc-ws-port 17374'
     ]
   }
 ).action(async (options) => {
+  if (options.paginate === true) {
+    await runPaginatedPageFetch(options);
+    return;
+  }
+  const requestInput = resolveFetchRequestInput(options);
   const result = await callWithRuntime(
     'page.fetch',
     {
       ...targetParams(options),
-      url: String(options.url),
+      url: requestInput.url,
       method: options.method ? String(options.method) : undefined,
       headers: parseHeaderEntries(options.header),
-      body: options.body ? String(options.body) : undefined,
+      body: requestInput.body,
       contentType: options.contentType ? String(options.contentType) : undefined,
       mode: options.mode ? String(options.mode) : undefined,
       timeoutMs: parseOptionalPositiveInt(options.timeoutMs, 'timeout-ms'),
@@ -1512,6 +1823,7 @@ addStructuredHelp(
     },
     parseRpcPort(options)
   );
+  throwIfPageFrameError(result);
   if (options.out) {
     const artifact = writeFetchLikeArtifact(String(options.out), result);
     printResult({
@@ -1628,9 +1940,49 @@ addStructuredHelp(network, {
     'Use network search and replay to turn dynamic page loading into a reproducible data workflow.'
   ]
 });
-addStructuredHelp(addRpcPortOption(addTabOption(network.command('list').description('List captured network entries').option('--limit <limit>', 'result limit', '50').option('--url-includes <text>', 'URL substring').option('--status <status>', 'status code').option('--method <method>', 'HTTP method'))), {
-  examples: ['bak network list --url-includes "/api/" --limit 20 --rpc-ws-port 17374']
-}).action(async (options) => invoke('network.list', { ...targetParams(options), limit: parsePositiveInt(options.limit, 'limit'), urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined, status: parseNonNegativeInt(options.status, 'status'), method: options.method ? String(options.method) : undefined }, parseRpcPort(options)));
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      network
+        .command('list')
+        .description('List captured network entries with filters, previews, and chronological tail mode')
+        .option('--limit <limit>', 'result limit', '50')
+        .option('--url-includes <text>', 'URL substring')
+        .option('--status <status>', 'status code')
+        .option('--method <method>', 'HTTP method')
+        .option('--domain <domain>', 'hostname filter such as api.barchart.com')
+        .option('--resource-type <type>', 'resource type such as Fetch, XHR, Document, Script')
+        .option('--kind <kind>', 'fetch|xhr|navigation|resource')
+        .option('--tail', 'return the latest matching requests in chronological order', false)
+    )
+  ),
+  {
+    notes: [
+      'Entries include lightweight query/request/response previews when the debugger capture has enough body context.',
+      'Use --tail with a small limit to inspect the most recent request flow in order.'
+    ],
+    examples: [
+      'bak network list --url-includes "/api/" --limit 20 --rpc-ws-port 17374',
+      'bak network list --domain "127.0.0.1" --resource-type Fetch --tail --limit 10 --rpc-ws-port 17374'
+    ]
+  }
+).action(async (options) =>
+  invoke(
+    'network.list',
+    {
+      ...targetParams(options),
+      limit: parsePositiveInt(options.limit, 'limit'),
+      urlIncludes: options.urlIncludes ? String(options.urlIncludes) : undefined,
+      status: parseNonNegativeInt(options.status, 'status'),
+      method: options.method ? String(options.method) : undefined,
+      domain: options.domain ? String(options.domain) : undefined,
+      resourceType: options.resourceType ? String(options.resourceType) : undefined,
+      kind: options.kind ? String(options.kind) : undefined,
+      tail: options.tail === true
+    },
+    parseRpcPort(options)
+  )
+);
 addStructuredHelp(
   addRpcPortOption(
     addTabOption(
@@ -1692,6 +2044,28 @@ addStructuredHelp(
     parseRpcPort(options)
   )
 );
+addStructuredHelp(
+  addRpcPortOption(
+    addTabOption(
+      network
+        .command('clone <id>')
+        .description('Convert a captured request into a reusable fetch or replay template')
+        .option('--out-dir <path>', 'write companion query/body files for a file-backed command template')
+    )
+  ),
+  {
+    notes: [
+      'Same-origin requests prefer a page.fetch template; cross-origin or truncated-body captures fall back to network.replay.',
+      'Use --out-dir when you want query.txt or body.txt artifacts for easier PowerShell reuse.'
+    ],
+    examples: [
+      'bak network clone req_123 --rpc-ws-port 17374',
+      'bak network clone req_123 --out-dir .\\clone-template --rpc-ws-port 17374'
+    ]
+  }
+).action(async (id, options) => {
+  await runNetworkCloneCommand(String(id), options);
+});
 addStructuredHelp(
   addRpcPortOption(
     addTabOption(
@@ -1866,7 +2240,10 @@ addStructuredHelp(inspect, {
     'bak inspect freshness --patterns "20\\\\d{2}-\\\\d{2}-\\\\d{2}" --rpc-ws-port 17374'
   ]
 });
-addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('page-data').description('Summarize likely inline data variables, tables, and recent requests'))), {
+addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('page-data').description('Summarize likely inline data variables, tables, current modes, date controls, and recent endpoints'))), {
+  notes: [
+    'page-data highlights likely mode toggles such as latest vs historical, date controls, and the most relevant recent endpoint behind the current page.'
+  ],
   examples: ['bak inspect page-data --rpc-ws-port 17374']
 }).action(async (options) => invoke('inspect.pageData', { ...targetParams(options) }, parseRpcPort(options)));
 addStructuredHelp(addRpcPortOption(addTabOption(inspect.command('live-updates').description('Summarize recent mutations, timers, and network cadence'))), {

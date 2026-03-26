@@ -2,8 +2,12 @@ import type {
   DynamicDataSchemaHint,
   FreshnessTimestampCategory,
   InspectPageDataCandidateProbe,
+  InspectPageCurrentMode,
+  InspectPageDateControl,
   InspectPageDataRecommendation,
   InspectPageDataResult,
+  InspectPageModeGroup,
+  InspectPagePrimaryEndpoint,
   InspectPageDataSource,
   InspectPageDataSourceMapping,
   NetworkEntry,
@@ -59,6 +63,7 @@ export interface SourceMappingInput {
   windowSources: InspectPageDataCandidateProbe[];
   inlineJsonSources: InlineJsonInspectionSource[];
   recentNetwork: NetworkEntry[];
+  pageUrl?: string;
   now?: number;
 }
 
@@ -67,6 +72,7 @@ export interface SourceMappingReport {
   sourceMappings: InspectPageDataSourceMapping[];
   recommendedNextActions: InspectPageDataRecommendation[];
   sourceAnalyses: DynamicSourceAnalysis[];
+  primaryEndpoint: InspectPagePrimaryEndpoint | null;
 }
 
 export interface ReplaySchemaMatch {
@@ -609,8 +615,8 @@ function buildRecommendedNextActions(
     if (source.source.type === 'networkResponse') {
       const requestId = source.source.sourceId.replace(/^networkResponse:/, '');
       pushRecommendation({
-        title: `Replay ${requestId} with table schema`,
-        command: `bak network replay --request-id ${requestId} --mode json --with-schema auto`,
+        title: `Clone ${requestId} into a reusable fetch template`,
+        command: `bak network clone ${requestId}`,
         note: `Recent response mapped to ${mapping.tableId} with ${mapping.confidence} confidence.`
       });
       continue;
@@ -630,6 +636,122 @@ function buildRecommendedNextActions(
     });
   }
   return recommendations.slice(0, 6);
+}
+
+function confidenceRank(confidence: InspectPageDataSourceMapping['confidence']): number {
+  switch (confidence) {
+    case 'high':
+      return 0;
+    case 'medium':
+      return 1;
+    case 'low':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function isSameOrigin(pageUrl: string | undefined, requestUrl: string): boolean {
+  if (!pageUrl) {
+    return false;
+  }
+  try {
+    const page = new URL(pageUrl);
+    const request = new URL(requestUrl, page);
+    return page.origin === request.origin;
+  } catch {
+    return false;
+  }
+}
+
+function selectPrimaryEndpoint(
+  recentNetwork: NetworkEntry[],
+  mappings: InspectPageDataSourceMapping[],
+  pageUrl?: string
+): InspectPagePrimaryEndpoint | null {
+  const mapped = mappings
+    .filter((mapping) => mapping.sourceId.startsWith('networkResponse:'))
+    .map((mapping) => ({
+      mapping,
+      entry: recentNetwork.find((entry) => entry.id === mapping.sourceId.replace(/^networkResponse:/, ''))
+    }))
+    .filter((candidate): candidate is { mapping: InspectPageDataSourceMapping; entry: NetworkEntry } => candidate.entry !== undefined)
+    .sort((left, right) => {
+      return (
+        confidenceRank(left.mapping.confidence) - confidenceRank(right.mapping.confidence) ||
+        right.entry.ts - left.entry.ts ||
+        left.entry.id.localeCompare(right.entry.id)
+      );
+    })[0];
+
+  if (mapped) {
+    return {
+      requestId: mapped.entry.id,
+      url: mapped.entry.url,
+      method: mapped.entry.method,
+      status: mapped.entry.status,
+      kind: mapped.entry.kind,
+      resourceType: mapped.entry.resourceType,
+      contentType: mapped.entry.contentType,
+      sameOrigin: isSameOrigin(pageUrl, mapped.entry.url),
+      matchedTableId: mapped.mapping.tableId,
+      matchedSourceId: mapped.mapping.sourceId,
+      reason: `Mapped to ${mapped.mapping.tableId} with ${mapped.mapping.confidence} confidence`
+    };
+  }
+
+  const fallback = recentNetwork
+    .filter((entry) => (entry.kind === 'fetch' || entry.kind === 'xhr') && entry.status >= 200 && entry.status < 400)
+    .sort((left, right) => right.ts - left.ts)[0];
+  if (!fallback) {
+    return null;
+  }
+  return {
+    requestId: fallback.id,
+    url: fallback.url,
+    method: fallback.method,
+    status: fallback.status,
+    kind: fallback.kind,
+    resourceType: fallback.resourceType,
+    contentType: fallback.contentType,
+    sameOrigin: isSameOrigin(pageUrl, fallback.url),
+    reason: `Latest successful ${fallback.kind.toUpperCase()} request observed on the page`
+  };
+}
+
+export function summarizeAvailableModes(modeGroups: InspectPageModeGroup[]): string[] {
+  return [...new Set(modeGroups.flatMap((group) => group.options.map((option) => option.label)))];
+}
+
+export function selectCurrentMode(modeGroups: InspectPageModeGroup[]): InspectPageCurrentMode | null {
+  for (const group of modeGroups) {
+    const selected = group.options.find((option) => option.selected);
+    if (selected) {
+      return {
+        controlType: group.controlType,
+        label: selected.label,
+        value: selected.value,
+        groupLabel: group.label
+      };
+    }
+  }
+  return null;
+}
+
+export function deriveLatestArchiveDate(dateControls: InspectPageDateControl[]): string | null {
+  const candidates = dateControls.flatMap((control) => [
+    control.value,
+    control.min,
+    control.max,
+    control.dataMaxDate,
+    ...(Array.isArray(control.options) ? control.options : [])
+  ]);
+  const dated = candidates
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => ({ value, parsed: Date.parse(value) }))
+    .filter((item) => Number.isFinite(item.parsed))
+    .sort((left, right) => right.parsed - left.parsed);
+  return dated[0]?.value ?? null;
 }
 
 export function buildSourceMappingReport(input: SourceMappingInput): SourceMappingReport {
@@ -653,7 +775,8 @@ export function buildSourceMappingReport(input: SourceMappingInput): SourceMappi
     dataSources: sourceAnalyses.map((analysis) => analysis.source),
     sourceMappings,
     recommendedNextActions: buildRecommendedNextActions(input.tables, sourceMappings, sourceAnalyses),
-    sourceAnalyses
+    sourceAnalyses,
+    primaryEndpoint: selectPrimaryEndpoint(input.recentNetwork, sourceMappings, input.pageUrl)
   };
 }
 
@@ -752,6 +875,7 @@ export function selectReplaySchemaMatch(
 }
 
 export function buildInspectPageDataResult(input: {
+  pageUrl?: string;
   suspiciousGlobals: string[];
   tables: TableHandle[];
   visibleTimestamps: string[];
@@ -760,19 +884,29 @@ export function buildInspectPageDataResult(input: {
   recentNetwork: NetworkEntry[];
   tableAnalyses: TableAnalysis[];
   inlineJsonSources: InlineJsonInspectionSource[];
+  modeGroups: InspectPageModeGroup[];
+  dateControls: InspectPageDateControl[];
   now?: number;
-}): Pick<InspectPageDataResult, 'dataSources' | 'sourceMappings' | 'recommendedNextActions'> {
+}): Pick<
+  InspectPageDataResult,
+  'dataSources' | 'sourceMappings' | 'recommendedNextActions' | 'availableModes' | 'currentMode' | 'latestArchiveDate' | 'primaryEndpoint'
+> {
   const report = buildSourceMappingReport({
     tables: input.tableAnalyses,
     windowSources: input.pageDataCandidates,
     inlineJsonSources: input.inlineJsonSources,
     recentNetwork: input.recentNetwork,
+    pageUrl: input.pageUrl,
     now: input.now
   });
   return {
     dataSources: report.dataSources,
     sourceMappings: report.sourceMappings,
-    recommendedNextActions: report.recommendedNextActions
+    recommendedNextActions: report.recommendedNextActions,
+    availableModes: summarizeAvailableModes(input.modeGroups),
+    currentMode: selectCurrentMode(input.modeGroups),
+    latestArchiveDate: deriveLatestArchiveDate(input.dateControls),
+    primaryEndpoint: report.primaryEndpoint
   };
 }
 

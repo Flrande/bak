@@ -1,5 +1,6 @@
 import type { NetworkEntry, NetworkSearchResult } from '@flrande/bak-protocol';
 import { redactHeaderMap, redactTransportText } from './privacy.js';
+import { buildNetworkEntryDerivedFields, clampNetworkListLimit, headerValue, networkEntryMatchesFilters } from './network-tools.js';
 import { EXTENSION_VERSION } from './version.js';
 
 const DEBUGGER_VERSION = '1.3';
@@ -98,19 +99,6 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
-  if (!headers) {
-    return undefined;
-  }
-  const lower = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === lower) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
 function isTextualContentType(contentType: string | undefined): boolean {
   if (!contentType) {
     return true;
@@ -141,7 +129,8 @@ function sanitizeEntry(entry: CapturedNetworkEntry): NetworkEntry {
     responseHeaders:
       typeof entry.responseHeaders === 'object' && entry.responseHeaders !== null
         ? { ...entry.responseHeaders }
-        : undefined
+        : undefined,
+    ...buildNetworkEntryDerivedFields(entry)
   };
 }
 
@@ -366,30 +355,6 @@ export function clearNetworkEntries(tabId: number): void {
   state.lastTouchedAt = Date.now();
 }
 
-function entryMatchesFilters(
-  entry: NetworkEntry,
-  filters: {
-    urlIncludes?: string;
-    status?: number;
-    method?: string;
-  }
-): boolean {
-  const urlIncludes = typeof filters.urlIncludes === 'string' ? filters.urlIncludes : '';
-  const method = typeof filters.method === 'string' ? filters.method.toUpperCase() : '';
-  const status = typeof filters.status === 'number' ? filters.status : undefined;
-
-  if (urlIncludes && !entry.url.includes(urlIncludes)) {
-    return false;
-  }
-  if (method && entry.method.toUpperCase() !== method) {
-    return false;
-  }
-  if (typeof status === 'number' && entry.status !== status) {
-    return false;
-  }
-  return true;
-}
-
 export function listNetworkEntries(
   tabId: number,
   filters: {
@@ -397,16 +362,20 @@ export function listNetworkEntries(
     urlIncludes?: string;
     status?: number;
     method?: string;
+    domain?: string;
+    resourceType?: string;
+    kind?: NetworkEntry['kind'];
+    sinceTs?: number;
+    tail?: boolean;
   } = {}
 ): NetworkEntry[] {
   const state = getState(tabId);
-  const limit = typeof filters.limit === 'number' ? Math.max(1, Math.min(500, Math.floor(filters.limit))) : 50;
-
-  return state.entries
-    .filter((entry) => entryMatchesFilters(entry, filters))
+  const limit = clampNetworkListLimit(filters.limit, 50);
+  const ordered = state.entries
+    .filter((entry) => networkEntryMatchesFilters(entry, filters))
     .slice(-limit)
-    .reverse()
     .map((entry) => sanitizeEntry(entry));
+  return filters.tail === true ? ordered : ordered.reverse();
 }
 
 export function getNetworkEntry(tabId: number, id: string): NetworkEntry | null {
@@ -423,6 +392,7 @@ export function getReplayableNetworkRequest(
   headers?: Record<string, string>;
   body?: string;
   contentType?: string;
+  bodyTruncated: boolean;
   degradedReason?: string;
 } | null {
   const state = getState(tabId);
@@ -434,6 +404,7 @@ export function getReplayableNetworkRequest(
   if (entry.rawRequestBodyTruncated === true) {
     return {
       entry: publicEntry,
+      bodyTruncated: true,
       degradedReason: 'live replay unavailable because the captured request body was truncated in memory'
     };
   }
@@ -441,7 +412,8 @@ export function getReplayableNetworkRequest(
     entry: publicEntry,
     headers: entry.rawRequestHeaders ? { ...entry.rawRequestHeaders } : undefined,
     body: entry.rawRequestBody,
-    contentType: headerValue(entry.rawRequestHeaders, 'content-type')
+    contentType: headerValue(entry.rawRequestHeaders, 'content-type'),
+    bodyTruncated: false
   };
 }
 
@@ -458,10 +430,10 @@ export async function waitForNetworkEntry(
   const timeoutMs = typeof filters.timeoutMs === 'number' ? Math.max(1, Math.floor(filters.timeoutMs)) : 5000;
   const deadline = Date.now() + timeoutMs;
   const state = getState(tabId);
-  const seenIds = new Set(state.entries.filter((entry) => entryMatchesFilters(entry, filters)).map((entry) => entry.id));
+  const seenIds = new Set(state.entries.filter((entry) => networkEntryMatchesFilters(entry, filters)).map((entry) => entry.id));
   while (Date.now() < deadline) {
     const nextState = getState(tabId);
-    const matched = nextState.entries.find((entry) => !seenIds.has(entry.id) && entryMatchesFilters(entry, filters));
+    const matched = nextState.entries.find((entry) => !seenIds.has(entry.id) && networkEntryMatchesFilters(entry, filters));
     if (matched) {
       return sanitizeEntry(matched);
     }
@@ -488,7 +460,7 @@ export function searchNetworkEntries(tabId: number, pattern: string, limit = 50)
       headerText.includes(normalized)
     );
   });
-  const scannedEntries = state.entries.filter((entry) => entryMatchesFilters(entry, {}));
+  const scannedEntries = state.entries.filter((entry) => networkEntryMatchesFilters(entry, {}));
   const toCoverage = (
     entries: CapturedNetworkEntry[],
     key: 'requestBodyPreview' | 'responseBodyPreview',

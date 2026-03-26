@@ -3,7 +3,10 @@ import type { InspectPageDataCandidateProbe, InspectPageDataSourceMapping, Table
 import {
   buildSourceMappingReport,
   buildTableIntelligence,
+  deriveLatestArchiveDate,
+  selectCurrentMode,
   selectReplaySchemaMatch,
+  summarizeAvailableModes,
   type TableAnalysis
 } from '../../packages/extension/src/dynamic-data-tools.js';
 
@@ -176,6 +179,41 @@ describe('dynamic data tools', () => {
     });
   });
 
+  it('summarizes available modes and derives the latest archive date', () => {
+    const modeGroups = [
+      {
+        controlType: 'tabs' as const,
+        label: 'Data mode',
+        options: [
+          { label: 'Latest', value: 'latest', selected: false },
+          { label: 'Historical', value: 'historical', selected: true },
+          { label: 'Archive', value: 'archive', selected: false }
+        ]
+      }
+    ];
+
+    expect(summarizeAvailableModes(modeGroups)).toEqual(['Latest', 'Historical', 'Archive']);
+    expect(selectCurrentMode(modeGroups)).toEqual({
+      controlType: 'tabs',
+      label: 'Historical',
+      value: 'historical',
+      groupLabel: 'Data mode'
+    });
+    expect(
+      deriveLatestArchiveDate([
+        {
+          controlType: 'input',
+          value: '2026-03-25',
+          max: '2026-03-25'
+        },
+        {
+          controlType: 'dataset',
+          dataMaxDate: '2026-03-24'
+        }
+      ])
+    ).toBe('2026-03-25');
+  });
+
   it('does not force unrelated replayed object rows onto the first table schema', () => {
     const tables: TableAnalysis[] = [
       {
@@ -203,5 +241,61 @@ describe('dynamic data tools', () => {
     );
 
     expect(match).toBeNull();
+  });
+
+  it('prefers clone recommendations and selects a mapped primary endpoint', () => {
+    const table: TableHandle = {
+      id: 'html:1',
+      label: 'Flow table',
+      kind: 'html'
+    };
+    const tables: TableAnalysis[] = [
+      {
+        table,
+        schema: {
+          columns: [
+            { key: 'symbol', label: 'Symbol' },
+            { key: 'mode', label: 'Mode' },
+            { key: 'sessionDate', label: 'Session Date' },
+            { key: 'premium', label: 'Premium' }
+          ]
+        },
+        sampleRows: [{ Symbol: 'QQQ', Mode: 'historical', 'Session Date': '2026-03-25', Premium: 125000 }]
+      }
+    ];
+
+    const report = buildSourceMappingReport({
+      tables,
+      windowSources: [],
+      inlineJsonSources: [],
+      recentNetwork: [
+        {
+          id: 'net_1',
+          url: 'https://example.test/api/page-data-semantic?mode=historical&date=2026-03-25',
+          method: 'GET',
+          status: 200,
+          ok: true,
+          kind: 'fetch',
+          ts: Date.now(),
+          durationMs: 10,
+          contentType: 'application/json',
+          responseBodyPreview: JSON.stringify({
+            rows: [{ symbol: 'QQQ', mode: 'historical', sessionDate: '2026-03-25', premium: 125000 }]
+          })
+        }
+      ],
+      pageUrl: 'https://example.test/page-data-semantic.html',
+      now: Date.now()
+    });
+
+    expect(report.primaryEndpoint).toEqual(
+      expect.objectContaining({
+        requestId: 'net_1',
+        matchedTableId: 'html:1'
+      })
+    );
+    expect(report.recommendedNextActions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ command: 'bak network clone net_1' })])
+    );
   });
 });

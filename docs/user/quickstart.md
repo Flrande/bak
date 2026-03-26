@@ -167,6 +167,7 @@ bak page extract --client-name $clientName --path "table_data" --resolver auto -
 bak page eval --client-name $clientName --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
+bak network clone req_123 --client-name $clientName --rpc-ws-port 17374
 bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --rpc-ws-port 17374
 bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --rpc-ws-port 17374
 bak table list --client-name $clientName --rpc-ws-port 17374
@@ -177,7 +178,7 @@ bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak inspect live-updates --client-name $clientName --rpc-ws-port 17374
 ```
 
-`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the existing discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers. Use `--auth auto` on `page fetch` or `network replay` for same-origin protected endpoints so bak can synthesize common CSRF or XSRF headers from the live page context.
+`bak inspect page-data` now returns structured `dataSources`, `sourceMappings`, and `recommendedNextActions` alongside the existing discovery fields. `bak table list/schema/rows/export` also include `intelligence` or `extraction` metadata so you can tell whether a table is virtualized and whether the current read is complete or partial. `bak page extract --resolver auto` safely checks `globalThis` first and then lexical page-world bindings. `bak inspect live-updates` emphasizes recent network cadence, not only explicit timers. Use `bak network clone` to turn a captured request into a reusable template, and use `bak page fetch --query-file ... --paginate --page-size <n> --out-dir <path>` when the underlying API is page/limit based. Use `--auth auto` on `page fetch` or `network replay` for same-origin protected endpoints so bak can synthesize common CSRF or XSRF headers from the live page context.
 
 Add `--requires-confirm` to `bak page fetch` or non-readonly `bak network replay` when the request can change remote state.
 

@@ -267,6 +267,73 @@ test.describe('CLI session binding workflows', () => {
     }
   });
 
+  test('reuses an existing matching session tab when page.goto --reuse-domain is set', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const first = await openSessionPage('/network.html');
+    const second = await openSessionPage('/form.html', { active: true });
+    try {
+      const before = runHarnessCli<{ tabs: Array<{ id: number; url: string }> }>(['session', 'list-tabs']);
+      const navigated = runHarnessCli<{ ok: boolean; reused: boolean; created: boolean; matchedBy: string; tabId: number }>([
+        'page',
+        'goto',
+        SPA_URL,
+        '--reuse-domain'
+      ]);
+      runHarnessCli(['page', 'wait', '--mode', 'selector', '--value', '#tab-automation', '--timeout-ms', '5000']);
+
+      const after = runHarnessCli<{ tabs: Array<{ id: number; url: string }> }>(['session', 'list-tabs']);
+      expect(navigated.ok).toBe(true);
+      expect(navigated.reused).toBe(true);
+      expect(navigated.created).toBe(false);
+      expect(navigated.matchedBy).toBe('domain');
+      expect(after.tabs).toHaveLength(before.tabs.length);
+      expect(after.tabs.some((tab) => tab.id === navigated.tabId && tab.url === SPA_URL)).toBe(true);
+      expect(await sessionActiveTabId()).toBe(navigated.tabId);
+
+      expect(first.page.url() === SPA_URL || second.page.url() === SPA_URL).toBe(true);
+    } finally {
+      await first.page.close().catch(() => undefined);
+      await second.page.close().catch(() => undefined);
+    }
+  });
+
+  test('opens a new session tab when page.goto reuse filters miss', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const existing = await openSessionPage('/network.html');
+    let createdTabId: number | null = null;
+    try {
+      const before = runHarnessCli<{ tabs: Array<{ id: number; url: string }> }>(['session', 'list-tabs']);
+      const navigated = runHarnessCli<{ ok: boolean; reused: boolean; created: boolean; matchedBy: string | null; tabId: number; url: string }>([
+        'page',
+        'goto',
+        SPA_URL,
+        '--reuse-url-contains',
+        'missing-substring'
+      ]);
+
+      const after = runHarnessCli<{ tabs: Array<{ id: number; url: string }> }>(['session', 'list-tabs']);
+      expect(navigated.ok).toBe(true);
+      expect(navigated.reused).toBe(false);
+      expect(navigated.created).toBe(true);
+      expect(navigated.matchedBy).toBeNull();
+      expect(after.tabs).toHaveLength(before.tabs.length + 1);
+      expect(after.tabs.some((tab) => tab.id === navigated.tabId && tab.url === SPA_URL)).toBe(true);
+      expect(await sessionActiveTabId()).toBe(navigated.tabId);
+      createdTabId = navigated.tabId;
+    } finally {
+      if (createdTabId !== null) {
+        await harness.closeBrowserTab(createdTabId).catch(() => undefined);
+      }
+      await existing.page.close().catch(() => undefined);
+    }
+  });
+
   test('switches the session binding current tab through the CLI and uses it for later default commands', async () => {
     if (!harness) {
       throw new Error('Harness not initialized');

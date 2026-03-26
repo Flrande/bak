@@ -79,9 +79,12 @@ describe('cli help output', { timeout: 30_000 }, () => {
 
   it('documents page help and protocol-only navigation fallback', () => {
     const help = runHelp(['page', '--help']);
+    const gotoHelp = runHelp(['page', 'goto', '--help']);
 
     expect(help).toContain('Use bak call for protocol-only navigation helpers');
     expect(help).toContain('bak page verify --capture --annotate --rpc-ws-port 17374');
+    expect(gotoHelp).toContain('--reuse-domain');
+    expect(gotoHelp).toContain('--reuse-url-contains <text>');
   });
 
   it('documents snapshot annotation and diff flags on page and debug commands', () => {

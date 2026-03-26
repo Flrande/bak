@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { createHarness, TEST_SITE_ORIGIN, type E2EHarness } from '../helpers/harness';
+import { readJsonFile, runCli, runCliJsonError } from '../helpers/cli';
 
 let harness: E2EHarness | undefined;
 
@@ -11,6 +15,10 @@ function singlePageValue<T>(payload: unknown): T {
     throw new Error(`Expected single page value, got ${JSON.stringify(payload)}`);
   }
   return result.result.value;
+}
+
+function tempDir(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 test.describe('dynamic data e2e', () => {
@@ -364,6 +372,82 @@ test.describe('dynamic data e2e', () => {
       });
     } finally {
       await networkTablePage.page.close();
+    }
+  });
+
+  test('surfaces page modes, date controls, primary endpoints, and richer network list previews', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const semanticPage = await harness.openPage('/page-data-semantic.html');
+    try {
+      await expect(semanticPage.page.locator('#status')).toContainText('loaded');
+      await semanticPage.page.getByRole('tab', { name: 'Latest' }).click();
+      await expect(semanticPage.page.locator('#status')).toContainText('loaded');
+      await semanticPage.page.getByRole('tab', { name: 'Historical' }).click();
+      await expect(semanticPage.page.locator('#status')).toContainText('loaded');
+
+      const listed = runCli<{
+        entries: Array<{
+          id: string;
+          ts: number;
+          hostname?: string;
+          resourceType?: string;
+          kind: string;
+          preview?: { query?: string; request?: string; response?: string };
+        }>;
+      }>(
+        [
+          'network',
+          'list',
+          '--url-includes',
+          '/api/page-data-semantic',
+          '--domain',
+          '127.0.0.1',
+          '--resource-type',
+          'Fetch',
+          '--kind',
+          'fetch',
+          '--tail',
+          '--limit',
+          '10'
+        ],
+        harness.rpcPort,
+        harness.dataDir,
+        harness.sessionId
+      );
+      expect(listed.entries.length).toBeGreaterThanOrEqual(2);
+      expect(listed.entries.every((entry) => entry.kind === 'fetch')).toBe(true);
+      expect(listed.entries.every((entry) => entry.resourceType === 'Fetch')).toBe(true);
+      expect(listed.entries.every((entry) => entry.hostname === '127.0.0.1')).toBe(true);
+      expect(listed.entries[0]!.ts).toBeLessThanOrEqual(listed.entries[listed.entries.length - 1]!.ts);
+      expect(listed.entries.some((entry) => entry.preview?.query?.includes('mode=historical'))).toBe(true);
+      expect(listed.entries.some((entry) => entry.preview?.response?.includes('rows'))).toBe(true);
+
+      const inspected = (await harness.rpcCall('inspect.pageData', {
+        tabId: semanticPage.tabId
+      })) as {
+        availableModes: string[];
+        currentMode: { label: string; controlType: string } | null;
+        dateControls: Array<{ controlType: string; value?: string; max?: string; dataMaxDate?: string }>;
+        latestArchiveDate: string | null;
+        primaryEndpoint: { url: string; matchedTableId?: string; reason: string } | null;
+        recommendedNextActions: Array<{ command: string }>;
+      };
+      expect(inspected.availableModes).toEqual(expect.arrayContaining(['Latest', 'Historical', 'Archive']));
+      expect(inspected.currentMode).toEqual(expect.objectContaining({ label: 'Historical' }));
+      expect(inspected.dateControls).toEqual(
+        expect.arrayContaining([expect.objectContaining({ controlType: 'input', value: '2026-03-25', max: '2026-03-25' })])
+      );
+      expect(inspected.latestArchiveDate).toBe('2026-03-25');
+      expect(inspected.primaryEndpoint?.url).toContain('/api/page-data-semantic');
+      expect(inspected.primaryEndpoint?.matchedTableId).toBeTruthy();
+      expect(inspected.recommendedNextActions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ command: expect.stringMatching(/^bak network clone /) })])
+      );
+    } finally {
+      await semanticPage.page.close();
     }
   });
 
@@ -832,6 +916,212 @@ test.describe('dynamic data e2e', () => {
       expect(har.har.log.entries.length).toBeGreaterThan(0);
       harness.assertTraceHas('capture.snapshot');
     } finally {
+      await page.close();
+    }
+  });
+
+  test('clones captured requests, paginates JSON APIs, and reports timeout diagnostics', async () => {
+    if (!harness) {
+      throw new Error('Harness not initialized');
+    }
+
+    const { page, tabId } = await harness.openPage('/network.html');
+    const cloneDir = tempDir('bak-e2e-clone-');
+    const paginateDir = tempDir('bak-e2e-paginate-');
+    try {
+      await page.evaluate(async () => {
+        const response = await fetch('/api/paginated-rows?page=1&limit=3&symbol=QQQ');
+        await response.json();
+      });
+
+      const paginatedSearch = (await harness.rpcCall('network.search', {
+        tabId,
+        pattern: 'paginated-rows?page=1&limit=3',
+        limit: 5
+      })) as {
+        entries: Array<{ id: string; url: string }>;
+      };
+      expect(paginatedSearch.entries.length).toBeGreaterThan(0);
+
+      const clone = runCli<{
+        cloneable: boolean;
+        preferredCommand: { tool: string; argv: string[]; supportFiles?: Array<{ kind: string; path: string }> };
+        pageFetch?: { url: string };
+      }>(['network', 'clone', paginatedSearch.entries[0]!.id, '--out-dir', cloneDir], harness.rpcPort, harness.dataDir, harness.sessionId);
+      expect(clone.cloneable).toBe(true);
+      expect(clone.preferredCommand.tool).toBe('page.fetch');
+      expect(clone.preferredCommand.argv).toContain('--query-file');
+
+      const clonedFetch = runCli<unknown>(clone.preferredCommand.argv, harness.rpcPort, harness.dataDir, harness.sessionId);
+      const clonedPayload = singlePageValue<{ status: number; json?: { rows: Array<{ symbol: string }> } }>(clonedFetch);
+      expect(clonedPayload.status).toBe(200);
+      expect(clonedPayload.json?.rows).toHaveLength(3);
+      expect(clonedPayload.json?.rows[0]?.symbol).toBe('QQQ');
+
+      const querySupport = clone.preferredCommand.supportFiles?.find((file) => file.kind === 'query-file');
+      expect(querySupport?.path).toBeTruthy();
+
+      const paginatedSummary = runCli<{
+        pagesFetched: number;
+        rowsFetched: number;
+        stoppedBecause: string;
+        files: string[];
+        lastPageItemCount: number;
+        summaryPath: string;
+      }>(
+        [
+          'page',
+          'fetch',
+          '--url',
+          `${TEST_SITE_ORIGIN}/api/paginated-rows`,
+          '--query-file',
+          querySupport!.path,
+          '--mode',
+          'json',
+          '--paginate',
+          '--page-size',
+          '3',
+          '--stop-when-short-page',
+          '--out-dir',
+          paginateDir
+        ],
+        harness.rpcPort,
+        harness.dataDir,
+        harness.sessionId
+      );
+      expect(paginatedSummary.pagesFetched).toBe(3);
+      expect(paginatedSummary.rowsFetched).toBe(8);
+      expect(paginatedSummary.stoppedBecause).toBe('short-page');
+      expect(paginatedSummary.lastPageItemCount).toBe(2);
+      expect(paginatedSummary.files).toHaveLength(3);
+      const persistedSummary = readJsonFile<{ rowsFetched: number; files: string[] }>(paginatedSummary.summaryPath);
+      expect(persistedSummary.rowsFetched).toBe(8);
+      expect(persistedSummary.files).toHaveLength(3);
+
+      const headerTimeout = runCliJsonError<{
+        ok: boolean;
+        error: {
+          data?: {
+            bakCode?: string;
+            kind?: string;
+            where?: string;
+            responseStarted?: boolean;
+            bodyBytesRead?: number;
+          };
+        };
+      }>(
+        [
+          'page',
+          'fetch',
+          '--url',
+          `${TEST_SITE_ORIGIN}/api/timeout-headers?delay=800`,
+          '--mode',
+          'json',
+          '--timeout-ms',
+          '100'
+        ],
+        harness.rpcPort,
+        harness.dataDir,
+        harness.sessionId
+      );
+      expect(headerTimeout.ok).toBe(false);
+      expect(headerTimeout.error.data?.bakCode).toBe('E_TIMEOUT');
+      expect(headerTimeout.error.data?.kind).toBe('timeout');
+      expect(headerTimeout.error.data?.where).toBe('ttfb');
+      expect(headerTimeout.error.data?.responseStarted).toBe(false);
+      expect(headerTimeout.error.data?.bodyBytesRead).toBe(0);
+
+      await page.evaluate(async () => {
+        const response = await fetch('/api/timeout-body?delay=800&page=1&limit=100&start=2026-03-01&end=2026-03-02');
+        await response.text();
+      });
+      const timeoutBodySearch = (await harness.rpcCall('network.search', {
+        tabId,
+        pattern: 'timeout-body?delay=800',
+        limit: 5
+      })) as {
+        entries: Array<{ id: string }>;
+      };
+      expect(timeoutBodySearch.entries.length).toBeGreaterThan(0);
+
+      const bodyTimeout = runCliJsonError<{
+        ok: boolean;
+        error: {
+          data?: {
+            bakCode?: string;
+            kind?: string;
+            where?: string;
+            responseStarted?: boolean;
+            bodyBytesRead?: number;
+            partialBodyPreview?: string;
+            hints?: string[];
+          };
+        };
+      }>(
+        [
+          'page',
+          'fetch',
+          '--url',
+          `${TEST_SITE_ORIGIN}/api/timeout-body?delay=800&page=1&limit=100&start=2026-03-01&end=2026-03-02`,
+          '--mode',
+          'json',
+          '--timeout-ms',
+          '100'
+        ],
+        harness.rpcPort,
+        harness.dataDir,
+        harness.sessionId
+      );
+      expect(bodyTimeout.ok).toBe(false);
+      expect(bodyTimeout.error.data?.bakCode).toBe('E_TIMEOUT');
+      expect(bodyTimeout.error.data?.kind).toBe('timeout');
+      expect(bodyTimeout.error.data?.where).toBe('body');
+      expect(bodyTimeout.error.data?.responseStarted).toBe(true);
+      expect((bodyTimeout.error.data?.bodyBytesRead ?? 0) > 0).toBe(true);
+      expect(bodyTimeout.error.data?.partialBodyPreview).toContain('"rows"');
+      expect(bodyTimeout.error.data?.hints).toEqual(
+        expect.arrayContaining(['reduce the limit parameter and retry', 'narrow the requested time window and retry'])
+      );
+
+      const replayTimeout = runCliJsonError<{
+        ok: boolean;
+        error: {
+          data?: {
+            bakCode?: string;
+            kind?: string;
+            where?: string;
+            responseStarted?: boolean;
+            bodyBytesRead?: number;
+            hints?: string[];
+          };
+        };
+      }>(
+        [
+          'network',
+          'replay',
+          '--request-id',
+          timeoutBodySearch.entries[0]!.id,
+          '--mode',
+          'json',
+          '--timeout-ms',
+          '100'
+        ],
+        harness.rpcPort,
+        harness.dataDir,
+        harness.sessionId
+      );
+      expect(replayTimeout.ok).toBe(false);
+      expect(replayTimeout.error.data?.bakCode).toBe('E_TIMEOUT');
+      expect(replayTimeout.error.data?.kind).toBe('timeout');
+      expect(replayTimeout.error.data?.where).toBe('body');
+      expect(replayTimeout.error.data?.responseStarted).toBe(true);
+      expect((replayTimeout.error.data?.bodyBytesRead ?? 0) > 0).toBe(true);
+      expect(replayTimeout.error.data?.hints).toEqual(
+        expect.arrayContaining(['retry with smaller paginated windows'])
+      );
+    } finally {
+      rmSync(cloneDir, { recursive: true, force: true });
+      rmSync(paginateDir, { recursive: true, force: true });
       await page.close();
     }
   });

@@ -29,7 +29,9 @@ Use this skill when browser work should happen through `bak` instead of a direct
 - Use `bak page extract --resolver auto` as the safer default for known paths. If `bak page eval` can read a variable but `page extract` still misses it, retry with `--resolver lexical`.
 - Treat `bak inspect page-data` as the primary source-mapping report. It now returns `dataSources`, `sourceMappings`, and `recommendedNextActions` so you can connect visible tables to globals, inline JSON, or recent network responses without inventing your own heuristics.
 - When replaying a request that returns table-like arrays, prefer `bak network replay --with-schema auto --mode json --auth auto`.
+- Use `bak network clone` when you want a captured request converted into a reusable `page fetch` or `network replay` template.
 - Use `bak page fetch --auth auto` and `bak network replay --auth auto` for same-origin protected endpoints so bak can reuse live-page CSRF or XSRF signals without manual header assembly.
+- Use `bak page fetch --query-file ... --paginate --page-size <n> --out-dir <path>` when the target API is page/limit based and you want bak to persist every page plus a `summary.json`.
 - Read table-heavy pages with `bak table list`, `bak table schema`, `bak table rows --all`, or `bak table export --all`, and use their `intelligence` or `extraction` metadata to decide whether the table is virtualized, whether `scroll` mode was used, and whether the result is complete or partial. Pass the table `id` back into follow-up commands, for example `--table html:1`.
 - Use `bak page text --max-chunks <count> --chunk-size <chars>` when long pages need chunked text reads instead of one oversized response.
 - Use `bak inspect live-updates` to reason about recent mutations plus network cadence; a live page can poll without obvious interval timers.
@@ -55,12 +57,12 @@ Use this skill when browser work should happen through `bak` instead of a direct
 
 Use this when page text or snapshots are not enough:
 
-1. Read visible state with `bak page title`, `bak page url`, `bak page verify`, `bak page text`, or `bak debug dump-state --include-snapshot --annotate-snapshot`. Add `--capture --annotate` to `page verify` when you want a screenshot layer too, and fall back to `page snapshot` only when you specifically need lower-level image capture.
-2. Run `bak inspect page-data` before guessing at globals or tables, and read its `dataSources`, `sourceMappings`, and `recommendedNextActions` before writing your own extraction plan.
+1. Read visible state with `bak page title`, `bak page url`, `bak page verify`, `bak page text`, or `bak debug dump-state --include-snapshot --annotate-snapshot`. Add `--capture --annotate` to `page verify` when you want a screenshot layer too, and fall back to `page snapshot` only when you specifically need lower-level image capture. Use `bak page goto --reuse-domain` or `--reuse-url-contains ...` when you want to reuse an existing session tab instead of hand-rolling `session list-tabs` and `session set-active-tab`.
+2. Run `bak inspect page-data` before guessing at globals or tables, and read its `dataSources`, `sourceMappings`, `recommendedNextActions`, `availableModes`, `currentMode`, `dateControls`, `latestArchiveDate`, and `primaryEndpoint` before writing your own extraction plan.
 3. Probe runtime variables with `bak page extract --resolver auto --path ...` or `bak page eval --expr ...`.
 4. If the variable exists in page-world lexical bindings but not on `globalThis`, retry `bak page extract --resolver lexical`.
-5. Inspect recent requests with `bak network list`, `bak network search`, and `bak network get --include request response`.
-6. Reissue page-context requests with `bak page fetch --auth auto` or `bak network replay --with-schema auto --auth auto` when the target is a same-origin protected API.
+5. Inspect recent requests with `bak network list --domain ... --resource-type Fetch --tail`, `bak network search`, and `bak network get --include request response`.
+6. Reissue page-context requests with `bak network clone`, `bak page fetch --auth auto`, or `bak network replay --with-schema auto --auth auto` when the target is a same-origin protected API. Use paginated `page fetch` when the API is page/limit based.
 7. Read table-like UIs with `bak table list`, `bak table schema`, `bak table rows --all`, and `bak table export --all`, then use `intelligence` or `extraction` metadata to judge whether the result came from a data source, scroll pass, or visible slice and whether it is complete or partial. Use table ids such as `html:1` instead of display labels.
 8. Use `bak inspect live-updates` to understand network cadence and recent mutations.
 9. Check whether the data is current with `bak page freshness` or `bak inspect freshness`.

@@ -6,6 +6,7 @@
     "page.fetch",
     "page.freshness",
     "network.search",
+    "network.clone",
     "network.replay",
     "table.list",
     "table.schema",

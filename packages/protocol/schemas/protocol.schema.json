@@ -97,6 +97,7 @@
             "network.list",
             "network.get",
             "network.search",
+            "network.clone",
             "network.replay",
             "network.waitFor",
             "network.clear",

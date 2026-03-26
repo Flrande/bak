@@ -1,11 +1,15 @@
 import type {
   ConsoleEntry,
+  FetchDiagnostics,
   DebugDumpSection,
   InspectFreshnessResult,
   InspectLiveUpdatesResult,
   InspectPageDataCandidateProbe,
+  InspectPageDateControl,
   InspectPageDataResult,
+  InspectPageModeGroup,
   Locator,
+  NetworkCloneResult,
   NetworkEntry,
   PageExecutionScope,
   PageFetchResponse,
@@ -153,6 +157,8 @@ interface PageInspectionState {
   inlineTimestampCandidates?: Array<Record<string, unknown>>;
   tables?: TableHandle[];
   inlineJsonSources?: InlineJsonInspectionSource[];
+  modeGroups?: InspectPageModeGroup[];
+  dateControls?: InspectPageDateControl[];
   cookies?: Array<{ name: string }>;
   lastMutationAt?: number;
   pageLoadedAt?: number;
@@ -185,6 +191,11 @@ const REPLAY_FORBIDDEN_HEADER_NAMES = new Set([
   'proxy-authorization',
   'referer',
   'set-cookie'
+]);
+const CLONE_FORBIDDEN_HEADER_NAMES = new Set([
+  ...REPLAY_FORBIDDEN_HEADER_NAMES,
+  'x-csrf-token',
+  'x-xsrf-token'
 ]);
 
 let ws: WebSocket | null = null;
@@ -349,6 +360,14 @@ async function loadSessionBindingState(bindingId: string): Promise<SessionBindin
 
 async function listSessionBindingStates(): Promise<SessionBindingRecord[]> {
   return Object.values(await loadSessionBindingStateMap());
+}
+
+function quotePowerShellArg(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function renderPowerShellCommand(argv: string[]): string {
+  return ['bak', ...argv].map((part) => quotePowerShellArg(part)).join(' ');
 }
 
 function collectPopupSessionBindingTabIds(state: SessionBindingRecord): number[] {
@@ -1254,6 +1273,57 @@ async function executePageWorld<T>(
         return {};
       };
 
+      const utf8ByteLength = (value: string): number => {
+        if (typeof TextEncoder === 'function') {
+          return new TextEncoder().encode(value).byteLength;
+        }
+        return value.length;
+      };
+
+      const truncateUtf8Text = (value: string, limit: number): string => {
+        if (limit <= 0) {
+          return '';
+        }
+        if (typeof TextEncoder !== 'function' || typeof TextDecoder !== 'function') {
+          return value.slice(0, limit);
+        }
+        const encoded = new TextEncoder().encode(value);
+        if (encoded.byteLength <= limit) {
+          return value;
+        }
+        return new TextDecoder().decode(encoded.subarray(0, limit));
+      };
+
+      const buildRetryHints = (requestUrl: string, baseUrl: string): string[] => {
+        const hints: string[] = [];
+        let parsed: URL | null = null;
+        try {
+          parsed = new URL(requestUrl, baseUrl);
+        } catch {
+          parsed = null;
+        }
+        const keys = (() => {
+          if (!parsed) {
+            return [];
+          }
+          const collected: string[] = [];
+          parsed.searchParams.forEach((_value, key) => {
+            collected.push(key.toLowerCase());
+          });
+          return [...new Set(collected)];
+        })();
+        if (keys.some((key) => key.includes('limit'))) {
+          hints.push('reduce the limit parameter and retry');
+        }
+        if (keys.some((key) => /(from|to|start|end|date|time|timestamp)/i.test(key))) {
+          hints.push('narrow the requested time window and retry');
+        }
+        if (keys.some((key) => key.includes('page')) && keys.some((key) => key.includes('limit'))) {
+          hints.push('retry with smaller paginated windows');
+        }
+        return hints;
+      };
+
       try {
         const targetWindow = payload.scope === 'main' ? window : payload.scope === 'current' ? resolveFrameWindow(payload.framePath ?? []) : window;
         if (payload.action === 'eval') {
@@ -1316,25 +1386,128 @@ async function executePageWorld<T>(
               }
             }
           }
+
+          const requestHints = buildRetryHints(payload.url, targetWindow.location.href);
+          const diagnosticsBase = {
+            requestSent: false,
+            responseStarted: false,
+            status: undefined as number | undefined,
+            headersReceived: {} as Record<string, string>,
+            bodyBytesRead: 0,
+            partialBodyPreview: '',
+            timing: {
+              startedAt: Date.now()
+            } as FetchDiagnostics['timing']
+          };
+          const previewLimit =
+            !fullResponse && typeof payload.maxBytes === 'number' && payload.maxBytes > 0 ? payload.maxBytes : 8192;
+          let previewBytes = 0;
+          const appendPreviewText = (value: string): void => {
+            if (!value || previewBytes >= previewLimit) {
+              return;
+            }
+            const remaining = previewLimit - previewBytes;
+            const next = truncateUtf8Text(value, remaining);
+            diagnosticsBase.partialBodyPreview += next;
+            previewBytes += utf8ByteLength(next);
+          };
+
           const controller = typeof AbortController === 'function' ? new AbortController() : null;
           const timeoutId =
             controller && typeof payload.timeoutMs === 'number' && payload.timeoutMs > 0
               ? window.setTimeout(() => controller.abort(), payload.timeoutMs)
               : null;
           let response: Response;
+          let bodyText = '';
           try {
+            diagnosticsBase.requestSent = true;
+            diagnosticsBase.timing.requestSentAt = Date.now();
             response = await targetWindow.fetch(payload.url, {
               method: payload.method || 'GET',
               headers,
               body: typeof payload.body === 'string' ? payload.body : undefined,
               signal: controller ? controller.signal : undefined
             });
+            diagnosticsBase.responseStarted = true;
+            diagnosticsBase.timing.responseStartedAt = Date.now();
+            diagnosticsBase.status = response.status;
+            response.headers.forEach((value, key) => {
+              diagnosticsBase.headersReceived[key] = value;
+            });
+
+            const reader = response.body?.getReader?.();
+            if (reader) {
+              const decoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
+              while (true) {
+                const chunk = await reader.read();
+                if (chunk.done) {
+                  break;
+                }
+                const value = chunk.value ?? new Uint8Array();
+                diagnosticsBase.bodyBytesRead += value.byteLength;
+                if (decoder) {
+                  const decoded = decoder.decode(value, { stream: true });
+                  bodyText += decoded;
+                  appendPreviewText(decoded);
+                } else {
+                  const fallback = String.fromCharCode(...value);
+                  bodyText += fallback;
+                  appendPreviewText(fallback);
+                }
+              }
+              if (decoder) {
+                const flushed = decoder.decode();
+                if (flushed) {
+                  bodyText += flushed;
+                  appendPreviewText(flushed);
+                }
+              }
+            } else {
+              bodyText = await response.text();
+              diagnosticsBase.bodyBytesRead = utf8ByteLength(bodyText);
+              appendPreviewText(bodyText);
+            }
+            diagnosticsBase.timing.completedAt = Date.now();
+          } catch (error) {
+            const abortLike =
+              (error instanceof DOMException && error.name === 'AbortError') ||
+              (error instanceof Error && /abort|timeout/i.test(error.message));
+            const where: FetchDiagnostics['where'] =
+              diagnosticsBase.requestSent !== true
+                ? 'dispatch'
+                : diagnosticsBase.responseStarted !== true
+                  ? 'ttfb'
+                  : 'body';
+            const diagnostics: FetchDiagnostics = {
+              kind: abortLike ? 'timeout' : 'network',
+              retryable: true,
+              where,
+              timing: {
+                ...diagnosticsBase.timing,
+                ...(abortLike ? { timeoutAt: Date.now() } : {})
+              },
+              requestSent: diagnosticsBase.requestSent,
+              responseStarted: diagnosticsBase.responseStarted,
+              status: diagnosticsBase.status,
+              headersReceived:
+                Object.keys(diagnosticsBase.headersReceived).length > 0 ? diagnosticsBase.headersReceived : undefined,
+              bodyBytesRead: diagnosticsBase.bodyBytesRead,
+              partialBodyPreview: diagnosticsBase.partialBodyPreview || undefined,
+              hints: requestHints
+            };
+            throw {
+              code: abortLike ? 'E_TIMEOUT' : 'E_EXECUTION',
+              message: abortLike ? `page.fetch timeout during ${where}` : error instanceof Error ? error.message : String(error),
+              details: {
+                ...diagnostics,
+                diagnostics
+              }
+            };
           } finally {
             if (timeoutId !== null) {
               window.clearTimeout(timeoutId);
             }
           }
-          const bodyText = await response.text();
           const headerMap: Record<string, string> = {};
           response.headers.forEach((value, key) => {
             headerMap[key] = value;
@@ -1343,19 +1516,13 @@ async function executePageWorld<T>(
             url: targetWindow.location.href,
             framePath: payload.scope === 'current' ? payload.framePath ?? [] : [],
             value: (() => {
-              const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
-              const decoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
-              const previewLimit = !fullResponse && typeof payload.maxBytes === 'number' && payload.maxBytes > 0 ? payload.maxBytes : 8192;
-              const encodedBody = encoder ? encoder.encode(bodyText) : null;
-              const bodyBytes = encodedBody ? encodedBody.byteLength : bodyText.length;
+              const bodyBytes = diagnosticsBase.bodyBytesRead || utf8ByteLength(bodyText);
               const truncated = !fullResponse && bodyBytes > previewLimit;
               const previewText =
                 fullResponse
                   ? bodyText
-                  : encodedBody && decoder
-                  ? decoder.decode(encodedBody.subarray(0, Math.min(encodedBody.byteLength, previewLimit)))
                   : truncated
-                    ? bodyText.slice(0, previewLimit)
+                    ? truncateUtf8Text(bodyText, previewLimit)
                     : bodyText;
               const result: Record<string, unknown> = {
                 url: response.url,
@@ -1366,10 +1533,57 @@ async function executePageWorld<T>(
                 bytes: bodyBytes,
                 truncated,
                 authApplied: authApplied.length > 0 ? authApplied : undefined,
-                authSources: authSources.size > 0 ? [...authSources] : undefined
+                authSources: authSources.size > 0 ? [...authSources] : undefined,
+                diagnostics: {
+                  kind: 'success',
+                  retryable: false,
+                  where: 'complete',
+                  timing: diagnosticsBase.timing,
+                  requestSent: diagnosticsBase.requestSent,
+                  responseStarted: diagnosticsBase.responseStarted,
+                  status: response.status,
+                  headersReceived: headerMap,
+                  bodyBytesRead: bodyBytes,
+                  partialBodyPreview: diagnosticsBase.partialBodyPreview || undefined,
+                  hints: requestHints
+                } satisfies FetchDiagnostics
               };
               if (payload.mode === 'json') {
-                const parsedJson = bodyText ? JSON.parse(bodyText) : undefined;
+                let parsedJson: unknown;
+                try {
+                  parsedJson = bodyText ? JSON.parse(bodyText) : undefined;
+                } catch (error) {
+                  throw {
+                    code: 'E_EXECUTION',
+                    message: error instanceof Error ? error.message : String(error),
+                    details: {
+                      kind: 'execution',
+                      retryable: false,
+                      where: 'complete',
+                      timing: diagnosticsBase.timing,
+                      requestSent: diagnosticsBase.requestSent,
+                      responseStarted: diagnosticsBase.responseStarted,
+                      status: response.status,
+                      headersReceived: headerMap,
+                      bodyBytesRead: bodyBytes,
+                      partialBodyPreview: diagnosticsBase.partialBodyPreview || undefined,
+                      hints: requestHints,
+                      diagnostics: {
+                        kind: 'execution',
+                        retryable: false,
+                        where: 'complete',
+                        timing: diagnosticsBase.timing,
+                        requestSent: diagnosticsBase.requestSent,
+                        responseStarted: diagnosticsBase.responseStarted,
+                        status: response.status,
+                        headersReceived: headerMap,
+                        bodyBytesRead: bodyBytes,
+                        partialBodyPreview: diagnosticsBase.partialBodyPreview || undefined,
+                        hints: requestHints
+                      } satisfies FetchDiagnostics
+                    }
+                  };
+                }
                 const summary = buildJsonSummary(parsedJson);
                 if (fullResponse || !truncated) {
                   result.json = parsedJson;
@@ -1461,12 +1675,26 @@ function filterNetworkEntrySections(entry: NetworkEntry, include: unknown): Netw
     delete clone.requestHeaders;
     delete clone.requestBodyPreview;
     delete clone.requestBodyTruncated;
+    if (clone.preview) {
+      clone.preview = { ...clone.preview };
+      delete clone.preview.request;
+      if (!clone.preview.query && !clone.preview.request && !clone.preview.response) {
+        delete clone.preview;
+      }
+    }
   }
   if (!sections.has('response')) {
     delete clone.responseHeaders;
     delete clone.responseBodyPreview;
     delete clone.responseBodyTruncated;
     delete clone.binary;
+    if (clone.preview) {
+      clone.preview = { ...clone.preview };
+      delete clone.preview.response;
+      if (!clone.preview.query && !clone.preview.request && !clone.preview.response) {
+        delete clone.preview;
+      }
+    }
   }
   return clone;
 }
@@ -1484,6 +1712,121 @@ function replayHeadersFromRequestHeaders(requestHeaders: Record<string, string> 
     headers[name] = value;
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function cloneHeadersFromRequestHeaders(requestHeaders: Record<string, string> | undefined): {
+  headers?: Record<string, string>;
+  omitted: string[];
+} {
+  if (!requestHeaders) {
+    return { omitted: [] };
+  }
+  const headers: Record<string, string> = {};
+  const omitted = new Set<string>();
+  for (const [name, value] of Object.entries(requestHeaders)) {
+    const normalizedName = name.toLowerCase();
+    if (CLONE_FORBIDDEN_HEADER_NAMES.has(normalizedName) || normalizedName.startsWith('sec-')) {
+      omitted.add(normalizedName);
+      continue;
+    }
+    headers[name] = value;
+  }
+  return {
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    omitted: [...omitted].sort()
+  };
+}
+
+function isSameOriginWithTab(tabUrl: string | undefined, requestUrl: string): boolean {
+  try {
+    if (!tabUrl) {
+      return false;
+    }
+    return new URL(requestUrl).origin === new URL(tabUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
+function buildNetworkCloneResult(
+  requestId: string,
+  tabUrl: string | undefined,
+  replayable: NonNullable<ReturnType<typeof getReplayableNetworkRequest>>
+): NetworkCloneResult {
+  const sameOrigin = isSameOriginWithTab(tabUrl, replayable.entry.url);
+  const cloneable = sameOrigin && replayable.bodyTruncated !== true;
+  const notes: string[] = [];
+  const sanitizedHeaders = cloneHeadersFromRequestHeaders(replayable.headers);
+  if (sanitizedHeaders.omitted.length > 0) {
+    notes.push(`omitted sensitive headers: ${sanitizedHeaders.omitted.join(', ')}`);
+  }
+  if (!sameOrigin) {
+    notes.push('preferred page.fetch template was skipped because the captured request is not same-origin with the current page');
+  }
+  if (replayable.bodyTruncated) {
+    notes.push('captured request body was truncated, so bak cannot emit a reliable page.fetch clone');
+  }
+  if (!sameOrigin || replayable.bodyTruncated) {
+    notes.push('falling back to network.replay preserves the captured request shape more safely');
+  } else {
+    notes.push('page.fetch clone keeps session cookies and auto-applies same-origin auth helpers');
+  }
+
+  const pageFetch =
+    sameOrigin && replayable.bodyTruncated !== true
+      ? {
+          url: replayable.entry.url,
+          method: replayable.entry.method,
+          headers: sanitizedHeaders.headers,
+          body: replayable.body,
+          contentType: replayable.contentType,
+          mode:
+            (replayable.entry.contentType ?? replayable.contentType)?.toLowerCase().includes('json')
+              ? ('json' as const)
+              : ('raw' as const),
+          auth: 'auto' as const
+        }
+      : undefined;
+
+  const preferredArgv =
+    pageFetch
+      ? [
+          'page',
+          'fetch',
+          '--url',
+          pageFetch.url,
+          '--method',
+          pageFetch.method,
+          '--auth',
+          pageFetch.auth,
+          '--mode',
+          pageFetch.mode ?? 'raw',
+          ...(pageFetch.contentType ? ['--content-type', pageFetch.contentType] : []),
+          ...Object.entries(pageFetch.headers ?? {}).flatMap(([name, value]) => ['--header', `${name}: ${value}`]),
+          ...(typeof pageFetch.body === 'string' ? ['--body', pageFetch.body] : [])
+        ]
+      : ['network', 'replay', '--request-id', requestId, '--auth', 'auto'];
+
+  return {
+    request: {
+      id: replayable.entry.id,
+      url: replayable.entry.url,
+      method: replayable.entry.method,
+      kind: replayable.entry.kind,
+      contentType: replayable.contentType,
+      sameOrigin,
+      bodyPresent: typeof replayable.body === 'string' && replayable.body.length > 0,
+      bodyTruncated: replayable.bodyTruncated
+    },
+    cloneable,
+    preferredCommand: {
+      tool: pageFetch ? 'page.fetch' : 'network.replay',
+      argv: preferredArgv,
+      powershell: renderPowerShellCommand(preferredArgv)
+    },
+    pageFetch,
+    notes
+  };
 }
 
 function collectTimestampMatchesFromText(text: string, source: TimestampEvidenceCandidate['source'], patterns?: string[]): TimestampEvidenceCandidate[] {
@@ -2000,6 +2343,7 @@ async function enrichReplayWithSchema(tabId: number, requestId: string, response
   const pageDataCandidates = await probePageDataCandidatesForTab(tabId, inspection);
   const recentNetwork = listNetworkEntries(tabId, { limit: 25 });
   const pageDataReport = buildInspectPageDataResult({
+    pageUrl: inspection.url,
     suspiciousGlobals: inspection.suspiciousGlobals ?? [],
     tables: inspection.tables ?? [],
     visibleTimestamps: inspection.visibleTimestamps ?? [],
@@ -2007,7 +2351,9 @@ async function enrichReplayWithSchema(tabId: number, requestId: string, response
     pageDataCandidates,
     recentNetwork,
     tableAnalyses: tables,
-    inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : []
+    inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : [],
+    modeGroups: Array.isArray(inspection.modeGroups) ? inspection.modeGroups : [],
+    dateControls: Array.isArray(inspection.dateControls) ? inspection.dateControls : []
   });
   const matched = selectReplaySchemaMatch(response.json, tables, {
     preferredSourceId: `networkResponse:${requestId}`,
@@ -2442,7 +2788,12 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
               limit: typeof params.limit === 'number' ? params.limit : undefined,
               urlIncludes: typeof params.urlIncludes === 'string' ? params.urlIncludes : undefined,
               status: typeof params.status === 'number' ? params.status : undefined,
-              method: typeof params.method === 'string' ? params.method : undefined
+              method: typeof params.method === 'string' ? params.method : undefined,
+              domain: typeof params.domain === 'string' ? params.domain : undefined,
+              resourceType: typeof params.resourceType === 'string' ? params.resourceType : undefined,
+              kind: typeof params.kind === 'string' ? (params.kind as NetworkEntry['kind']) : undefined,
+              sinceTs: typeof params.sinceTs === 'number' ? params.sinceTs : undefined,
+              tail: params.tail === true
             })
           };
         } catch {
@@ -2477,6 +2828,17 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         const tab = await withTab(target);
         await ensureTabNetworkCapture(tab.id!);
         return searchNetworkEntries(tab.id!, String(params.pattern ?? ''), typeof params.limit === 'number' ? params.limit : 50);
+      });
+    }
+    case 'network.clone': {
+      return await preserveHumanFocus(typeof target.tabId !== 'number', async () => {
+        const tab = await withTab(target);
+        await ensureTabNetworkCapture(tab.id!);
+        const replayable = getReplayableNetworkRequest(tab.id!, String(params.id ?? ''));
+        if (!replayable) {
+          throw toError('E_NOT_FOUND', `network entry not found: ${String(params.id ?? '')}`);
+        }
+        return buildNetworkCloneResult(String(params.id ?? ''), tab.url, replayable);
       });
     }
     case 'network.waitFor': {
@@ -2631,9 +2993,10 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
         await ensureNetworkDebugger(tab.id!).catch(() => undefined);
         const inspection = await collectPageInspection(tab.id!, params);
         const pageDataCandidates = await probePageDataCandidatesForTab(tab.id!, inspection);
-        const network = listNetworkEntries(tab.id!, { limit: 10 });
+        const network = listNetworkEntries(tab.id!, { limit: 25, tail: true });
         const tableAnalyses = await collectTableAnalyses(tab.id!);
         const enriched = buildInspectPageDataResult({
+          pageUrl: inspection.url,
           suspiciousGlobals: inspection.suspiciousGlobals ?? [],
           tables: inspection.tables ?? [],
           visibleTimestamps: inspection.visibleTimestamps ?? [],
@@ -2641,7 +3004,9 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           pageDataCandidates,
           recentNetwork: network,
           tableAnalyses,
-          inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : []
+          inlineJsonSources: Array.isArray(inspection.inlineJsonSources) ? inspection.inlineJsonSources : [],
+          modeGroups: Array.isArray(inspection.modeGroups) ? inspection.modeGroups : [],
+          dateControls: Array.isArray(inspection.dateControls) ? inspection.dateControls : []
         });
         const recommendedNextSteps = enriched.recommendedNextActions.map((action) => action.command);
         return {
@@ -2651,6 +3016,12 @@ async function handleRequest(request: CliRequest): Promise<unknown> {
           inlineTimestamps: inspection.inlineTimestamps ?? [],
           pageDataCandidates,
           recentNetwork: network,
+          modeGroups: Array.isArray(inspection.modeGroups) ? inspection.modeGroups : [],
+          availableModes: enriched.availableModes,
+          currentMode: enriched.currentMode,
+          dateControls: Array.isArray(inspection.dateControls) ? inspection.dateControls : [],
+          latestArchiveDate: enriched.latestArchiveDate,
+          primaryEndpoint: enriched.primaryEndpoint,
           dataSources: enriched.dataSources,
           sourceMappings: enriched.sourceMappings,
           recommendedNextActions: enriched.recommendedNextActions,

@@ -2,6 +2,9 @@ import type {
   AccessibilityNode,
   ConsoleEntry,
   ElementMapItem,
+  InspectPageDateControl,
+  InspectPageModeGroup,
+  InspectPageModeOption,
   Locator,
   NetworkEntry,
   PageDomSummary,
@@ -25,6 +28,7 @@ import {
   sampleValue,
   type InlineJsonInspectionSource
 } from './dynamic-data-tools.js';
+import { buildNetworkEntryDerivedFields, clampNetworkListLimit, networkEntryMatchesFilters } from './network-tools.js';
 import { inferSafeName, redactElementText, redactHtmlSnapshot, type RedactTextOptions } from './privacy.js';
 import { unsupportedLocatorHint } from './limitations.js';
 
@@ -1619,30 +1623,22 @@ function networkSnapshotEntries(): NetworkEntry[] {
 }
 
 function filterNetworkEntries(params: Record<string, unknown>): NetworkEntry[] {
-  const urlIncludes = typeof params.urlIncludes === 'string' ? params.urlIncludes : '';
-  const method = typeof params.method === 'string' ? params.method.toUpperCase() : '';
-  const status = typeof params.status === 'number' ? params.status : undefined;
-  const sinceTs = typeof params.sinceTs === 'number' ? params.sinceTs : undefined;
-  const limit = typeof params.limit === 'number' ? Math.max(1, Math.min(500, Math.floor(params.limit))) : 50;
-
-  return networkSnapshotEntries()
-    .filter((entry) => {
-      if (typeof sinceTs === 'number' && entry.ts < sinceTs) {
-        return false;
-      }
-      if (urlIncludes && !entry.url.includes(urlIncludes)) {
-        return false;
-      }
-      if (method && entry.method.toUpperCase() !== method) {
-        return false;
-      }
-      if (typeof status === 'number' && entry.status !== status) {
-        return false;
-      }
-      return true;
-    })
-    .slice(-limit)
-    .reverse();
+  const limit = clampNetworkListLimit(typeof params.limit === 'number' ? params.limit : undefined, 50);
+  const ordered = networkSnapshotEntries()
+    .map((entry) => ({ ...entry, ...buildNetworkEntryDerivedFields(entry) }))
+    .filter((entry) =>
+      networkEntryMatchesFilters(entry, {
+        urlIncludes: typeof params.urlIncludes === 'string' ? params.urlIncludes : undefined,
+        status: typeof params.status === 'number' ? params.status : undefined,
+        method: typeof params.method === 'string' ? params.method : undefined,
+        domain: typeof params.domain === 'string' ? params.domain : undefined,
+        resourceType: typeof params.resourceType === 'string' ? params.resourceType : undefined,
+        kind: typeof params.kind === 'string' ? (params.kind as NetworkEntry['kind']) : undefined,
+        sinceTs: typeof params.sinceTs === 'number' ? params.sinceTs : undefined
+      })
+    )
+    .slice(-limit);
+  return params.tail === true ? ordered : ordered.reverse();
 }
 
 function filterNetworkEntrySections(entry: NetworkEntry, include: unknown): NetworkEntry {
@@ -1662,12 +1658,26 @@ function filterNetworkEntrySections(entry: NetworkEntry, include: unknown): Netw
     delete clone.requestHeaders;
     delete clone.requestBodyPreview;
     delete clone.requestBodyTruncated;
+    if (clone.preview) {
+      clone.preview = { ...clone.preview };
+      delete clone.preview.request;
+      if (!clone.preview.query && !clone.preview.request && !clone.preview.response) {
+        delete clone.preview;
+      }
+    }
   }
   if (!sections.has('response')) {
     delete clone.responseHeaders;
     delete clone.responseBodyPreview;
     delete clone.responseBodyTruncated;
     delete clone.binary;
+    if (clone.preview) {
+      clone.preview = { ...clone.preview };
+      delete clone.preview.response;
+      if (!clone.preview.query && !clone.preview.request && !clone.preview.response) {
+        delete clone.preview;
+      }
+    }
   }
   return clone;
 }
@@ -2641,6 +2651,225 @@ function collectInlineJsonSources(root: ParentNode): InlineJsonInspectionSource[
     .filter((item): item is InlineJsonInspectionSource => item !== null);
 }
 
+const MODE_OPTION_PATTERN = /\b(latest|historical|history|archive|archived|live|intraday|today|yesterday|session|completed)\b/i;
+
+function selectorHintForElement(element: Element): string {
+  if (element instanceof HTMLElement && element.id) {
+    return `#${element.id}`;
+  }
+  if (element instanceof HTMLElement && element.getAttribute('name')) {
+    return `${element.tagName.toLowerCase()}[name="${element.getAttribute('name')}"]`;
+  }
+  const role = element.getAttribute('role');
+  if (role) {
+    return `${element.tagName.toLowerCase()}[role="${role}"]`;
+  }
+  return element.tagName.toLowerCase();
+}
+
+function cleanControlText(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function extractElementLabel(element: Element): string | undefined {
+  if (element instanceof HTMLInputElement && element.labels && element.labels.length > 0) {
+    return cleanControlText(element.labels[0]?.textContent);
+  }
+  const ariaLabel = cleanControlText(element.getAttribute('aria-label'));
+  if (ariaLabel) {
+    return ariaLabel;
+  }
+  if (element instanceof HTMLElement && element.id) {
+    const label = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+    if (label) {
+      return cleanControlText(label.textContent);
+    }
+  }
+  const fieldset = element.closest('fieldset');
+  if (fieldset) {
+    const legend = fieldset.querySelector('legend');
+    const legendText = cleanControlText(legend?.textContent);
+    if (legendText) {
+      return legendText;
+    }
+  }
+  return cleanControlText(element.parentElement?.getAttribute('aria-label') ?? element.parentElement?.getAttribute('data-label'));
+}
+
+function inferModeOption(element: Element): InspectPageModeOption | null {
+  const label =
+    cleanControlText(
+      element instanceof HTMLInputElement && element.type === 'radio'
+        ? element.labels?.[0]?.textContent ?? element.value
+        : element instanceof HTMLOptionElement
+          ? element.textContent ?? element.value
+          : element.textContent ?? element.getAttribute('value') ?? element.getAttribute('aria-label')
+    ) ?? cleanControlText(element.getAttribute('value'));
+  if (!label || !MODE_OPTION_PATTERN.test(label)) {
+    return null;
+  }
+  const value =
+    cleanControlText(
+      element instanceof HTMLInputElement || element instanceof HTMLOptionElement
+        ? element.value
+        : element.getAttribute('value') ?? label
+    ) ?? label;
+  const selected =
+    (element instanceof HTMLOptionElement && element.selected) ||
+    (element instanceof HTMLInputElement && element.checked) ||
+    element.getAttribute('aria-selected') === 'true' ||
+    element.getAttribute('aria-pressed') === 'true' ||
+    element.classList.contains('active') ||
+    element.classList.contains('selected') ||
+    element.classList.contains('current');
+  return {
+    label,
+    value,
+    selected
+  };
+}
+
+function buildModeGroup(
+  elements: Element[],
+  controlType: InspectPageModeGroup['controlType'],
+  container?: Element | null
+): InspectPageModeGroup | null {
+  const options = elements.map((element) => inferModeOption(element)).filter((item): item is InspectPageModeOption => item !== null);
+  const deduped = options.filter((option, index, array) => array.findIndex((candidate) => candidate.label === option.label) === index);
+  if (deduped.length < 2) {
+    return null;
+  }
+  return {
+    controlType,
+    label: container ? extractElementLabel(container) : undefined,
+    selectorHint: container ? selectorHintForElement(container) : selectorHintForElement(elements[0]!),
+    options: deduped
+  };
+}
+
+function collectModeGroups(root: ParentNode): InspectPageModeGroup[] {
+  const groups: InspectPageModeGroup[] = [];
+  const handled = new Set<Element>();
+
+  for (const select of Array.from(root.querySelectorAll('select'))) {
+    const options = Array.from(select.querySelectorAll('option'));
+    const group = buildModeGroup(options, 'select', select);
+    if (!group) {
+      continue;
+    }
+    options.forEach((option) => handled.add(option));
+    groups.push(group);
+  }
+
+  for (const container of Array.from(root.querySelectorAll('[role="tablist"], [role="radiogroup"], fieldset'))) {
+    const role = container.getAttribute('role');
+    const elements =
+      role === 'tablist'
+        ? Array.from(container.querySelectorAll('[role="tab"]'))
+        : role === 'radiogroup'
+          ? Array.from(container.querySelectorAll('[role="radio"], input[type="radio"]'))
+          : Array.from(container.querySelectorAll('input[type="radio"], button'));
+    const untouched = elements.filter((element) => !handled.has(element));
+    const group = buildModeGroup(untouched, role === 'tablist' ? 'tabs' : role === 'radiogroup' ? 'radio' : 'buttons', container);
+    if (!group) {
+      continue;
+    }
+    untouched.forEach((element) => handled.add(element));
+    groups.push(group);
+  }
+
+  const candidateParents = new Set<HTMLElement>();
+  for (const button of Array.from(root.querySelectorAll('button'))) {
+    if (button.parentElement) {
+      candidateParents.add(button.parentElement);
+    }
+  }
+  for (const parent of candidateParents) {
+    const directButtons = Array.from(parent.children).filter((child): child is HTMLButtonElement => child instanceof HTMLButtonElement);
+    if (directButtons.length < 2 || directButtons.length > 6 || directButtons.every((button) => handled.has(button))) {
+      continue;
+    }
+    const group = buildModeGroup(
+      directButtons.filter((button) => !handled.has(button)),
+      'buttons',
+      parent
+    );
+    if (!group) {
+      continue;
+    }
+    directButtons.forEach((button) => handled.add(button));
+    groups.push(group);
+  }
+
+  return groups.slice(0, 6);
+}
+
+function normalizeDateValue(value: string | null | undefined): string | undefined {
+  const normalized = cleanControlText(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return Number.isFinite(Date.parse(normalized)) || /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : undefined;
+}
+
+function collectDateControls(root: ParentNode): InspectPageDateControl[] {
+  const controls: InspectPageDateControl[] = [];
+
+  for (const input of Array.from(root.querySelectorAll<HTMLInputElement>('input[type="date"], input[type="datetime-local"], input[type="month"], input[type="week"]'))) {
+    controls.push({
+      controlType: 'input',
+      label: extractElementLabel(input),
+      selectorHint: selectorHintForElement(input),
+      value: normalizeDateValue(input.value),
+      min: normalizeDateValue(input.min),
+      max: normalizeDateValue(input.max),
+      dataMaxDate: normalizeDateValue(input.getAttribute('data-max-date'))
+    });
+  }
+
+  for (const select of Array.from(root.querySelectorAll('select'))) {
+    const optionValues = Array.from(select.querySelectorAll('option'))
+      .map((option) => normalizeDateValue(option.value) ?? normalizeDateValue(option.textContent))
+      .filter((value): value is string => typeof value === 'string');
+    const dataMaxDate = normalizeDateValue(select.getAttribute('data-max-date'));
+    if (optionValues.length === 0 && !dataMaxDate) {
+      continue;
+    }
+    controls.push({
+      controlType: 'select',
+      label: extractElementLabel(select),
+      selectorHint: selectorHintForElement(select),
+      value: normalizeDateValue((select as HTMLSelectElement).value),
+      dataMaxDate,
+      options: [...new Set(optionValues)].slice(0, 8)
+    });
+  }
+
+  for (const element of Array.from(root.querySelectorAll<HTMLElement>('[data-max-date], [data-date]'))) {
+    if (element instanceof HTMLInputElement || element instanceof HTMLSelectElement) {
+      continue;
+    }
+    const dataMaxDate = normalizeDateValue(element.getAttribute('data-max-date'));
+    const value = normalizeDateValue(element.getAttribute('data-date'));
+    if (!dataMaxDate && !value) {
+      continue;
+    }
+    controls.push({
+      controlType: 'dataset',
+      label: extractElementLabel(element),
+      selectorHint: selectorHintForElement(element),
+      value,
+      dataMaxDate
+    });
+  }
+
+  return controls.slice(0, 10);
+}
+
 async function collectInspectionState(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const rootResult = resolveRootForLocator();
   if (!rootResult.ok) {
@@ -2662,6 +2891,8 @@ async function collectInspectionState(params: Record<string, unknown> = {}): Pro
   const previewGlobals = await globalsPreview();
   const suspiciousGlobals = [...new Set(scripts.flatMap((script) => script.suspectedVars))].slice(0, 50);
   const inlineJsonSources = collectInlineJsonSources(root);
+  const modeGroups = collectModeGroups(root);
+  const dateControls = collectDateControls(root);
   return {
     url: metadata.url,
     title: metadata.title,
@@ -2681,6 +2912,8 @@ async function collectInspectionState(params: Record<string, unknown> = {}): Pro
     cookies: cookieMetadata(),
     frames: collectFrames(),
     inlineJsonSources,
+    modeGroups,
+    dateControls,
     tables: describeTables(),
     timers: {
       timeouts: 0,

@@ -123,6 +123,7 @@ bak page text --client-name $clientName --max-chunks 8 --chunk-size 4000 --rpc-w
 bak page dom --client-name $clientName --rpc-ws-port 17374
 bak page a11y --client-name $clientName --rpc-ws-port 17374
 bak page metrics --client-name $clientName --rpc-ws-port 17374
+bak page goto "https://example.com/dashboard" --client-name $clientName --reuse-domain --rpc-ws-port 17374
 bak page viewport --client-name $clientName --rpc-ws-port 17374
 bak inspect page-data --client-name $clientName --rpc-ws-port 17374
 bak page eval --client-name $clientName --expr "typeof table_data !== 'undefined' ? table_data.length : null" --rpc-ws-port 17374
@@ -132,16 +133,18 @@ bak page freshness --client-name $clientName --rpc-ws-port 17374
 bak debug console --client-name $clientName --limit 20 --rpc-ws-port 17374
 bak debug dump-state --client-name $clientName --section dom visible-text network-summary --include-snapshot --annotate-snapshot --rpc-ws-port 17374
 bak network list --client-name $clientName --limit 20 --rpc-ws-port 17374
+bak network list --client-name $clientName --domain "api.example.com" --resource-type Fetch --tail --limit 10 --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
 bak network wait --client-name $clientName --url-includes "/api/save" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
+bak network clone req_123 --client-name $clientName --rpc-ws-port 17374
 bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --rpc-ws-port 17374
 bak network clear --client-name $clientName --rpc-ws-port 17374
 ```
 
-Start with `bak page verify` when you need to confirm page state before continuing. It returns `title`, `url`, `context`, `refs`, `actionSummary`, freshness, and network heartbeat data, and `--capture` adds an optional screenshot layer. If screenshot capture fails, `page verify` degrades instead of aborting the whole confirmation flow. Keep `bak page snapshot --annotate` for lower-level image capture, base64 export, or diff-heavy workflows. Use `--diff-with` against an older elements JSON, page snapshot JSON, or debug dump JSON when you need a structured before/after interaction diff instead of a raw screenshot.
+Start with `bak page verify` when you need to confirm page state before continuing. It returns `title`, `url`, `context`, `refs`, `actionSummary`, freshness, and network heartbeat data, and `--capture` adds an optional screenshot layer. If screenshot capture fails, `page verify` degrades instead of aborting the whole confirmation flow. Keep `bak page snapshot --annotate` for lower-level image capture, base64 export, or diff-heavy workflows. Use `--diff-with` against an older elements JSON, page snapshot JSON, or debug dump JSON when you need a structured before/after interaction diff instead of a raw screenshot. Use `bak page goto --reuse-domain` or `--reuse-url-contains ...` when you want the CLI to prefer an existing session tab and otherwise open a new one without hand-writing `session list-tabs` and `session set-active-tab` steps.
 
-Use `bak page text --max-chunks <count> --chunk-size <chars>` when a long page would otherwise overwhelm a single text read. Use `bak page fetch --auth auto` and `bak network replay --auth auto` for same-origin protected APIs so bak can auto-apply common CSRF or XSRF headers from the live page context. Add `--out <path>` on fetch or replay when you want the full payload on disk instead of a large inline body.
+Use `bak page text --max-chunks <count> --chunk-size <chars>` when a long page would otherwise overwhelm a single text read. Use `bak inspect page-data` to surface likely mode controls, date controls, `latestArchiveDate`, and the primary recent endpoint behind the current view before you guess at parameters. Use `bak network list --domain ... --resource-type Fetch --tail` when you want the latest matching request flow in chronological order with lightweight query/request/response previews. Use `bak network clone` when you want a captured request turned into a reusable `page fetch` or `network replay` template. Use `bak page fetch --auth auto` and `bak network replay --auth auto` for same-origin protected APIs so bak can auto-apply common CSRF or XSRF headers from the live page context. Add `--query-file` or `--body-file` when long parameters would be awkward to escape in PowerShell, and use `--paginate --page-size <n> --out-dir <path>` when you need bak to walk a page/limit API and persist each page plus `summary.json`.
 
 Mutating `bak page fetch` calls and replays of mutating requests require explicit `--requires-confirm`.
 
@@ -269,7 +272,8 @@ bak page extract --client-name $clientName --path "market_data.QQQ.quotes.change
 bak page eval --client-name $clientName --expr "typeof market_data !== 'undefined' ? market_data.QQQ : null" --rpc-ws-port 17374
 bak network search --client-name $clientName --pattern "table_data" --rpc-ws-port 17374
 bak network get req_123 --client-name $clientName --include request response --rpc-ws-port 17374
-bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --out .\api-data.json --rpc-ws-port 17374
+bak network clone req_123 --client-name $clientName --out-dir .\clone-template --rpc-ws-port 17374
+bak page fetch --client-name $clientName --url "https://example.com/api/data" --mode json --auth auto --query-file .\clone-template\query.txt --paginate --page-size 100 --out-dir .\pages --rpc-ws-port 17374
 bak network replay --client-name $clientName --request-id req_123 --mode json --with-schema auto --auth auto --out .\replay.json --rpc-ws-port 17374
 bak table rows --client-name $clientName --table html:1 --all --max-rows 10000 --rpc-ws-port 17374
 bak table export --client-name $clientName --table html:1 --all --max-rows 10000 --out .\table.json --rpc-ws-port 17374

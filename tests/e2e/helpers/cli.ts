@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { methodStatusPath } from './method-status';
@@ -70,6 +70,34 @@ export function runCliFailure(args: string[], rpcPort: number, dataDir: string, 
     const stderr = error instanceof Error && 'stderr' in error ? String((error as { stderr?: string }).stderr ?? '') : '';
     return stderr || (error instanceof Error ? error.message : String(error));
   }
+}
+
+export function runCliJsonError<T = unknown>(args: string[], rpcPort: number, dataDir: string, sessionId?: string): T {
+  const cliArgs = ['--json-errors', ...maybeAppendRpcPort(maybeAppendSessionId(args, sessionId ?? readHarnessSessionId(dataDir)), rpcPort)];
+  const result = spawnSync('node', [cliBinPath(), ...cliArgs], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      BAK_DATA_DIR: dataDir,
+      BAK_E2E_METHOD_STATUS_PATH: methodStatusPath()
+    },
+    encoding: 'utf8'
+  });
+  if (result.status === 0) {
+    throw new Error(`Expected CLI command to fail, but it succeeded with stdout: ${result.stdout}`);
+  }
+  if (!result.stderr) {
+    throw new Error(`Expected CLI command to emit JSON stderr, but stderr was empty. stdout: ${result.stdout}`);
+  }
+  const stderr = result.stderr.trim();
+  const jsonStart = stderr.lastIndexOf('\n{');
+  const jsonText =
+    jsonStart >= 0
+      ? stderr.slice(jsonStart + 1)
+      : stderr.startsWith('{')
+        ? stderr
+        : stderr.slice(stderr.indexOf('{'));
+  return JSON.parse(jsonText) as T;
 }
 
 export function readJsonFile<T = unknown>(path: string): T {

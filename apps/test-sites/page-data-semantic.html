@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page Data Semantic Test</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 24px;
+      }
+
+      [role='tablist'] {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      [role='tab'] {
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+
+      [role='tab'][aria-selected='true'] {
+        background: #0f172a;
+        border-color: #0f172a;
+        color: #fff;
+      }
+
+      table {
+        border-collapse: collapse;
+        margin-top: 16px;
+        min-width: 520px;
+      }
+
+      th,
+      td {
+        border: 1px solid #cbd5e1;
+        padding: 8px 10px;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Semantic Inspection Fixture</h1>
+    <p id="status">loading</p>
+
+    <section aria-label="Data mode controls">
+      <div role="tablist" aria-label="Data mode">
+        <button type="button" role="tab" aria-selected="false" data-mode="latest">Latest</button>
+        <button type="button" role="tab" aria-selected="true" data-mode="historical">Historical</button>
+        <button type="button" role="tab" aria-selected="false" data-mode="archive">Archive</button>
+      </div>
+    </section>
+
+    <section>
+      <label for="session-date">Session date</label>
+      <input id="session-date" type="date" value="2026-03-25" max="2026-03-25" data-max-date="2026-03-25" />
+      <div id="archive-meta" data-max-date="2026-03-25"></div>
+    </section>
+
+    <table aria-label="Semantic flow table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Mode</th>
+          <th>Session Date</th>
+          <th>Premium</th>
+        </tr>
+      </thead>
+      <tbody id="semantic-rows"></tbody>
+    </table>
+
+    <script>
+      window.semantic_page_state = {
+        mode: 'historical',
+        latestArchiveDate: '2026-03-25',
+        rows: []
+      };
+
+      const status = document.getElementById('status');
+      const rowsRoot = document.getElementById('semantic-rows');
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+      const sessionDate = document.getElementById('session-date');
+
+      function selectedMode() {
+        const selected = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true');
+        return selected?.getAttribute('data-mode') ?? 'historical';
+      }
+
+      function renderRows(rows) {
+        rowsRoot.innerHTML = rows
+          .map(
+            (row) => `
+              <tr>
+                <td>${row.symbol}</td>
+                <td>${row.mode}</td>
+                <td>${row.sessionDate}</td>
+                <td>${row.premium}</td>
+              </tr>
+            `
+          )
+          .join('');
+      }
+
+      async function loadRows() {
+        status.textContent = 'loading';
+        const mode = selectedMode();
+        const date = sessionDate.value || '2026-03-25';
+        const response = await fetch(`/api/page-data-semantic?mode=${encodeURIComponent(mode)}&date=${encodeURIComponent(date)}`);
+        const payload = await response.json();
+        window.semantic_page_state.mode = mode;
+        window.semantic_page_state.latestArchiveDate = date;
+        window.semantic_page_state.rows = payload.rows;
+        renderRows(payload.rows);
+        status.textContent = 'loaded';
+      }
+
+      for (const tab of tabs) {
+        tab.addEventListener('click', () => {
+          for (const candidate of tabs) {
+            candidate.setAttribute('aria-selected', candidate === tab ? 'true' : 'false');
+          }
+          void loadRows();
+        });
+      }
+
+      sessionDate.addEventListener('change', () => {
+        void loadRows();
+      });
+
+      void loadRows();
+    </script>
+  </body>
+</html>

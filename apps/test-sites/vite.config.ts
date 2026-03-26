@@ -147,6 +147,57 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
     return true;
   }
 
+  if (url.pathname === '/api/paginated-rows') {
+    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '1', 10) || 1);
+    const limit = Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '3', 10) || 3);
+    const symbol = url.searchParams.get('symbol') ?? 'QQQ';
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      id: index + 1,
+      symbol,
+      side: index % 2 === 0 ? 'Buy' : 'Sell',
+      premium: 1000 + index * 25
+    }));
+    const start = (page - 1) * limit;
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify({
+        rows: rows.slice(start, start + limit),
+        page,
+        limit,
+        totalRows: rows.length,
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return true;
+  }
+
+  if (url.pathname === '/api/timeout-headers') {
+    const delayMs = Math.max(0, Number.parseInt(url.searchParams.get('delay') ?? '0', 10) || 0);
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify({
+        ok: true,
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return true;
+  }
+
+  if (url.pathname === '/api/timeout-body') {
+    const delayMs = Math.max(0, Number.parseInt(url.searchParams.get('delay') ?? '0', 10) || 0);
+    response.statusCode = 200;
+    response.write('{"rows":[{"id":1,"symbol":"QQQ"}],"generatedAt":"');
+    response.flushHeaders?.();
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    response.end(`${new Date().toISOString()}"}`);
+    return true;
+  }
+
   if (url.pathname === '/api/network-table-rows') {
     response.statusCode = 200;
     response.end(
@@ -156,6 +207,25 @@ async function handleApiRequest(request: IncomingMessage, response: ServerRespon
           { id: 102, symbol: 'SPY', side: 'Sell', premium: 98000 },
           { id: 103, symbol: 'IWM', side: 'Buy', premium: 64500 }
         ],
+        generatedAt: new Date().toISOString()
+      })
+    );
+    return true;
+  }
+
+  if (url.pathname === '/api/page-data-semantic') {
+    const mode = url.searchParams.get('mode') ?? 'historical';
+    const date = url.searchParams.get('date') ?? '2026-03-25';
+    response.statusCode = 200;
+    response.end(
+      JSON.stringify({
+        rows: [
+          { symbol: 'QQQ', mode, sessionDate: date, premium: 125000 },
+          { symbol: 'SPY', mode, sessionDate: date, premium: 98000 },
+          { symbol: 'IWM', mode, sessionDate: date, premium: 64500 }
+        ],
+        mode,
+        date,
         generatedAt: new Date().toISOString()
       })
     );
@@ -203,6 +273,7 @@ export default defineConfig({
         networkTable: resolve(__dirname, 'network-table.html'),
         controlled: resolve(__dirname, 'controlled.html'),
         spa: resolve(__dirname, 'spa.html'),
+        pageDataSemantic: resolve(__dirname, 'page-data-semantic.html'),
         iframeHost: resolve(__dirname, 'iframe-host.html'),
         iframeChild: resolve(__dirname, 'iframe-child.html'),
         shadow: resolve(__dirname, 'shadow.html'),
