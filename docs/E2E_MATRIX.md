@@ -1,6 +1,6 @@
 # E2E Matrix
 
-- GeneratedAt: 2026-03-15 13:32:39 +08:00
+- GeneratedAt: 2026-03-26 20:04:16 +08:00
 - ProtocolSchema: `packages/protocol/schemas/protocol.schema.json`
 
 | Method | Success Case | Failure Case | CaseMapped | CI Status |
@@ -43,6 +43,7 @@
 | mouse.move | M048-S | M048-F | true | NotRun |
 | mouse.wheel | M049-S | M049-F | true | NotRun |
 | network.clear | M050-S | M050-F | true | NotRun |
+| network.clone | M103-S | M103-F | true | Passed |
 | network.get | M051-S | M051-F | true | Passed |
 | network.list | M052-S | M052-F | true | Passed |
 | network.replay | M093-S | M093-F | true | Passed |
@@ -89,6 +90,6 @@
 | tabs.list | M075-S | M075-F | true | NotRun |
 | tabs.new | M076-S | M076-F | true | NotRun |
 
-Total methods: 81
+Total methods: 82
 Missing mappings: 0
 
